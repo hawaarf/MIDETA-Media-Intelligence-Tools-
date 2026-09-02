@@ -21,6 +21,7 @@ def _fetch_public_profile_html(url: str) -> str:
 class BaseConnector(ABC):
     platform = "Unknown"
     supports_public_comments = False
+    prefer_profile_followers = False
 
     @staticmethod
     def _field(value: Any, missing: FieldStatus = FieldStatus.NOT_PUBLIC) -> DataField:
@@ -311,7 +312,7 @@ class BaseConnector(ABC):
                     action_names = {"like": "likes", "comment": "comments", "share": "shares", "view": "views", "follow": "followers", "save": "bookmarks", "bookmark": "bookmarks", "repost": "reposts"}
                     for key, output in action_names.items():
                         if key in kind: stats[output] = count
-        if stats.get("followers") is None:
+        if stats.get("followers") is None or self.prefer_profile_followers:
             public_followers = self._platform_followers(html, soup, canonical_url or final_url, author)
             if public_followers is not None:
                 stats["followers"] = public_followers

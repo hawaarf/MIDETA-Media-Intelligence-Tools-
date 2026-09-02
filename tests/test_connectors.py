@@ -8,6 +8,7 @@ SOCIAL_HTML = """<html><head><meta name="author" content="@akun"><meta property=
 INSTAGRAM_DATE_HTML = """<html><head><meta property="og:description" content="696 likes, 41 comments - nengrikagodel on August 31, 2026: &quot;Caption publik&quot;"><meta name="author" content="nengrikagodel"></head></html>"""
 INSTAGRAM_PROFILE_POST_HTML = """<html><head><meta property="og:description" content="10 likes, 2 comments - profilcontoh on August 25, 2026: &quot;Caption publik&quot;"><meta name="author" content="profilcontoh"></head></html>"""
 INSTAGRAM_PROFILE_HTML = """<html><head><meta property="og:description" content="136K Followers, 1,558 Following, 1,349 Posts - Profil Contoh (@profilcontoh)"></head></html>"""
+INSTAGRAM_DECIMAL_PROFILE_HTML = """<html><head><meta property="og:description" content="24.4K Followers, 78 Following, 355 Posts - Vonix Media (@vonixmedia.id)"></head></html>"""
 INSTAGRAM_REEL_POST_HTML = """<html><head><meta property="og:url" content="https://www.instagram.com/lambe_ojol/p/DcS9N_5TZkQ/"><meta property="og:description" content="11 likes, 0 comments - lambe_ojol on August 12, 2026: &quot;Caption Reel&quot;"><meta name="author" content="lambe_ojol"></head></html>"""
 INSTAGRAM_REELS_GRID_HTML = """<html><script>{"node":{"play_count":17235,"code":"Dccw99-zaZF"}},{"node":{"play_count":412,"code":"DcS9N_5TZkQ"}},{"node":{"play_count":374,"code":"DcQpZWsz9-G"}}</script></html>"""
 TIKTOK_STATS_HTML = """<html><head><meta property="og:description" content="Caption TikTok"></head><script>{"author":{"uniqueId":"akun"},"authorStats":{"followerCount":1250},"stats":{"playCount":6400},"createTime":1788048000}</script></html>"""
@@ -17,6 +18,7 @@ THREADS_COMMENT_HTML = """<html><head><meta property="og:description" content="C
 THREADS_TWO_COMMENTS_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script>{"view_counts":225,"text_post_app_info":{"direct_reply_count":2},"code":"DciTeqClGKc"}</script></html>"""
 THREADS_TAKEN_AT_HTML = """<html><script>{"code":"PostingLain","taken_at":1788245420},{"code":"DcxnOUwk51O","text_post_app_info":{"direct_reply_count":0},"taken_at":1788331158}</script></html>"""
 INSTAGRAM_REPOST_HTML = """<html><head><meta property="og:description" content="Caption Instagram"></head><script>{"code":"PostingLain","repost_count":91},{"code":"DcRepost123","reshare_count":7}</script></html>"""
+INSTAGRAM_VISIBLE_REPOST_HTML = """<html><head><meta property="og:description" content="7.6K likes, 144 comments - gnfi on August 30, 2026: &quot;Caption bersih saja&quot;"><meta name="author" content="gnfi"></head><script>{"node":{"reshare_count_reduced":"70","shortcode":"DcqWqENG04A"}}</script></html>"""
 COMMENT_HTML = """<script type="application/ld+json">{"@type":"Article","comment":[{"@type":"Comment","text":"Komentar publik","author":{"name":"Ayu"},"upvoteCount":3,"comment":[{"@type":"Comment","text":"Balasan publik","author":{"name":"Bima"},"upvoteCount":1}]}]}</script>"""
 FACEBOOK_HTML = """<html><head><meta property="og:description" content="Caption tetap utuh"></head><body><script>{"owner":{"name":"Media Indonesia"},"publish_time":1788048000,"reaction_count":{"count":125},"comment_count":{"count":18},"share_count":7,"video_view_count":6400}</script></body></html>"""
 FACEBOOK_META_HTML = """<html><head><meta property="og:description" content="Caption tetap utuh"><meta property="og:image:alt" content="1,2 rb tayangan · 9 suka · 3 komentar · 2 kali dibagikan | Caption tetap utuh"></head></html>"""
@@ -73,6 +75,18 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.reposts.value, 7)
 
     @patch("src.connectors.base.fetch_public_html", side_effect=[
+        (INSTAGRAM_VISIBLE_REPOST_HTML, "https://www.instagram.com/p/DcqWqENG04A/"),
+        ("<html></html>", "https://www.instagram.com/gnfi/"),
+        ("<html></html>", "https://www.instagram.com/gnfi/reels/"),
+    ])
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/DcqWqENG04A/")
+    def test_instagram_reads_visible_repost_and_keeps_only_caption(self, _validate, _fetch):
+        url = "https://www.instagram.com/p/DcqWqENG04A/"
+        result = get_connector(url).enrich(url)
+        self.assertEqual(result.reposts.value, 70)
+        self.assertEqual(result.caption.value, "Caption bersih saja")
+
+    @patch("src.connectors.base.fetch_public_html", side_effect=[
         (INSTAGRAM_PROFILE_POST_HTML, "https://www.instagram.com/p/profiletest/"),
         (INSTAGRAM_PROFILE_HTML, "https://www.instagram.com/profilcontoh/"),
         ("<html></html>", "https://www.instagram.com/profilcontoh/reels/"),
@@ -82,6 +96,17 @@ class ConnectorTests(unittest.TestCase):
         url = "https://www.instagram.com/p/profiletest/"
         result = get_connector(url).enrich(url)
         self.assertEqual(result.followers.value, 136000)
+
+    @patch("src.connectors.base.fetch_public_html", side_effect=[
+        ("""<html><head><meta name="author" content="vonixmedia.id"><meta property="og:description" content="Caption"></head><script>{"follower_count":24000}</script></html>""", "https://www.instagram.com/p/Dcvv9t0S2Y0/"),
+        (INSTAGRAM_DECIMAL_PROFILE_HTML, "https://www.instagram.com/vonixmedia.id/"),
+        ("<html></html>", "https://www.instagram.com/vonixmedia.id/reels/"),
+    ])
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/Dcvv9t0S2Y0/")
+    def test_instagram_prefers_decimal_profile_followers_over_post_page_count(self, _validate, _fetch):
+        url = "https://www.instagram.com/p/Dcvv9t0S2Y0/"
+        result = get_connector(url).enrich(url)
+        self.assertEqual(result.followers.value, 24400)
 
     @patch("src.connectors.base.fetch_public_html", side_effect=[
         (INSTAGRAM_REEL_POST_HTML, "https://www.instagram.com/p/DcS9N_5TZkQ/"),

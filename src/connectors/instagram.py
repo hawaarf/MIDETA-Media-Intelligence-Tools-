@@ -7,6 +7,7 @@ from src.connectors.base import BaseConnector
 class InstagramConnector(BaseConnector):
     platform = "Instagram"
     supports_public_comments = True
+    prefer_profile_followers = True
 
     MONTHS = {
         "january": 1,
@@ -35,15 +36,25 @@ class InstagramConnector(BaseConnector):
         metrics: dict[str, int] = {}
         shortcode = self._post_shortcode(url)
         if shortcode:
-            code_matches = list(re.finditer(r'"code"\s*:\s*"([^"]+)"', html, re.I))
+            code_matches = list(
+                re.finditer(
+                    r'"(?:code|shortcode|media_code)"\s*:\s*"([^"]+)"',
+                    html,
+                    re.I,
+                )
+            )
             repost_matches: list[tuple[int, int]] = []
             keys = (
                 "repost_count",
                 "repostCount",
+                "reposts_count",
                 "reshare_count",
                 "reshareCount",
+                "reshares_count",
                 "repost_count_reduced",
+                "repostCountReduced",
                 "reshare_count_reduced",
+                "reshareCountReduced",
             )
             for key in keys:
                 pattern = rf'"{re.escape(key)}"\s*:\s*(?:\{{[^{{}}]{{0,240}}?"(?:count|total_count)"\s*:\s*)?"?([\d.,]+\s*(?:k|m|b|rb|ribu|jt|juta)?)'
@@ -55,17 +66,40 @@ class InstagramConnector(BaseConnector):
             for position, count in repost_matches:
                 if not code_matches:
                     break
-                preceding = [code for code in code_matches if 0 <= position - code.start() <= 40_000]
-                closest = max(preceding, key=lambda code: code.start()) if preceding else min(
-                    code_matches,
-                    key=lambda code: abs(code.start() - position),
-                )
+                same_record = [
+                    code
+                    for code in code_matches
+                    if not re.search(
+                        r"}\s*,\s*{",
+                        html[min(code.start(), position):max(code.start(), position)],
+                    )
+                ]
+                if not same_record:
+                    continue
+                closest = min(same_record, key=lambda code: abs(code.start() - position))
                 distance = abs(closest.start() - position)
                 if closest.group(1).casefold() == shortcode.casefold() and distance <= 40_000:
                     candidates.append((distance, count))
             if candidates:
                 metrics["reposts"] = min(candidates, key=lambda item: item[0])[1]
         return metrics
+
+    def _platform_caption(self, html: str, url: str, current: str | None) -> str | None:
+        if not current:
+            return current
+        month_names = "|".join(self.MONTHS)
+        match = re.match(
+            rf"^.*?\bon\s+(?:{month_names})\s+\d{{1,2}},\s+\d{{4}}\s*:\s*(.+)$",
+            current.strip(),
+            re.I | re.S,
+        )
+        caption = match.group(1).strip() if match else current.strip()
+        quote_pairs = (("\"", "\""), ("“", "”"), ("‘", "’"))
+        for opening, closing in quote_pairs:
+            if caption.startswith(opening) and caption.endswith(closing):
+                caption = caption[len(opening):-len(closing)].strip()
+                break
+        return caption or current
 
     def _platform_posted_at(self, html: str, soup, url: str, current: str | None) -> str | None:
         if current:
