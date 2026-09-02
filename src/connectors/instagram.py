@@ -23,6 +23,50 @@ class InstagramConnector(BaseConnector):
         "december": 12,
     }
 
+    @staticmethod
+    def _post_shortcode(url: str) -> str | None:
+        parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
+        for index, part in enumerate(parts[:-1]):
+            if part.casefold() in {"p", "reel", "reels"}:
+                return parts[index + 1]
+        return None
+
+    def _platform_metrics(self, html: str, url: str) -> dict[str, int]:
+        metrics: dict[str, int] = {}
+        shortcode = self._post_shortcode(url)
+        if shortcode:
+            code_matches = list(re.finditer(r'"code"\s*:\s*"([^"]+)"', html, re.I))
+            repost_matches: list[tuple[int, int]] = []
+            keys = (
+                "repost_count",
+                "repostCount",
+                "reshare_count",
+                "reshareCount",
+                "repost_count_reduced",
+                "reshare_count_reduced",
+            )
+            for key in keys:
+                pattern = rf'"{re.escape(key)}"\s*:\s*(?:\{{[^{{}}]{{0,240}}?"(?:count|total_count)"\s*:\s*)?"?([\d.,]+\s*(?:k|m|b|rb|ribu|jt|juta)?)'
+                for match in re.finditer(pattern, html, re.I):
+                    count = self._human_count(match.group(1))
+                    if count is not None:
+                        repost_matches.append((match.start(), count))
+            candidates = []
+            for position, count in repost_matches:
+                if not code_matches:
+                    break
+                preceding = [code for code in code_matches if 0 <= position - code.start() <= 40_000]
+                closest = max(preceding, key=lambda code: code.start()) if preceding else min(
+                    code_matches,
+                    key=lambda code: abs(code.start() - position),
+                )
+                distance = abs(closest.start() - position)
+                if closest.group(1).casefold() == shortcode.casefold() and distance <= 40_000:
+                    candidates.append((distance, count))
+            if candidates:
+                metrics["reposts"] = min(candidates, key=lambda item: item[0])[1]
+        return metrics
+
     def _platform_posted_at(self, html: str, soup, url: str, current: str | None) -> str | None:
         if current:
             return current
@@ -51,11 +95,7 @@ class InstagramConnector(BaseConnector):
         parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
         if not re.fullmatch(r"[A-Za-z0-9._]+", username):
             return None
-        shortcode = None
-        for index, part in enumerate(parts[:-1]):
-            if part.casefold() in {"p", "reel", "reels"}:
-                shortcode = parts[index + 1]
-                break
+        shortcode = self._post_shortcode(url)
         if not shortcode:
             return None
         reels_html = self._public_profile_html(f"https://www.instagram.com/{username}/reels/")

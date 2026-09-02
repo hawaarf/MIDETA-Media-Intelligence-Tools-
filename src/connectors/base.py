@@ -323,10 +323,18 @@ class BaseConnector(ABC):
         zero_default_platforms = {"Facebook", "Instagram", "TikTok", "Threads"}
         followers = stats.get("followers")
         views = stats.get("views")
+        reposts = stats.get("reposts")
+        likes = stats.get("likes")
+        comments = stats.get("comments")
         if self.platform in zero_default_platforms:
             followers = 0 if followers is None else followers
             views = 0 if views is None else views
-        return SocialResult(url=final_url, platform=self.platform, username=self._field(author), caption=self._field(caption), posted_at=self._field(posted), followers=self._field(followers, unsupported), likes=self._field(stats.get("likes")), comments=self._field(stats.get("comments")), shares=self._field(stats.get("shares"), unsupported), views=self._field(views, unsupported), bookmarks=self._field(stats.get("bookmarks"), unsupported), reposts=self._field(stats.get("reposts"), unsupported), note="MIDETA hanya menampilkan metadata yang tersedia pada halaman publik. Beberapa informasi mungkin tidak ditampilkan oleh platform.")
+        if self.platform == "Facebook":
+            likes = 0 if likes is None else likes
+            comments = 0 if comments is None else comments
+        if self.platform == "Instagram":
+            reposts = 0 if reposts is None else reposts
+        return SocialResult(url=final_url, platform=self.platform, username=self._field(author), caption=self._field(caption), posted_at=self._field(posted), followers=self._field(followers, unsupported), likes=self._field(likes), comments=self._field(comments), shares=self._field(stats.get("shares"), unsupported), views=self._field(views, unsupported), bookmarks=self._field(stats.get("bookmarks"), unsupported), reposts=self._field(reposts, unsupported), note="MIDETA hanya menampilkan metadata yang tersedia pada halaman publik. Beberapa informasi mungkin tidak ditampilkan oleh platform.")
 
     def collect_comments(self, url: str) -> CommentCollection:
         validate_public_url(url)

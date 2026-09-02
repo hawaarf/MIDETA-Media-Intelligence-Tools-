@@ -15,6 +15,8 @@ THREADS_POST_HTML = """<html><head><meta property="og:description" content="Capt
 THREADS_PROFILE_HTML = """<html><head><meta property="og:description" content="88.7K Followers • 68 Threads. See the latest conversations with @jkt.feed."></head><script>{"follower_count":88725}</script></html>"""
 THREADS_COMMENT_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script>{"text_post_app_info":{"direct_reply_count":44},"code":"PostingLain"},{"text_post_app_info":{"direct_reply_count":8},"code":"DcgoGvoAQxG"}</script></html>"""
 THREADS_TWO_COMMENTS_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script>{"view_counts":225,"text_post_app_info":{"direct_reply_count":2},"code":"DciTeqClGKc"}</script></html>"""
+THREADS_TAKEN_AT_HTML = """<html><script>{"code":"PostingLain","taken_at":1788245420},{"code":"DcxnOUwk51O","text_post_app_info":{"direct_reply_count":0},"taken_at":1788331158}</script></html>"""
+INSTAGRAM_REPOST_HTML = """<html><head><meta property="og:description" content="Caption Instagram"></head><script>{"code":"PostingLain","repost_count":91},{"code":"DcRepost123","reshare_count":7}</script></html>"""
 COMMENT_HTML = """<script type="application/ld+json">{"@type":"Article","comment":[{"@type":"Comment","text":"Komentar publik","author":{"name":"Ayu"},"upvoteCount":3,"comment":[{"@type":"Comment","text":"Balasan publik","author":{"name":"Bima"},"upvoteCount":1}]}]}</script>"""
 FACEBOOK_HTML = """<html><head><meta property="og:description" content="Caption tetap utuh"></head><body><script>{"owner":{"name":"Media Indonesia"},"publish_time":1788048000,"reaction_count":{"count":125},"comment_count":{"count":18},"share_count":7,"video_view_count":6400}</script></body></html>"""
 FACEBOOK_META_HTML = """<html><head><meta property="og:description" content="Caption tetap utuh"><meta property="og:image:alt" content="1,2 rb tayangan · 9 suka · 3 komentar · 2 kali dibagikan | Caption tetap utuh"></head></html>"""
@@ -25,12 +27,12 @@ FACEBOOK_REEL_ZERO_LIKERS_HTML = """<html><head><link rel="canonical" href="http
 FACEBOOK_REEL_REDUCED_LIKES_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akun/videos/judul/2586740801787372"><meta property="og:description" content="Caption Reel"></head><script>{"feedback":{"reaction_count_reduced":"1,2 rb","total_comment_count":4},"tracking":"{\\"top_level_post_id\\":\\"2586740801787372\\",\\"video_id\\":\\"2586740801787372\\"}"}</script></html>"""
 FACEBOOK_CANONICAL_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akuratco/posts/judul/789"><meta property="og:description" content="Caption"></head><script>{"id":"789","feedback":{"reaction_count":{"count":5},"share_count":{"count":1},"comment_rendering_instance":{"comments":{"total_count":0}}}}</script></html>"""
 FACEBOOK_FULL_CAPTION_HTML = """<html><head><meta property="og:description" content="Paragraf pertama yang lengkap..."></head><body><div data-ad-rendering-role="story_message"><div dir="auto">Paragraf pertama yang lengkap.</div><div dir="auto">Paragraf kedua juga harus masuk.</div></div></body></html>"""
-FACEBOOK_GROUP_HTML = """<html><head><meta property="og:title" content="LIOC ( LIKA LIKU OJOL &amp; CUSTOMER ) | Caption grup | Facebook"><meta property="og:description" content="Caption grup..."><meta property="og:url" content="https://www.facebook.com/groups/1657323981260301/posts/4699586193700716/"></head><body><script>{"join_action":{"group":{"id":"1657323981260301","name":"LIOC ( LIKA LIKU OJOL & CUSTOMER )"}},"node_v2":{"actors":[{"name":"Gondrong Saja"}],"message":{"text":"Caption grup lengkap. Paragraf kedua juga masuk."},"post_id":"4699586193700716"}}</script></body></html>"""
+FACEBOOK_GROUP_HTML = """<html><head><meta property="og:title" content="LIOC ( LIKA LIKU OJOL &amp; CUSTOMER ) | Caption grup | Facebook"><meta property="og:description" content="Caption grup..."><meta property="og:url" content="https://www.facebook.com/groups/1657323981260301/posts/4699586193700716/"></head><body><script>{"join_action":{"group":{"id":"1657323981260301","name":"LIOC ( LIKA LIKU OJOL & CUSTOMER )"}},"node_v2":{"actors":[{"name":"Gondrong Saja","id":"100012853172729","url":null}],"message":{"text":"Caption grup lengkap. Paragraf kedua juga masuk."},"post_id":"4699586193700716"}}</script></body></html>"""
 FACEBOOK_PROFILE_POST_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/profilcontoh/posts/123"><meta property="og:title" content="Profil Contoh"><meta property="og:description" content="Caption Facebook"></head></html>"""
 FACEBOOK_FOLLOWER_PROFILE_HTML = r"""<html><script>{"text":"1,4\u00a0rb pengikut"}{"text":"2,2\u00a0rb teman"}</script></html>"""
 FACEBOOK_FRIEND_PROFILE_HTML = r"""<html><script>{"text":"2,2\u00a0rb teman"}</script></html>"""
 FACEBOOK_REEL_ZERO_VIEW_HTML = r"""<html><head><meta property="og:url" content="https://www.facebook.com/hery.umbuwole/videos/judul/3556314681183024/"><meta property="og:description" content="Caption Reel"></head><script>{"video_owner":{"url":"https:\/\/www.facebook.com\/hery.umbuwole"}}</script></html>"""
-FACEBOOK_PROFILE_REELS_HTML = """<html><script>{"profile_reel_node":{"node":{"tracking":"{\\"video_id\\":\\"111\\"}","play_count_reduced":"512"}}},{"profile_reel_node":{"node":{"tracking":"{\\"video_id\\":\\"3556314681183024\\"}","play_count_reduced":"132"}}},{"profile_reel_node":{"node":{"tracking":"{\\"video_id\\":\\"222\\"}","play_count_reduced":"336"}}}</script></html>"""
+FACEBOOK_PROFILE_REELS_HTML = """<html><script>{"profile_reel_node":{"node":{"tracking":"{\\"video_id\\":\\"999\\"}","related_video_id":"3556314681183024","play_count_reduced":"9,9 rb"}}},{"profile_reel_node":{"node":{"tracking":"{\\"video_id\\":\\"111\\"}","play_count_reduced":"512"}}},{"profile_reel_node":{"node":{"tracking":"{\\"video_id\\":\\"3556314681183024\\"}","play_count_reduced":"132"}}},{"profile_reel_node":{"node":{"tracking":"{\\"video_id\\":\\"222\\"}","play_count_reduced":"336"}}}</script></html>"""
 
 class TestPublicConnector(BaseConnector):
     platform = "Test"
@@ -61,6 +63,14 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.posted_at.value, "2026-08-31")
         self.assertEqual(result.followers.value, 0)
         self.assertEqual(result.views.value, 0)
+        self.assertEqual(result.reposts.value, 0)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(INSTAGRAM_REPOST_HTML, "https://www.instagram.com/p/DcRepost123/"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/DcRepost123/")
+    def test_instagram_reads_reposts_from_matching_post(self, _validate, _fetch):
+        url = "https://www.instagram.com/p/DcRepost123/"
+        result = get_connector(url).enrich(url)
+        self.assertEqual(result.reposts.value, 7)
 
     @patch("src.connectors.base.fetch_public_html", side_effect=[
         (INSTAGRAM_PROFILE_POST_HTML, "https://www.instagram.com/p/profiletest/"),
@@ -121,6 +131,13 @@ class ConnectorTests(unittest.TestCase):
         result = get_connector(url).enrich(url)
         self.assertEqual(result.comments.value, 2)
         self.assertEqual(result.views.value, 225)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(THREADS_TAKEN_AT_HTML, "https://www.threads.com/@mozaiktravel.id/post/DcxnOUwk51O"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@mozaiktravel.id/post/DcxnOUwk51O")
+    def test_threads_reads_posting_date_from_matching_taken_at(self, _validate, _fetch):
+        url = "https://www.threads.com/@mozaiktravel.id/post/DcxnOUwk51O"
+        result = get_connector(url).enrich(url)
+        self.assertEqual(result.posted_at.value, "2026-09-02")
 
     @patch("src.connectors.base.fetch_public_html", return_value=("<meta property=\"og:description\" content=\"Caption Threads\">", "https://www.threads.com/@tanpaangka/post/1"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@tanpaangka/post/1")
@@ -261,13 +278,17 @@ class ConnectorTests(unittest.TestCase):
         self.assertIn("Paragraf kedua juga harus masuk.", result.caption.value)
         self.assertNotIn("...", result.caption.value)
 
-    @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_GROUP_HTML, "https://www.facebook.com/groups/1657323981260301/permalink/4699586193700716/"))
+    @patch("src.connectors.base.fetch_public_html", side_effect=[
+        (FACEBOOK_GROUP_HTML, "https://www.facebook.com/groups/1657323981260301/permalink/4699586193700716/"),
+        (FACEBOOK_FRIEND_PROFILE_HTML, "https://www.facebook.com/100012853172729"),
+    ])
     @patch("src.connectors.base.validate_public_url", return_value="https://web.facebook.com/groups/1657323981260301/permalink/4699586193700716/")
     def test_facebook_group_combines_post_author_and_group_name(self, _validate, _fetch):
         url = "https://web.facebook.com/groups/1657323981260301/permalink/4699586193700716/"
         result = get_connector(url).enrich(url)
         self.assertEqual(result.username.value, "Gondrong Saja - LIOC ( LIKA LIKU OJOL & CUSTOMER )")
         self.assertEqual(result.caption.value, "Caption grup lengkap. Paragraf kedua juga masuk.")
+        self.assertEqual(result.followers.value, 2200)
 
     @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_CANONICAL_HTML, "https://www.facebook.com/akuratco/posts/pfbidABC"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/akuratco/posts/pfbidABC")
@@ -288,6 +309,18 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.likes.value, 9)
         self.assertEqual(result.comments.value, 3)
         self.assertEqual(result.views.value, 1269)
+
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/reel/123")
+    def test_facebook_reel_keeps_zero_metrics_and_target_owner(self, _validate):
+        unrelated = '<script>{"video_id":"999","video_owner":{"name":"Nama Salah","id":"9999"},"feedback":{"likers":{"count":87},"total_comment_count":42,"play_count":9000}}</script>'
+        target = '<script>{"video_owner":{"name":"Author Benar","id":"12345"},"feedback":{"likers":{"count":0},"total_comment_count":0,"play_count":0},"tracking":"{\\"top_level_post_id\\":\\"123\\",\\"video_id\\":\\"123\\"}"}</script>'
+        html = '<meta property="og:title" content="Nama yang disebut di caption | Facebook">' + unrelated + (" " * 12_000) + target
+        with patch("src.connectors.base.fetch_public_html", return_value=(html, "https://www.facebook.com/reel/123")):
+            result = get_connector("https://www.facebook.com/reel/123").enrich("https://www.facebook.com/reel/123")
+        self.assertEqual(result.username.value, "Author Benar")
+        self.assertEqual(result.likes.value, 0)
+        self.assertEqual(result.comments.value, 0)
+        self.assertEqual(result.views.value, 0)
 
     def test_selected_platform_rejects_a_different_platform(self):
         with self.assertRaisesRegex(ValueError, "terdeteksi sebagai X"):
