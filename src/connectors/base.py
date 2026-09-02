@@ -4,12 +4,19 @@ import json
 import re
 from abc import ABC
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any, Iterable
 from urllib.parse import unquote, urlparse
 from bs4 import BeautifulSoup
 from src.http_client import CollectionError, fetch_public_html
 from src.models import CommentCollection, DataField, FieldStatus, PublicComment, SocialResult
 from src.validators import validate_public_url
+
+
+@lru_cache(maxsize=128)
+def _fetch_public_profile_html(url: str) -> str:
+    html, _ = fetch_public_html(url)
+    return html
 
 class BaseConnector(ABC):
     platform = "Unknown"
@@ -115,6 +122,99 @@ class BaseConnector(ABC):
         """Return a caption tied to the requested post when scripts expose the full text."""
         return current
 
+    def _platform_posted_at(
+        self,
+        html: str,
+        soup: BeautifulSoup,
+        url: str,
+        current: str | None,
+    ) -> str | None:
+        """Return a platform-specific posting date when public metadata exposes it."""
+        return current
+
+    def _platform_followers(
+        self,
+        html: str,
+        soup: BeautifulSoup,
+        url: str,
+        author: str | None,
+    ) -> int | None:
+        """Return the public follower count for the post author when available."""
+        return None
+
+    def _platform_views(
+        self,
+        html: str,
+        soup: BeautifulSoup,
+        url: str,
+        author: str | None,
+    ) -> int | None:
+        """Return post views from a platform-specific public fallback."""
+        return None
+
+    @staticmethod
+    def _human_count(value: str) -> int | None:
+        match = re.search(r"(\d[\d.,]*)\s*(k|m|b|rb|ribu|jt|juta)?", value.strip(), re.I)
+        if not match:
+            return None
+        number_text, suffix = match.groups()
+        suffix = (suffix or "").casefold()
+        multipliers = {"k": 1_000, "rb": 1_000, "ribu": 1_000, "m": 1_000_000, "jt": 1_000_000, "juta": 1_000_000, "b": 1_000_000_000}
+        multiplier = multipliers.get(suffix, 1)
+        if multiplier == 1:
+            return int(re.sub(r"[.,]", "", number_text))
+        normalized = number_text.replace(",", ".")
+        if normalized.count(".") > 1:
+            normalized = normalized.replace(".", "")
+        return int(float(normalized) * multiplier)
+
+    def _followers_from_profile(self, profile_url: str) -> int | None:
+        profile_html = self._public_profile_html(profile_url)
+        if profile_html is None:
+            return None
+        profile_soup = BeautifulSoup(profile_html, "lxml")
+        return self._profile_count_by_label(
+            profile_html,
+            profile_soup,
+            "followers?",
+            "pengikut",
+        )
+
+    @staticmethod
+    def _public_profile_html(profile_url: str) -> str | None:
+        try:
+            return _fetch_public_profile_html(profile_url)
+        except CollectionError:
+            return None
+
+    def _profile_count_by_label(
+        self,
+        profile_html: str,
+        profile_soup: BeautifulSoup,
+        *labels: str,
+    ) -> int | None:
+        candidates = [
+            self._meta(profile_soup, 'meta[property="og:description"]'),
+            self._meta(profile_soup, 'meta[name="description"]'),
+        ]
+        for match in re.finditer(r'"text"\s*:\s*"((?:\\.|[^"\\])*)"', profile_html, re.I):
+            try:
+                candidates.append(json.loads(f'"{match.group(1)}"'))
+            except json.JSONDecodeError:
+                candidates.append(match.group(1))
+        label_pattern = "|".join(labels)
+        for candidate in candidates:
+            if not candidate:
+                continue
+            match = re.search(
+                rf"(\d[\d.,]*\s*(?:k|m|b|rb|ribu|jt|juta)?)\s+(?:{label_pattern})\b",
+                str(candidate),
+                re.I,
+            )
+            if match:
+                return self._human_count(match.group(1))
+        return None
+
     @staticmethod
     def _script_text(html: str, *keys: str) -> str | None:
         for key in keys:
@@ -144,10 +244,10 @@ class BaseConnector(ABC):
 
     @staticmethod
     def _script_posted_at(html: str) -> str | None:
-        iso_value = BaseConnector._script_text(html, "datePublished", "publishTime", "creationTime", "created_at")
+        iso_value = BaseConnector._script_text(html, "datePublished", "publishTime", "creationTime", "createTime", "created_at")
         if iso_value and not iso_value.isdigit():
             return iso_value
-        for key in ("publish_time", "publishTime", "creation_time", "creationTime", "created_time", "createdTime"):
+        for key in ("publish_time", "publishTime", "creation_time", "creationTime", "create_time", "createTime", "created_time", "createdTime"):
             match = re.search(rf'"{re.escape(key)}"\s*:\s*"?(\d{{10,13}})"?', html, re.I)
             if not match:
                 continue
@@ -186,6 +286,7 @@ class BaseConnector(ABC):
         posted = self._meta(soup, 'meta[property="article:published_time"]', 'meta[name="date"]', 'meta[itemprop="datePublished"]')
         author = author or self._script_author(html) or self._author_from_url(final_url)
         posted = posted or self._script_posted_at(html)
+        posted = self._platform_posted_at(html, soup, final_url, posted)
         canonical_node = soup.select_one('link[rel="canonical"]')
         canonical_url = self._meta(soup, 'meta[property="og:url"]') or (str(canonical_node.get("href")).strip() if canonical_node and canonical_node.get("href") else None)
         caption = self._full_caption(soup, caption)
@@ -210,8 +311,22 @@ class BaseConnector(ABC):
                     action_names = {"like": "likes", "comment": "comments", "share": "shares", "view": "views", "follow": "followers", "save": "bookmarks", "bookmark": "bookmarks", "repost": "reposts"}
                     for key, output in action_names.items():
                         if key in kind: stats[output] = count
+        if stats.get("followers") is None:
+            public_followers = self._platform_followers(html, soup, canonical_url or final_url, author)
+            if public_followers is not None:
+                stats["followers"] = public_followers
+        if stats.get("views") is None:
+            public_views = self._platform_views(html, soup, canonical_url or final_url, author)
+            if public_views is not None:
+                stats["views"] = public_views
         unsupported = FieldStatus.NOT_SUPPORTED
-        return SocialResult(url=final_url, platform=self.platform, username=self._field(author), caption=self._field(caption), posted_at=self._field(posted), followers=self._field(stats.get("followers"), unsupported), likes=self._field(stats.get("likes")), comments=self._field(stats.get("comments")), shares=self._field(stats.get("shares"), unsupported), views=self._field(stats.get("views"), unsupported), bookmarks=self._field(stats.get("bookmarks"), unsupported), reposts=self._field(stats.get("reposts"), unsupported), note="MIDETA hanya menampilkan metadata yang tersedia pada halaman publik. Beberapa informasi mungkin tidak ditampilkan oleh platform.")
+        zero_default_platforms = {"Facebook", "Instagram", "TikTok", "Threads"}
+        followers = stats.get("followers")
+        views = stats.get("views")
+        if self.platform in zero_default_platforms:
+            followers = 0 if followers is None else followers
+            views = 0 if views is None else views
+        return SocialResult(url=final_url, platform=self.platform, username=self._field(author), caption=self._field(caption), posted_at=self._field(posted), followers=self._field(followers, unsupported), likes=self._field(stats.get("likes")), comments=self._field(stats.get("comments")), shares=self._field(stats.get("shares"), unsupported), views=self._field(views, unsupported), bookmarks=self._field(stats.get("bookmarks"), unsupported), reposts=self._field(stats.get("reposts"), unsupported), note="MIDETA hanya menampilkan metadata yang tersedia pada halaman publik. Beberapa informasi mungkin tidak ditampilkan oleh platform.")
 
     def collect_comments(self, url: str) -> CommentCollection:
         validate_public_url(url)

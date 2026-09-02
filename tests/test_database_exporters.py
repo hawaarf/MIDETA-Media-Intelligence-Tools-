@@ -24,3 +24,12 @@ class DatabaseAndExporterTests(unittest.TestCase):
         xlsx = pd.read_excel(io.BytesIO(to_xlsx_bytes(rows)))
         self.assertEqual(csv.loc[0, "platform"], "X")
         self.assertEqual(xlsx.loc[0, "platform"], "X")
+
+    def test_csv_and_xlsx_keep_the_formatted_posting_date(self):
+        rows = [{"Platform": "Instagram", "Tanggal posting": "25-Aug-2026", "Followers": 0, "Views": 0}]
+        csv = pd.read_csv(io.BytesIO(to_csv_bytes(rows)))
+        xlsx = pd.read_excel(io.BytesIO(to_xlsx_bytes(rows)))
+        self.assertEqual(csv.loc[0, "Tanggal posting"], "25-Aug-2026")
+        self.assertEqual(xlsx.loc[0, "Tanggal posting"], "25-Aug-2026")
+        self.assertEqual(csv.loc[0, "Followers"], 0)
+        self.assertEqual(xlsx.loc[0, "Views"], 0)

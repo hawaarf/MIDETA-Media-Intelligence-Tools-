@@ -1,10 +1,31 @@
 """Batch URL and tabular result helpers."""
 from __future__ import annotations
+from datetime import date, datetime
 import re
 
 from src.models import SocialResult
 
-SOCIAL_BATCH_VERSION = 2
+SOCIAL_BATCH_VERSION = 10
+
+MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def format_posting_date(value) -> str:
+    """Format a posting date consistently for tables and downloads."""
+    if isinstance(value, datetime):
+        parsed = value.date()
+    elif isinstance(value, date):
+        parsed = value
+    else:
+        text = str(value).strip()
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+        except ValueError:
+            try:
+                parsed = date.fromisoformat(text)
+            except ValueError:
+                return text
+    return f"{parsed.day:02d}-{MONTH_NAMES[parsed.month - 1]}-{parsed.year:04d}"
 
 def parse_url_list(value: str) -> list[str]:
     """Return unique nonempty URLs while preserving input order."""
@@ -61,6 +82,8 @@ def compact_social_export_row(result: SocialResult) -> dict:
             unavailable.append(label)
             continue
         value = field.value
+        if label == "Tanggal posting":
+            value = format_posting_date(value)
         if isinstance(value, str):
             value = re.sub(r"\s+", " ", value).strip()
         row[label] = value

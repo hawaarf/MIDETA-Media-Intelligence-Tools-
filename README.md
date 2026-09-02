@@ -21,7 +21,9 @@ Pengguna dapat memasukkan beberapa URL sekaligus dengan menulis satu URL pada se
 9. Shares
 10. Reposts
 
-Data yang memang tidak diberikan oleh platform akan ditandai sebagai tidak tersedia. MIDETA tidak mengganti data yang kosong dengan angka nol karena keduanya mempunyai arti yang berbeda.
+Data yang memang tidak diberikan oleh platform akan ditandai sebagai tidak tersedia. Khusus Followers dan Views pada Facebook, Instagram, TikTok, serta Threads, MIDETA menampilkan angka 0 jika platform tidak menyediakan nilainya. Untuk Facebook, jumlah followers diprioritaskan. Jika followers tidak ditampilkan tetapi jumlah friends tersedia secara publik, MIDETA menggunakan jumlah friends. Views Reel Facebook dan Instagram juga dicari dari daftar Reel publik author dengan mencocokkan ID posting yang sama. Tanggal posting pada tabel dan file unduhan menggunakan format seperti `25-Aug-2026`.
+
+Jumlah komentar Threads dibaca dari `direct_reply_count` milik posting yang shortcode-nya sama. Cara ini mencegah jumlah reply dari posting rekomendasi ikut masuk ke hasil.
 
 ### Comment Scrapper
 

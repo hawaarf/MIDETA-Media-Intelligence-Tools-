@@ -1,6 +1,8 @@
 import json
 import re
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
+
+from bs4 import BeautifulSoup
 
 from src.connectors.base import BaseConnector
 
@@ -8,6 +10,27 @@ from src.connectors.base import BaseConnector
 class FacebookConnector(BaseConnector):
     platform = "Facebook"
     supports_public_comments = True
+
+    def _profile_count_by_label(
+        self,
+        profile_html: str,
+        profile_soup: BeautifulSoup,
+        *labels: str,
+    ) -> int | None:
+        followers = super()._profile_count_by_label(
+            profile_html,
+            profile_soup,
+            "followers?",
+            "pengikut",
+        )
+        if followers is not None:
+            return followers
+        return super()._profile_count_by_label(
+            profile_html,
+            profile_soup,
+            "friends?",
+            "teman",
+        )
 
     @staticmethod
     def _decode_script_value(value: str) -> str:
@@ -24,6 +47,18 @@ class FacebookConnector(BaseConnector):
         if parts[2].lower() not in {"permalink", "posts"}:
             return None
         return parts[1], parts[3]
+
+    @staticmethod
+    def _post_identifiers(url: str) -> list[str]:
+        parsed = urlparse(url)
+        parts = [unquote(part) for part in parsed.path.split("/") if part]
+        identifiers = [part for part in reversed(parts) if part.isdigit() or part.casefold().startswith("pfbid")]
+        query = parse_qs(parsed.query)
+        for key in ("story_fbid", "fbid", "video_id"):
+            for value in query.get(key, []):
+                if value.isdigit() or value.casefold().startswith("pfbid"):
+                    identifiers.append(value)
+        return list(dict.fromkeys(identifiers))
 
     def _group_post_author(self, html: str, post_id: str) -> str | None:
         candidates: list[tuple[int, str]] = []
@@ -62,6 +97,18 @@ class FacebookConnector(BaseConnector):
     def _platform_author(self, html: str, soup, url: str, current: str | None) -> str | None:
         group_post = self._group_post_ids(url)
         if not group_post:
+            title = self._meta(soup, 'meta[property="og:title"]')
+            if not title:
+                return current
+            for candidate in reversed([part.strip() for part in title.split(" | ") if part.strip()]):
+                if candidate.casefold() == "facebook":
+                    continue
+                if len(candidate) <= 120 and not re.search(
+                    r"\d\s*(?:rb|ribu|k|jt|juta|m)?\s*(?:tayangan|views?|tanggapan|reactions?|komentar|comments?)",
+                    candidate,
+                    re.I,
+                ):
+                    return candidate
             return current
         group_id, post_id = group_post
         author = self._group_post_author(html, post_id) or current
@@ -73,9 +120,56 @@ class FacebookConnector(BaseConnector):
         suffix = f" - {group_name}"
         return author if author.casefold().endswith(suffix.casefold()) else f"{author}{suffix}"
 
+    def _platform_followers(self, html: str, soup, url: str, author: str | None) -> int | None:
+        canonical = self._meta(soup, 'meta[property="og:url"]') or url
+        parts = [unquote(part) for part in urlparse(canonical).path.split("/") if part]
+        reserved = {"groups", "reel", "reels", "watch", "videos", "posts", "permalink.php"}
+        profile_url = None
+        if len(parts) >= 2 and parts[0].casefold() not in reserved and parts[1].casefold() in {"videos", "posts"}:
+            profile_url = f"https://www.facebook.com/{parts[0]}"
+        if not profile_url:
+            owner = re.search(r'"video_owner"\s*:\s*\{.{0,1_500}?"url"\s*:\s*"((?:\\.|[^"\\])*)"', html, re.I | re.S)
+            if owner:
+                profile_url = self._decode_script_value(owner.group(1)).replace("\\/", "/")
+        return self._followers_from_profile(profile_url) if profile_url else None
+
+    def _platform_views(self, html: str, soup, url: str, author: str | None) -> int | None:
+        canonical = self._meta(soup, 'meta[property="og:url"]') or url
+        parts = [unquote(part) for part in urlparse(canonical).path.split("/") if part]
+        target_ids = [identifier for identifier in self._post_identifiers(canonical) if identifier.isdigit()]
+        if not target_ids:
+            return None
+        is_reel = any(part.casefold() in {"reel", "reels", "videos"} for part in parts)
+        if not is_reel:
+            return None
+        reserved = {"groups", "reel", "reels", "watch", "videos", "posts", "permalink.php"}
+        username = parts[0] if parts and parts[0].casefold() not in reserved else None
+        if not username:
+            owner = re.search(r'"video_owner"\s*:\s*\{.{0,1_500}?"url"\s*:\s*"((?:\\.|[^"\\])*)"', html, re.I | re.S)
+            if owner:
+                owner_url = self._decode_script_value(owner.group(1)).replace("\\/", "/")
+                owner_parts = [part for part in urlparse(owner_url).path.split("/") if part]
+                username = owner_parts[0] if owner_parts else None
+        if not username:
+            return None
+        reels_html = self._public_profile_html(f"https://www.facebook.com/{username}/reels/")
+        if not reels_html:
+            return None
+        target = target_ids[0]
+        markers = list(re.finditer(r'"profile_reel_node"\s*:', reels_html, re.I))
+        for index, marker in enumerate(markers):
+            end = markers[index + 1].start() if index + 1 < len(markers) else min(len(reels_html), marker.start() + 100_000)
+            block = reels_html[marker.start():end]
+            if target not in block:
+                continue
+            match = re.search(r'"play_count_reduced"\s*:\s*"([^"]+)"', block, re.I)
+            count = self._localized_count(match.group(1)) if match else None
+            if count is not None:
+                return count
+        return None
+
     def _platform_caption(self, html: str, url: str, current: str | None) -> str | None:
-        path_parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
-        identifiers = [part for part in reversed(path_parts) if part.isdigit() or part.lower().startswith("pfbid")]
+        identifiers = self._post_identifiers(url)
         if not identifiers:
             return current
         current_prefix = re.sub(r"\s+", " ", current or "").rstrip(" .…")[:100].casefold()
@@ -177,8 +271,7 @@ class FacebookConnector(BaseConnector):
         return best if len(best) > len(current or "") else current
 
     def _platform_metrics(self, html: str, url: str) -> dict[str, int]:
-        path_parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
-        candidates = [part for part in reversed(path_parts) if part.isdigit() or part.lower().startswith("pfbid")]
+        candidates = self._post_identifiers(url)
         if not candidates:
             return {}
         target = candidates[0]
@@ -188,6 +281,29 @@ class FacebookConnector(BaseConnector):
             if "top_level_post_id" not in window and "video_id" not in window:
                 continue
             metrics: dict[str, int] = {}
+            like_matches = re.findall(
+                r'"(?:likers|unified_reactors)"\s*:\s*\{\s*"count"\s*:\s*"?(\d+)"?',
+                window,
+                re.I,
+            )
+            if like_matches:
+                metrics["likes"] = int(like_matches[-1])
+            else:
+                exact_reactions = re.findall(
+                    r'"(?:reaction_count|reactions)"\s*:\s*\{[^{}]{0,240}?"(?:count|total_count)"\s*:\s*"?(\d+)"?',
+                    window,
+                    re.I,
+                )
+                reduced_reactions = re.findall(
+                    r'"(?:reaction_count_reduced|i18n_reaction_count)"\s*:\s*"([^"]+)"',
+                    window,
+                    re.I,
+                )
+                reduced_count = self._localized_count(reduced_reactions[-1]) if reduced_reactions else None
+                if exact_reactions:
+                    metrics["likes"] = int(exact_reactions[-1])
+                elif reduced_count is not None:
+                    metrics["likes"] = reduced_count
             comment_matches = re.findall(r'"total_comment_count"\s*:\s*"?(\d+)"?', window, re.I)
             if comment_matches:
                 metrics["comments"] = int(comment_matches[-1])
@@ -202,8 +318,7 @@ class FacebookConnector(BaseConnector):
 
     def _metric_source(self, html: str, url: str) -> str:
         """Focus metric parsing on the requested story instead of recommendations."""
-        path_parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
-        candidates = [part for part in reversed(path_parts) if part.isdigit() or part.lower().startswith("pfbid")]
+        candidates = self._post_identifiers(url)
         if not candidates:
             return html
         markers = ("reaction_count", "total_comment_count", "comment_count", "share_count", "play_count", "video_view_count", "feedback")

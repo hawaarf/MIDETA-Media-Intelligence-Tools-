@@ -1,5 +1,5 @@
 import unittest
-from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, is_current_social_batch, parse_url_list, rank_comment_rows, social_result_row
+from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, format_posting_date, is_current_social_batch, parse_url_list, rank_comment_rows, social_result_row
 from src.connectors import get_connector
 
 class BatchTests(unittest.TestCase):
@@ -35,3 +35,18 @@ class BatchTests(unittest.TestCase):
         self.assertFalse(any(column.startswith("Status ") for column in row))
         self.assertFalse(any(value in (None, "") for value in row.values()))
         self.assertEqual(len(row), 14)
+
+    def test_posting_date_uses_requested_export_format(self):
+        self.assertEqual(format_posting_date("2026-08-25T14:30:00+07:00"), "25-Aug-2026")
+        self.assertEqual(format_posting_date("2026-09-01"), "01-Sep-2026")
+        self.assertEqual(format_posting_date("Tanggal tidak diketahui"), "Tanggal tidak diketahui")
+
+    def test_compact_export_formats_date_and_keeps_zero_counts(self):
+        result = get_connector("https://www.instagram.com/p/demo").mock_enrichment("https://www.instagram.com/p/demo")
+        result.posted_at.value = "2026-08-25T10:00:00+07:00"
+        result.followers.value = 0
+        result.views.value = 0
+        row = compact_social_export_row(result)
+        self.assertEqual(row["Tanggal posting"], "25-Aug-2026")
+        self.assertEqual(row["Followers"], 0)
+        self.assertEqual(row["Views"], 0)

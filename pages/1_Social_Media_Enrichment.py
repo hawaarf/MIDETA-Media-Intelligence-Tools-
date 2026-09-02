@@ -11,7 +11,7 @@ from src.ui import apply_theme, page_intro, status_label
 st.set_page_config(page_title="Social Media Enrichment | MIDETA", page_icon="📊", layout="wide")
 apply_theme()
 page_intro("01", "Social Media Enrichment", "Masukkan beberapa tautan YouTube, TikTok, Facebook, Instagram, Threads, atau X untuk melihat metadata publiknya.")
-st.info("Tulis satu URL pada setiap baris. Informasi yang tidak dibuka oleh platform akan ditandai sebagai tidak tersedia dan tidak akan diisi dengan angka nol.")
+st.info("Tulis satu URL pada setiap baris. Followers dan Views pada Facebook, Instagram, TikTok, serta Threads akan ditampilkan sebagai 0 jika platform tidak menyediakan angkanya.")
 
 platform_icons = {"YouTube": "▶ YouTube", "TikTok": "♪ TikTok", "Facebook": "f Facebook", "Instagram": "◎ Instagram", "Threads": "@ Threads", "X": "𝕏 X"}
 placeholders = {"YouTube": "https://www.youtube.com/watch?v=contoh", "TikTok": "https://www.tiktok.com/@akun/video/contoh", "Facebook": "https://www.facebook.com/akun/posts/contoh", "Instagram": "https://www.instagram.com/p/contoh", "Threads": "https://www.threads.net/@akun/post/contoh", "X": "https://x.com/akun/status/contoh"}
