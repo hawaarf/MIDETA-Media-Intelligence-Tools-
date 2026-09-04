@@ -234,17 +234,16 @@ class CommentBrowserCollector:
               .map(node => node.getBoundingClientRect().top);
             const endTop = endTops.length ? Math.min(...endTops) : Number.POSITIVE_INFINITY;
 
-            let targetTop = Number.NEGATIVE_INFINITY;
-            for (const anchor of anchors) {
+            const targetAnchor = anchors.find(anchor => {
               const href = anchor.href || '';
               const match = href.match(/\/(@[^/]+)\/post\/([^/?#]+)/);
-              if (!match || match[2] !== targetCode) continue;
-              const box = anchor.closest('[data-pressable-container="true"]');
-              if (box && !box.parentElement?.closest('[data-pressable-container="true"]')) {
-                targetTop = box.getBoundingClientRect().top;
-                break;
-              }
-            }
+              return Boolean(match && match[2] === targetCode);
+            });
+            if (!targetAnchor) return [];
+            const targetBox = targetAnchor.closest('[data-pressable-container="true"]') || targetAnchor;
+            const targetTop = targetBox.getBoundingClientRect().top;
+            rows.push({code: targetCode, comment: '', is_target: true});
+            seen.add(targetCode);
 
             for (const anchor of anchors) {
               const href = anchor.href || '';
@@ -260,7 +259,7 @@ class CommentBrowserCollector:
               }
               if (!box || box.parentElement?.closest('[data-pressable-container="true"]')) continue;
               const top = box.getBoundingClientRect().top;
-              if (top <= targetTop || top >= endTop) continue;
+              if (top >= endTop || (match[2] !== targetCode && top <= targetTop)) continue;
               seen.add(match[2]);
               const candidates = Array.from(box.querySelectorAll('[dir="auto"]'))
                 .map(node => (node.innerText || '').trim())
@@ -327,6 +326,8 @@ class CommentBrowserCollector:
         target_match = re.search(r"/post/([^/?#]+)", url, re.I)
         target_code = target_match.group(1) if target_match else ""
         rows = self._threads_dom_rows(target_code)
+        if not any(str(row.get("code") or "").casefold() == target_code.casefold() for row in rows):
+            return []
         comments = []
         for row in rows:
             if row.get("code") == target_code or not row.get("comment"):
@@ -354,12 +355,12 @@ class CommentBrowserCollector:
         if not comments:
             login_hint = ""
             if not self.is_logged_in(open_platform=False):
-                login_hint = f" Jika posting memiliki komentar, login di Chrome {self.platform} lalu coba lagi."
+                login_hint = f" Login di Chrome {self.platform}, pastikan posting target terlihat, lalu coba lagi."
             return CommentCollection(
                 url=driver.current_url or url,
                 platform=self.platform,
                 status=FieldStatus.NOT_PUBLIC,
-                reason=f"Belum ada komentar yang dapat dibaca dari percakapan ini.{login_hint}",
+                reason=f"Posting target atau komentarnya belum dapat dibaca dari percakapan ini.{login_hint}",
             )
         return CommentCollection(
             url=driver.current_url or url,

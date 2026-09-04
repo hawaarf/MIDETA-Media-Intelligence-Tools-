@@ -10,6 +10,8 @@ MIDETA mendukung YouTube, TikTok, Facebook, Instagram, Threads, dan X. Setiap pl
 
 Pengguna dapat memasukkan beberapa URL sekaligus dengan menulis satu URL pada setiap baris. MIDETA akan mencoba mengambil data berikut dari setiap posting:
 
+Satu proses dapat memuat sampai 1.000 URL. MIDETA mengerjakan maksimal 20 URL per tahap dan langsung menyimpan hasil setiap URL ke SQLite. Mode browser Instagram memakai tahap yang lebih kecil karena setiap posting perlu dibuka di Chrome. Tahap berikutnya berjalan otomatis. Jika aplikasi atau koneksi terhenti, antrean tetap tersimpan dan dapat dilanjutkan melalui tombol `Lanjutkan proses`.
+
 1. Tanggal posting
 2. Author
 3. Caption
@@ -35,7 +37,7 @@ Tanggal Threads dibaca dari `taken_at` yang paling dekat dengan shortcode postin
 
 Comment Scrapper membaca komentar yang tersedia pada percakapan posting. YouTube, TikTok, Facebook, Instagram, Threads, dan X mempunyai pilihan input sendiri agar URL serta hasilnya tidak tercampur.
 
-Threads dan X memuat komentar melalui JavaScript, sehingga keduanya mempunyai mode browser khusus. Chrome MIDETA membuka percakapan, menampilkan balasan yang tersedia, lalu membaca tanggal, username author, isi komentar, likes, dan jumlah reply. Data hanya diambil dari percakapan posting target. Bagian rekomendasi tidak dimasukkan.
+Threads dan X memuat komentar melalui JavaScript, sehingga MIDETA otomatis memakai browser khusus untuk kedua platform tersebut. Chrome MIDETA membuka percakapan, menampilkan balasan yang tersedia, lalu membaca tanggal, username author, isi komentar, likes, dan jumlah reply. Data hanya diambil jika ID posting target ditemukan pada halaman. Bagian rekomendasi tidak dimasukkan.
 
 Tipe `parent` berarti komentar tersebut ditulis langsung pada posting. Tipe `reply` berarti komentar tersebut merupakan balasan. Urutan ranking dihitung dari kombinasi likes dan jumlah reply agar komentar dengan engagement terbesar muncul lebih dahulu.
 
@@ -56,6 +58,8 @@ Setiap proses disimpan ke database SQLite lokal. Halaman riwayat menyediakan pen
 5. Tekan tombol pengambilan data.
 6. Periksa hasilnya, lalu unduh CSV atau XLSX jika diperlukan.
 
+Untuk daftar besar, tempel sampai 1.000 URL dari satu platform. Halaman menampilkan jumlah URL yang sudah tersimpan dan menyediakan tombol `Jeda proses`. URL diproses secara berurutan agar request ke platform tidak melonjak. URL yang gagal dicatat pada bagian yang perlu diperiksa. Jika platform mengirim pembatasan request, MIDETA menjeda antrean agar pengguna dapat melanjutkannya nanti.
+
 ### Mode browser Instagram
 
 1. Pilih Instagram pada halaman Social Media Enrichment.
@@ -70,9 +74,10 @@ Login cukup dilakukan sekali selama sesi Instagram masih aktif. Password diketik
 ### Mode browser Threads dan X
 
 1. Pilih Threads atau X pada halaman Comment Scrapper.
-2. Biarkan pilihan browser untuk platform tersebut tetap aktif.
-3. Masukkan URL posting dan tekan `Ambil Semua Komentar`.
-4. Jika percakapan dibatasi, tekan tombol untuk membuka sesi platform, login langsung di Chrome MIDETA satu kali, lalu tekan `Periksa Login`.
+2. Masukkan URL posting dan tekan `Ambil Semua Komentar`.
+3. MIDETA akan membuka browser platform tersebut secara otomatis.
+4. Jika posting tidak terlihat, tekan tombol untuk membuka sesi platform, login langsung di Chrome MIDETA satu kali, lalu tekan `Periksa Login`.
+5. Jalankan kembali URL setelah login terdeteksi.
 
 Threads dan X memakai profil Chrome yang berbeda. Sesi otomatis dipakai kembali sampai kedaluwarsa atau pengguna logout. Password tetap diketik langsung di situs dan tidak dibaca MIDETA.
 
@@ -80,10 +85,10 @@ Threads dan X memakai profil Chrome yang berbeda. Sesi otomatis dipakai kembali 
 
 1. URL diperiksa dan harus sesuai dengan platform yang sedang dipilih.
 2. ID posting Threads atau status X dibaca dari URL.
-3. MIDETA membuka halaman percakapan dan menampilkan balasan yang masih tersembunyi.
+3. MIDETA membuka halaman percakapan dan memastikan ID posting target benar-benar tampil.
 4. Pada Threads, setiap komentar dicocokkan melalui ID parent dan ID posting utama.
 5. Pada X, komentar dicocokkan melalui `conversation_id` dan ID tweet yang dibalas.
-6. Posting utama dan rekomendasi dibuang dari hasil.
+6. Posting utama dan seluruh rekomendasi di luar percakapan dibuang dari hasil.
 7. Komentar langsung diberi tipe `parent`, sedangkan balasan komentar diberi tipe `reply`.
 8. Likes dan jumlah reply dipakai untuk menyusun ranking.
 9. Hasil disimpan ke riwayat dan dapat diunduh sebagai CSV atau XLSX.
@@ -100,7 +105,8 @@ Proses enrichment dimulai dari URL dan berakhir sebagai baris data yang sudah se
 6. Data di sekitar ID tersebut dipilih agar hasil tidak tertukar dengan posting rekomendasi yang berada pada halaman yang sama.
 7. Author, caption, tanggal posting, dan angka engagement diambil dari metadata, JSON LD, serta data script publik yang tersedia.
 8. Hasil dinormalisasi ke struktur `SocialResult` agar semua platform mempunyai bentuk output yang sama.
-9. Beberapa hasil digabungkan menjadi satu batch, disimpan ke SQLite, lalu disiapkan untuk ekspor.
+9. Untuk daftar besar, antrean dibagi menjadi tahap berisi 20 URL. Posisi antrean dan setiap hasil disimpan ke SQLite.
+10. Setelah seluruh tahap selesai, hasil digabungkan dan disiapkan untuk ekspor CSV atau XLSX.
 
 ## Cara kerja enrichment Facebook
 

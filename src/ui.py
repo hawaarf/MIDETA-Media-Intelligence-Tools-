@@ -116,13 +116,13 @@ COMMENT_GUIDES = {
         "note": "Login Instagram pada halaman Enrichment digunakan untuk followers/views/repost, bukan untuk membuka komentar privat di Comment Scrapper.",
     },
     "Threads": {
-        "summary": "Gunakan browser Threads agar komentar dinamis, parent, dan reply dapat dibaca.",
+        "summary": "MIDETA otomatis memakai browser Threads agar komentar dinamis, parent, dan reply dapat dibaca.",
         "modes": [
-            ("Posting publik", "Biarkan mode browser aktif dan langsung jalankan URL. Banyak percakapan publik dapat dibaca tanpa login."),
+            ("Posting publik", "Langsung jalankan URL. MIDETA membuka percakapan memakai browser Threads secara otomatis."),
             ("Jika dibatasi", "Tekan ‘Buka Sesi Threads’, login satu kali, lalu ‘Periksa Login’. Sesi tersimpan akan dipakai untuk scraping berikutnya."),
         ],
         "steps": [
-            ("Aktifkan browser", "Biarkan ‘Gunakan browser Threads’ tetap aktif."),
+            ("Buka sesi", "Jika posting tidak terlihat, buka sesi Threads dan login satu kali."),
             ("Siapkan sesi", "Login satu kali hanya jika Threads membatasi percakapan target."),
             ("Tempel URL", "Masukkan URL post Threads satu per baris lalu ambil komentar."),
             ("Review hasil", "MIDETA memisahkan parent/reply dan mengabaikan posting setelah ‘Related threads’."),
@@ -130,9 +130,9 @@ COMMENT_GUIDES = {
         "note": "Sesi bertahan sampai Threads mengakhirinya atau Anda logout. Password tidak dibaca oleh MIDETA.",
     },
     "X": {
-        "summary": "Gunakan browser X agar reply yang dimuat dinamis dapat dibaca dari percakapan target.",
+        "summary": "MIDETA otomatis memakai browser X agar reply yang dimuat dinamis dapat dibaca dari percakapan target.",
         "modes": [
-            ("Posting publik", "Biarkan mode browser aktif dan langsung jalankan URL status."),
+            ("Posting publik", "Langsung jalankan URL status. MIDETA membuka percakapan memakai browser X secara otomatis."),
             ("Jika dibatasi", "Tekan ‘Buka Sesi X’, login satu kali, lalu ‘Periksa Login’."),
         ],
         "steps": [

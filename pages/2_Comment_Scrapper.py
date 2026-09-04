@@ -27,39 +27,35 @@ def comment_browser(platform: str) -> CommentBrowserCollector:
     return CommentBrowserCollector(platform)
 
 
-browser_mode = False
+browser_mode = selected_platform in {"Threads", "X"}
 if selected_platform in {"Threads", "X"}:
-    browser_mode = st.toggle(
-        f"Gunakan browser {selected_platform} (disarankan)",
-        value=True,
-        help=f"{selected_platform} memuat komentar lewat JavaScript. Mode ini membaca percakapan yang sudah tampil di Chrome khusus MIDETA.",
-        key=f"comment_browser_mode_{selected_platform}",
+    st.info(
+        f"Mode browser {selected_platform} aktif otomatis karena komentar dimuat langsung dari percakapan di Chrome MIDETA."
     )
-    if browser_mode:
-        st.caption(
-            f"Login cukup dilakukan sekali. Sesi {selected_platform} disimpan di profil Chrome khusus MIDETA dan dipakai kembali "
-            f"sampai sesi {selected_platform} kedaluwarsa atau Anda logout."
-        )
-        open_col, check_col, close_col = st.columns(3)
-        if open_col.button(f"Buka Sesi {selected_platform}", width="stretch"):
-            try:
-                if comment_browser(selected_platform).open_login():
-                    st.success(f"Sesi {selected_platform} tersimpan masih aktif; tidak perlu login lagi.")
-                else:
-                    st.info("Selesaikan login satu kali di Chrome MIDETA, lalu tekan Periksa Login.")
-            except CommentBrowserError as exc:
-                st.error(str(exc))
-        if check_col.button("Periksa Login", width="stretch"):
-            try:
-                if comment_browser(selected_platform).is_logged_in():
-                    st.success("Login tersimpan. Scraping berikutnya akan memakai sesi ini otomatis.")
-                else:
-                    st.warning("Login belum terdeteksi. Selesaikan login di Chrome MIDETA terlebih dahulu.")
-            except CommentBrowserError as exc:
-                st.error(str(exc))
-        if close_col.button("Tutup Chrome MIDETA", width="stretch"):
-            comment_browser(selected_platform).close()
-            st.info("Chrome MIDETA sudah ditutup.")
+    st.caption(
+        f"Login cukup dilakukan sekali. Sesi {selected_platform} disimpan di profil Chrome khusus MIDETA dan dipakai kembali "
+        f"sampai sesi {selected_platform} kedaluwarsa atau Anda logout."
+    )
+    open_col, check_col, close_col = st.columns(3)
+    if open_col.button(f"Buka Sesi {selected_platform}", width="stretch"):
+        try:
+            if comment_browser(selected_platform).open_login():
+                st.success(f"Sesi {selected_platform} tersimpan masih aktif; tidak perlu login lagi.")
+            else:
+                st.info("Selesaikan login satu kali di Chrome MIDETA, lalu tekan Periksa Login.")
+        except CommentBrowserError as exc:
+            st.error(str(exc))
+    if check_col.button("Periksa Login", width="stretch"):
+        try:
+            if comment_browser(selected_platform).is_logged_in():
+                st.success("Login tersimpan. Scraping berikutnya akan memakai sesi ini otomatis.")
+            else:
+                st.warning("Login belum terdeteksi. Selesaikan login di Chrome MIDETA terlebih dahulu.")
+        except CommentBrowserError as exc:
+            st.error(str(exc))
+    if close_col.button("Tutup Chrome MIDETA", width="stretch"):
+        comment_browser(selected_platform).close()
+        st.info("Chrome MIDETA sudah ditutup.")
 
 with st.form(f"comments_form_{selected_platform}"):
     url_text = st.text_area(f"Daftar URL {selected_platform}", height=180, placeholder=f"{placeholders[selected_platform]}\n{placeholders[selected_platform]}", key=f"comment_urls_{selected_platform}")

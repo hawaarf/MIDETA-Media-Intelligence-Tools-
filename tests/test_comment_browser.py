@@ -76,6 +76,25 @@ class CommentBrowserTests(unittest.TestCase):
         self.assertEqual(comments[0].reply_count, 7)
         self.assertEqual(comments[1].comment_type, "reply")
 
+    def test_threads_dom_rows_ignore_recommendations_when_target_is_missing(self):
+        collector = CommentBrowserCollector("Threads")
+        rows = [
+            {
+                "code": "Recommendation456",
+                "author": "akun_lain",
+                "comment": "Posting rekomendasi",
+                "likes": "500",
+                "replies": "12",
+                "comment_type": "parent",
+            }
+        ]
+        with patch.object(collector, "_threads_dom_rows", return_value=rows):
+            comments = collector._dom_comments(
+                "https://www.threads.com/@kokobuncis/post/DcQMIAFm_xq"
+            )
+
+        self.assertEqual(comments, [])
+
     def test_public_threads_collection_does_not_require_login_first(self):
         collector = CommentBrowserCollector("Threads")
         driver = MagicMock()

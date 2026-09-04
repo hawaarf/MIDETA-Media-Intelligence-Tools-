@@ -1,9 +1,12 @@
 """MIDETA Social Media Enrichment batch page."""
+import time
+
 import pandas as pd
 import streamlit as st
 from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, is_current_social_batch, parse_url_list, social_result_row
+from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, MAX_ENRICHMENT_URLS
 from src.connectors import PLATFORM_OPTIONS, get_platform_connector
-from src.database import add_history
+from src.database import add_history, create_social_job, get_latest_social_job, get_social_job, next_social_job_items, record_social_job_item, set_social_job_status
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, apply_instagram_browser_metrics
 from src.models import FieldStatus
@@ -13,7 +16,7 @@ st.set_page_config(page_title="Social Media Enrichment | MIDETA", page_icon="�
 apply_theme()
 render_github_profile()
 page_intro("01", "Social Media Enrichment", "Masukkan beberapa tautan YouTube, TikTok, Facebook, Instagram, Threads, atau X untuk melihat metadata publiknya.")
-st.info("Tulis satu URL pada setiap baris. Followers dan Views ditampilkan sebagai 0 jika angkanya tidak tersedia. Reposts Instagram juga ditampilkan sebagai 0 jika tidak tercantum.")
+st.info("Tulis satu URL pada setiap baris. MIDETA dapat menerima sampai 1.000 URL dan menyimpannya bertahap agar proses tidak hilang jika aplikasi terhenti. Followers dan Views menjadi 0 jika angkanya tidak tersedia.")
 
 platform_icons = {"YouTube": "▶ YouTube", "TikTok": "♪ TikTok", "Facebook": "f Facebook", "Instagram": "◎ Instagram", "Threads": "@ Threads", "X": "𝕏 X"}
 placeholders = {"YouTube": "https://www.youtube.com/watch?v=contoh", "TikTok": "https://www.tiktok.com/@akun/video/contoh", "Facebook": "https://www.facebook.com/akun/posts/contoh", "Instagram": "https://www.instagram.com/p/contoh", "Threads": "https://www.threads.net/@akun/post/contoh", "X": "https://x.com/akun/status/contoh"}
@@ -62,51 +65,154 @@ if submitted:
     urls = parse_url_list(url_text)
     if not urls:
         st.error("Masukkan setidaknya satu URL posting.")
-    else:
-        active_browser = None
-        if selected_platform == "Instagram" and browser_mode and not mock_mode:
-            try:
-                active_browser = instagram_browser()
-                if not active_browser.is_logged_in():
-                    st.error("Instagram belum login. Buka Chrome Instagram dan selesaikan login sebelum memulai batch.")
-                    active_browser = None
-                    urls = []
-            except InstagramBrowserError as exc:
-                st.error(str(exc))
+    elif len(urls) > MAX_ENRICHMENT_URLS:
+        st.error(f"Maksimal {MAX_ENRICHMENT_URLS:,} URL untuk satu proses. Kurangi {len(urls) - MAX_ENRICHMENT_URLS:,} URL lalu coba lagi.")
+        urls = []
+    elif selected_platform == "Instagram" and browser_mode and not mock_mode:
+        try:
+            if not instagram_browser().is_logged_in():
+                st.error("Instagram belum login. Buka Chrome Instagram dan selesaikan login sebelum memulai batch.")
                 urls = []
+        except InstagramBrowserError as exc:
+            st.error(str(exc))
+            urls = []
     if urls:
-        progress = st.progress(0, text="Menyiapkan daftar URL…")
-        results, errors, browser_issues = [], [], []
-        for index, url in enumerate(urls, 1):
-            try:
-                connector = get_platform_connector(url, selected_platform)
-                progress.progress(int((index - 1) / len(urls) * 100), text=f"Memeriksa {connector.platform} pada URL {index} dari {len(urls)}…")
-                result = connector.mock_enrichment(url) if mock_mode else connector.enrich(url)
-                if active_browser is not None:
-                    progress.progress(int((index - 1) / len(urls) * 100), text=f"Membaca tampilan Instagram pada URL {index} dari {len(urls)}…")
-                    try:
-                        metrics = active_browser.collect(result.url, result.username.value)
-                        result = apply_instagram_browser_metrics(result, metrics)
-                    except InstagramBrowserError as exc:
-                        browser_issues.append({"URL": url, "Alasan": str(exc)})
-                        result.note = f"{result.note} Pemeriksaan melalui browser belum berhasil: {exc}".strip()
-                fields = [result.username, result.caption, result.posted_at, result.followers, result.likes, result.comments, result.shares, result.views, result.bookmarks, result.reposts]
-                has_data = any(field.status == FieldStatus.AVAILABLE for field in fields)
-                history_status = "mock" if result.is_mock else "completed" if has_data else "failed"
-                add_history("Social Media Enrichment", result.url, history_status, result.model_dump(mode="json"), result.platform)
-                results.append(result.model_dump(mode="json"))
-            except Exception as exc:
-                errors.append({"URL": url, "Platform": selected_platform, "Alasan": str(exc)})
-        progress.progress(100, text="Semua URL selesai diperiksa")
-        batches = st.session_state.setdefault("social_platform_batches", {})
-        batches[selected_platform] = {"schema_version": SOCIAL_BATCH_VERSION, "results": results, "errors": errors, "browser_issues": browser_issues}
+        job_id = create_social_job(
+            selected_platform,
+            urls,
+            SOCIAL_BATCH_VERSION,
+            mock_mode=mock_mode,
+            browser_mode=browser_mode,
+        )
+        st.session_state[f"social_job_{selected_platform}"] = job_id
+        st.session_state.setdefault("social_platform_batches", {}).pop(selected_platform, None)
 
-batches = st.session_state.setdefault("social_platform_batches", {})
-stored_batch = batches.get(selected_platform, {})
-if stored_batch and not is_current_social_batch(stored_batch):
-    batches.pop(selected_platform, None)
-    st.info("Parser MIDETA baru saja diperbarui. Jalankan kembali URL agar hasil yang tampil menggunakan pembacaan terbaru.")
-current_batch = batches.get(selected_platform, {})
+job_key = f"social_job_{selected_platform}"
+job_id = st.session_state.get(job_key)
+current_job = get_social_job(job_id) if job_id else None
+if current_job is None:
+    current_job = get_latest_social_job(selected_platform)
+    if current_job:
+        st.session_state[job_key] = current_job["id"]
+
+if current_job and current_job.get("schema_version") != SOCIAL_BATCH_VERSION:
+    current_job = None
+    st.session_state.pop(job_key, None)
+    st.info("Parser MIDETA baru saja diperbarui. Mulai proses baru agar hasil menggunakan pembacaan terbaru.")
+
+if current_job and current_job["status"] in {"running", "paused"}:
+    percentage = int(current_job["processed"] / current_job["total"] * 100) if current_job["total"] else 0
+    current_chunk_size = ENRICHMENT_BROWSER_CHUNK_SIZE if current_job["browser_mode"] else ENRICHMENT_CHUNK_SIZE
+    st.progress(percentage, text=f"{current_job['processed']:,} dari {current_job['total']:,} URL sudah disimpan")
+    control_cols = st.columns([2, 2, 5])
+    if current_job["status"] == "running":
+        if control_cols[0].button("Jeda proses", width="stretch"):
+            set_social_job_status(current_job["id"], "paused")
+            st.rerun()
+        control_cols[2].caption(f"MIDETA memproses {current_chunk_size} URL per tahap dan melanjutkan otomatis.")
+    else:
+        if control_cols[0].button("Lanjutkan proses", type="primary", width="stretch"):
+            set_social_job_status(current_job["id"], "running")
+            st.rerun()
+        control_cols[2].caption("Hasil yang sudah selesai tetap tersimpan. Tekan Lanjutkan proses untuk meneruskan antrean.")
+
+if current_job and current_job["status"] == "running":
+    active_browser = None
+    if current_job["platform"] == "Instagram" and current_job["browser_mode"] and not current_job["mock_mode"]:
+        try:
+            active_browser = instagram_browser()
+            if not active_browser.is_logged_in():
+                set_social_job_status(current_job["id"], "paused")
+                st.error("Sesi Instagram berakhir. Login kembali, lalu tekan Lanjutkan proses.")
+                st.stop()
+        except InstagramBrowserError as exc:
+            set_social_job_status(current_job["id"], "paused")
+            st.error(str(exc))
+            st.stop()
+
+    chunk_size = ENRICHMENT_BROWSER_CHUNK_SIZE if current_job["browser_mode"] else ENRICHMENT_CHUNK_SIZE
+    chunk = next_social_job_items(current_job["id"], chunk_size)
+    if not chunk:
+        set_social_job_status(current_job["id"], "completed")
+        st.rerun()
+
+    progress = st.progress(
+        int(current_job["processed"] / current_job["total"] * 100),
+        text=f"Menyiapkan tahap berikutnya dari {current_job['total']:,} URL…",
+    )
+    for item in chunk:
+        url = item["url"]
+        position = item["position"]
+        try:
+            connector = get_platform_connector(url, current_job["platform"])
+            progress.progress(
+                int((position - 1) / current_job["total"] * 100),
+                text=f"Memeriksa {connector.platform} pada URL {position:,} dari {current_job['total']:,}…",
+            )
+            result = connector.mock_enrichment(url) if current_job["mock_mode"] else connector.enrich(url)
+            browser_issue = None
+            if active_browser is not None:
+                progress.progress(
+                    int((position - 1) / current_job["total"] * 100),
+                    text=f"Membaca tampilan Instagram pada URL {position:,} dari {current_job['total']:,}…",
+                )
+                try:
+                    metrics = active_browser.collect(result.url, result.username.value)
+                    result = apply_instagram_browser_metrics(result, metrics)
+                except InstagramBrowserError as exc:
+                    browser_issue = {"URL": url, "Alasan": str(exc)}
+                    result.note = f"{result.note} Pemeriksaan melalui browser belum berhasil: {exc}".strip()
+            fields = [result.username, result.caption, result.posted_at, result.followers, result.likes, result.comments, result.shares, result.views, result.bookmarks, result.reposts]
+            has_data = any(field.status == FieldStatus.AVAILABLE for field in fields)
+            history_status = "mock" if result.is_mock else "completed" if has_data else "failed"
+            result_data = result.model_dump(mode="json")
+            add_history("Social Media Enrichment", result.url, history_status, result_data, result.platform)
+            record_social_job_item(
+                current_job["id"],
+                position,
+                "completed",
+                result=result_data,
+                browser_issue=browser_issue,
+            )
+        except Exception as exc:
+            reason = str(exc)
+            if "permintaan dibatasi" in reason.casefold() or "http 429" in reason.casefold():
+                set_social_job_status(current_job["id"], "paused")
+                st.warning("Platform sedang membatasi request. Antrean dijeda dan URL ini akan dicoba lagi saat proses dilanjutkan.")
+                st.stop()
+            record_social_job_item(
+                current_job["id"],
+                position,
+                "failed",
+                error={"URL": url, "Platform": current_job["platform"], "Alasan": reason},
+            )
+        progress.progress(
+            int(position / current_job["total"] * 100),
+            text=f"{position:,} dari {current_job['total']:,} URL sudah disimpan",
+        )
+
+    updated_job = get_social_job(current_job["id"])
+    if updated_job and updated_job["status"] != "completed":
+        time.sleep(0.3)
+    st.rerun()
+
+if current_job:
+    current_batch = {
+        "schema_version": current_job["schema_version"],
+        "results": current_job["results"],
+        "errors": current_job["errors"],
+        "browser_issues": current_job["browser_issues"],
+        "processed": current_job["processed"],
+        "total": current_job["total"],
+        "status": current_job["status"],
+    }
+else:
+    batches = st.session_state.setdefault("social_platform_batches", {})
+    stored_batch = batches.get(selected_platform, {})
+    if stored_batch and not is_current_social_batch(stored_batch):
+        batches.pop(selected_platform, None)
+        stored_batch = {}
+    current_batch = stored_batch
 if raw_results := current_batch.get("results"):
     from src.models import SocialResult
     results = [SocialResult.model_validate(item) for item in raw_results]
