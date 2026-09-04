@@ -12,6 +12,8 @@ Pengguna dapat memasukkan beberapa URL sekaligus dengan menulis satu URL pada se
 
 Satu proses dapat memuat sampai 1.000 URL. MIDETA mengerjakan maksimal 20 URL per tahap dan langsung menyimpan hasil setiap URL ke SQLite. Mode browser Instagram memakai tahap yang lebih kecil karena setiap posting perlu dibuka di Chrome. Tahap berikutnya berjalan otomatis. Jika aplikasi atau koneksi terhenti, antrean tetap tersimpan dan dapat dilanjutkan melalui tombol `Lanjutkan proses`.
 
+Angka engagement seperti views merupakan snapshot saat URL diperiksa dan dapat bertambah setelah proses selesai. Untuk Threads, MIDETA mencocokkan angka dengan shortcode posting dan memprioritaskan nilai terbaru yang tersedia pada respons halaman.
+
 1. Tanggal posting
 2. Author
 3. Caption
@@ -25,7 +27,7 @@ Satu proses dapat memuat sampai 1.000 URL. MIDETA mengerjakan maksimal 20 URL pe
 
 Data yang memang tidak diberikan oleh platform akan ditandai sebagai tidak tersedia. Khusus Followers dan Views pada Facebook, Instagram, TikTok, serta Threads, MIDETA menampilkan angka 0 jika platform tidak menyediakan nilainya. Reposts Instagram juga menjadi 0 jika angkanya tidak tercantum. Untuk Facebook, jumlah followers diprioritaskan. Jika followers tidak ditampilkan tetapi jumlah friends tersedia secara publik, MIDETA menggunakan jumlah friends. Views Reel Facebook dan Instagram juga dicari dari daftar Reel publik author dengan mencocokkan ID posting yang sama. Tanggal posting pada tabel dan file unduhan menggunakan format seperti `25-Aug-2026`.
 
-Instagram mempunyai mode browser untuk data yang hanya terlihat setelah login. Mode ini membaca followers dari profil, repost dari halaman posting, dan views dari Reel dengan shortcode yang sama. Chrome yang dipakai terpisah dari Chrome utama agar sesi MIDETA tidak tercampur dengan profil kerja atau profil pribadi lainnya.
+Instagram mempunyai mode browser untuk data yang hanya terlihat setelah login. Jika request publik tidak memberikan hasil, browser juga dapat mengisi author, caption, tanggal, likes, dan comments dari halaman posting. Followers dibaca dari profil, sedangkan repost dan views dicocokkan dengan shortcode yang sama. Chrome yang dipakai terpisah dari Chrome utama agar sesi MIDETA tidak tercampur dengan profil kerja atau profil pribadi lainnya.
 
 Pada Facebook, author dan angka engagement dicocokkan dengan ID posting target. Data dari posting rekomendasi tidak dipakai. Jika Reel target tidak menampilkan angka likes atau comments, nilainya menjadi 0. Untuk posting grup, profil author juga diperiksa agar followers atau friends yang tersedia tetap dapat digunakan.
 

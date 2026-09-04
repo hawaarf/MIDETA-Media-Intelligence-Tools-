@@ -17,6 +17,7 @@ THREADS_POST_HTML = """<html><head><meta property="og:description" content="Capt
 THREADS_PROFILE_HTML = """<html><head><meta property="og:description" content="88.7K Followers • 68 Threads. See the latest conversations with @jkt.feed."></head><script>{"follower_count":88725}</script></html>"""
 THREADS_COMMENT_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script>{"text_post_app_info":{"direct_reply_count":44},"code":"PostingLain"},{"text_post_app_info":{"direct_reply_count":8},"code":"DcgoGvoAQxG"}</script></html>"""
 THREADS_TWO_COMMENTS_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script>{"view_counts":225,"text_post_app_info":{"direct_reply_count":2},"code":"DciTeqClGKc"}</script></html>"""
+THREADS_FRESH_VIEW_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><body><header>172 views</header><script>{"code":"PostingLain","view_counts":9999},{"code":"Dc2d5IKmiGU","view_counts":170},{"code":"Dc2d5IKmiGU","view_count":172}</script></body></html>"""
 THREADS_TAKEN_AT_HTML = """<html><script>{"code":"PostingLain","taken_at":1788245420},{"code":"DcxnOUwk51O","text_post_app_info":{"direct_reply_count":0},"taken_at":1788331158}</script></html>"""
 THREADS_REPLIES_HTML = """<html><script type="application/json">{"thread_items":[{"post":{"pk":"root-1","code":"TargetThreads","caption":{"text":"Posting utama"},"user":{"username":"pemilik"},"taken_at":1788249600}},{"post":{"pk":"comment-1","code":"CommentThreads","caption":{"text":"Komentar langsung"},"user":{"username":"ayu"},"like_count":12,"taken_at":1788253200,"text_post_app_info":{"reply_to_post_id":"root-1","root_post_id":"root-1","direct_reply_count":1}}},{"post":{"pk":"reply-1","code":"ReplyThreads","caption":{"text":"Balasan komentar"},"user":{"username":"bima"},"like_count":3,"taken_at":1788256800,"text_post_app_info":{"reply_to_post_id":"comment-1","root_post_id":"root-1","direct_reply_count":0}}},{"post":{"pk":"other-1","code":"OtherThreads","caption":{"text":"Posting rekomendasi"},"user":{"username":"lain"},"like_count":999,"text_post_app_info":{"root_post_id":"other-root"}}}]}</script></html>"""
 X_REPLIES_HTML = """<html><script type="application/json">{"tweets":[{"rest_id":"100","legacy":{"full_text":"Posting utama","conversation_id_str":"100","favorite_count":9,"reply_count":2},"core":{"user_results":{"result":{"legacy":{"screen_name":"pemilik"}}}}},{"rest_id":"101","legacy":{"full_text":"Komentar langsung","conversation_id_str":"100","in_reply_to_status_id_str":"100","favorite_count":15,"reply_count":1,"created_at":"Thu Sep 03 03:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"ayu"}}}}},{"rest_id":"102","legacy":{"full_text":"Balasan komentar","conversation_id_str":"100","in_reply_to_status_id_str":"101","favorite_count":4,"reply_count":0,"created_at":"Thu Sep 03 04:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"bima"}}}}},{"rest_id":"999","legacy":{"full_text":"Tweet rekomendasi","conversation_id_str":"999","in_reply_to_status_id_str":"998","favorite_count":999},"core":{"user_results":{"result":{"legacy":{"screen_name":"lain"}}}}}]}</script></html>"""
@@ -170,6 +171,13 @@ class ConnectorTests(unittest.TestCase):
         result = get_connector(url).enrich(url)
         self.assertEqual(result.comments.value, 2)
         self.assertEqual(result.views.value, 225)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(THREADS_FRESH_VIEW_HTML, "https://www.threads.com/@soloinfo/post/Dc2d5IKmiGU"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@soloinfo/post/Dc2d5IKmiGU")
+    def test_threads_prefers_fresh_view_count_for_the_target_post(self, _validate, _fetch):
+        url = "https://www.threads.com/@soloinfo/post/Dc2d5IKmiGU"
+        result = get_connector(url).enrich(url)
+        self.assertEqual(result.views.value, 172)
 
     @patch("src.connectors.base.fetch_public_html", return_value=(THREADS_TAKEN_AT_HTML, "https://www.threads.com/@mozaiktravel.id/post/DcxnOUwk51O"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@mozaiktravel.id/post/DcxnOUwk51O")

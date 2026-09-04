@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock
 
 from src.connectors import get_connector
 from src.instagram_browser import (
@@ -66,6 +67,67 @@ class InstagramBrowserTests(unittest.TestCase):
         self.assertEqual(updated.views.value, 7_630)
         self.assertEqual(updated.reposts.value, 2)
         self.assertIn("browser MIDETA", updated.note)
+
+    def test_reads_post_metadata_when_public_request_is_empty(self):
+        source = """<html><head><meta property="og:description" content="1 likes, 0 comments - ctv.now on September 4, 2026: &quot;Caption lengkap dari browser&quot;"></head></html>"""
+        metrics = InstagramBrowserCollector._post_metadata(
+            source,
+            "https://www.instagram.com/p/Dc2ayNXjxmW/",
+            "Dc2ayNXjxmW",
+        )
+        self.assertEqual(metrics.username, "ctv.now")
+        self.assertEqual(metrics.caption, "Caption lengkap dari browser")
+        self.assertEqual(metrics.posted_at, "2026-09-04")
+        self.assertEqual(metrics.likes, 1)
+        self.assertEqual(metrics.comments, 0)
+
+    def test_collect_uses_username_from_browser_when_public_author_is_missing(self):
+        collector = InstagramBrowserCollector()
+        collector.is_logged_in = Mock(return_value=True)
+        collector._post_metrics = Mock(
+            return_value=InstagramBrowserMetrics(
+                username="ctv.now",
+                caption="Caption browser",
+                posted_at="2026-09-04",
+                likes=1,
+                comments=0,
+                reposts=0,
+            )
+        )
+        collector._profile_metrics = Mock(return_value=(36_500, None))
+
+        metrics = collector.collect("https://www.instagram.com/p/Dc2ayNXjxmW/", None)
+
+        self.assertEqual(metrics.username, "ctv.now")
+        self.assertEqual(metrics.followers, 36_500)
+        collector._profile_metrics.assert_called_once_with(
+            "ctv.now",
+            "Dc2ayNXjxmW",
+            find_views=True,
+        )
+
+    def test_browser_metadata_fills_an_empty_public_result(self):
+        result = get_connector("https://www.instagram.com/p/demo/").mock_enrichment(
+            "https://www.instagram.com/p/demo/"
+        )
+        for field in (result.username, result.caption, result.posted_at, result.likes, result.comments):
+            field.value = None
+            field.status = "Not publicly visible"
+        updated = apply_instagram_browser_metrics(
+            result,
+            InstagramBrowserMetrics(
+                username="ctv.now",
+                caption="Caption dari browser",
+                posted_at="2026-09-04",
+                likes=1,
+                comments=0,
+            ),
+        )
+        self.assertEqual(updated.username.value, "ctv.now")
+        self.assertEqual(updated.caption.value, "Caption dari browser")
+        self.assertEqual(updated.posted_at.value, "2026-09-04")
+        self.assertEqual(updated.likes.value, 1)
+        self.assertEqual(updated.comments.value, 0)
 
 
 if __name__ == "__main__":

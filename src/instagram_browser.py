@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.common.exceptions import InvalidSessionIdException, NoSuchWindowException, WebDriverException
 from selenium.webdriver.common.by import By
@@ -14,6 +15,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from src.config import DATA_DIR
 from src.connectors.base import BaseConnector
+from src.connectors.instagram import InstagramConnector
 from src.models import DataField, FieldStatus, SocialResult
 
 
@@ -30,8 +32,13 @@ class InstagramLoginRequired(InstagramBrowserError):
 
 @dataclass
 class InstagramBrowserMetrics:
+    username: str | None = None
+    caption: str | None = None
+    posted_at: str | None = None
     followers: int | None = None
     views: int | None = None
+    likes: int | None = None
+    comments: int | None = None
     reposts: int | None = None
 
 
@@ -40,13 +47,23 @@ def apply_instagram_browser_metrics(
     metrics: InstagramBrowserMetrics,
 ) -> SocialResult:
     """Replace public fallbacks with values displayed by the logged-in browser."""
+    if metrics.username:
+        result.username = DataField(value=metrics.username, status=FieldStatus.AVAILABLE)
+    if metrics.caption:
+        result.caption = DataField(value=metrics.caption, status=FieldStatus.AVAILABLE)
+    if metrics.posted_at:
+        result.posted_at = DataField(value=metrics.posted_at, status=FieldStatus.AVAILABLE)
     if metrics.followers is not None:
         result.followers = DataField(value=metrics.followers, status=FieldStatus.AVAILABLE)
     if metrics.views is not None:
         result.views = DataField(value=metrics.views, status=FieldStatus.AVAILABLE)
+    if metrics.likes is not None:
+        result.likes = DataField(value=metrics.likes, status=FieldStatus.AVAILABLE)
+    if metrics.comments is not None:
+        result.comments = DataField(value=metrics.comments, status=FieldStatus.AVAILABLE)
     if metrics.reposts is not None:
         result.reposts = DataField(value=metrics.reposts, status=FieldStatus.AVAILABLE)
-    browser_note = "Followers, views, dan repost Instagram diperiksa melalui browser MIDETA yang sudah login."
+    browser_note = "Metadata Instagram diperiksa melalui browser MIDETA yang sudah login."
     result.note = f"{result.note} {browser_note}".strip() if result.note else browser_note
     return result
 
@@ -90,6 +107,90 @@ class InstagramBrowserCollector:
             re.I,
         )
         return BaseConnector._human_count(match.group(1)) if match else None
+
+    @classmethod
+    def _target_username(cls, source: str, shortcode: str) -> str | None:
+        soup = BeautifulSoup(source, "lxml")
+        for payload in BaseConnector._embedded_json(soup):
+            for node in BaseConnector._walk(payload):
+                post = node.get("post") if isinstance(node.get("post"), dict) else node
+                code = post.get("code") or post.get("shortcode")
+                if str(code or "").casefold() != shortcode.casefold():
+                    continue
+                user = post.get("user")
+                if isinstance(user, dict):
+                    username = cls._username(user.get("username"))
+                    if username:
+                        return username
+                username = cls._username(post.get("username"))
+                if username:
+                    return username
+        return None
+
+    @classmethod
+    def _post_metadata(cls, source: str, url: str, shortcode: str) -> InstagramBrowserMetrics:
+        soup = BeautifulSoup(source, "lxml")
+        description = BaseConnector._meta(
+            soup,
+            'meta[property="og:description"]',
+            'meta[name="description"]',
+        )
+        author = BaseConnector._meta(
+            soup,
+            'meta[name="author"]',
+            'meta[property="profile:username"]',
+        )
+        author = cls._username(author) or cls._target_username(source, shortcode)
+        if not author and description:
+            author_match = re.search(
+                r"-\s*([A-Za-z0-9._]+)\s+on\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}\s*:",
+                description,
+                re.I,
+            )
+            author = cls._username(author_match.group(1)) if author_match else None
+
+        connector = InstagramConnector()
+        caption = connector._platform_caption(source, url, description)
+        posted_at = connector._platform_posted_at(source, soup, url, None)
+        likes = cls._target_metric(source, shortcode, "like_count", "likes_count")
+        comments = cls._target_metric(
+            source,
+            shortcode,
+            "comment_count",
+            "comments_count",
+            "total_comment_count",
+        )
+        if description:
+            if likes is None:
+                likes = cls._labeled_count(description, "like", "likes")
+            if comments is None:
+                comments = cls._labeled_count(description, "comment", "comments")
+        return InstagramBrowserMetrics(
+            username=author,
+            caption=caption,
+            posted_at=posted_at,
+            likes=likes,
+            comments=comments,
+        )
+
+    def _username_from_dom(self) -> str | None:
+        try:
+            links = self.driver.find_elements(By.XPATH, "//article//a[@href] | //main//a[@href]")
+        except WebDriverException:
+            return None
+        reserved = {"accounts", "direct", "explore", "p", "reel", "reels", "stories"}
+        for link in links:
+            try:
+                href = str(link.get_attribute("href") or "")
+            except WebDriverException:
+                continue
+            parts = [part for part in urlparse(href).path.split("/") if part]
+            if len(parts) != 1 or parts[0].casefold() in reserved:
+                continue
+            username = self._username(parts[0])
+            if username:
+                return username
+        return None
 
     @classmethod
     def _target_metric(cls, source: str, shortcode: str, *keys: str) -> int | None:
@@ -324,7 +425,7 @@ class InstagramBrowserCollector:
             return None, None
         return self._media_info_metrics(str(response.get("text") or ""))
 
-    def _post_metrics(self, url: str, shortcode: str) -> tuple[int | None, int | None]:
+    def _post_metrics(self, url: str, shortcode: str) -> InstagramBrowserMetrics:
         driver = self.start()
         driver.get(url)
         self._wait_for_page()
@@ -332,6 +433,9 @@ class InstagramBrowserCollector:
             raise InstagramLoginRequired("Login Instagram belum selesai di Chrome MIDETA.")
         source = driver.page_source
         body = self._body_text()
+        metadata = self._post_metadata(source, url, shortcode)
+        if not metadata.username:
+            metadata.username = self._username_from_dom()
         api_reposts, api_views = self._authenticated_media_metrics(source, shortcode)
         reposts = api_reposts
         if reposts is None:
@@ -354,7 +458,13 @@ class InstagramBrowserCollector:
             views = self._target_metric(source, shortcode, "play_count", "view_count", "video_view_count")
         if views is None:
             views = self._labeled_count(body, "view", "views", "play", "plays")
-        return reposts, views
+        if metadata.likes is None:
+            metadata.likes = self._metric_by_icon("like")
+        if metadata.comments is None:
+            metadata.comments = self._metric_by_icon("comment")
+        metadata.reposts = reposts
+        metadata.views = views
+        return metadata
 
     def _profile_metrics(
         self,
@@ -418,17 +528,19 @@ class InstagramBrowserCollector:
                 "Instagram belum login. Tekan Buka Chrome Instagram, selesaikan login, lalu periksa kembali."
             )
         shortcode = self._shortcode(url)
-        username = self._username(author)
-        if not shortcode or not username:
-            raise InstagramBrowserError("Shortcode posting atau username Instagram tidak dapat dibaca.")
-        reposts, direct_views = self._post_metrics(url, shortcode)
+        if not shortcode:
+            raise InstagramBrowserError("Shortcode posting Instagram tidak dapat dibaca dari URL.")
+        post_metrics = self._post_metrics(url, shortcode)
+        username = self._username(author) or post_metrics.username
+        if not username:
+            raise InstagramBrowserError("Username Instagram tidak ditemukan pada halaman posting.")
         followers, grid_views = self._profile_metrics(
             username,
             shortcode,
-            find_views=direct_views is None,
+            find_views=post_metrics.views is None,
         )
-        return InstagramBrowserMetrics(
-            followers=followers,
-            views=grid_views if grid_views is not None else direct_views,
-            reposts=reposts,
-        )
+        post_metrics.username = username
+        post_metrics.followers = followers
+        if grid_views is not None:
+            post_metrics.views = grid_views
+        return post_metrics

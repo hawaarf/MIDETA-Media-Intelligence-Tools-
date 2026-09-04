@@ -33,19 +33,82 @@ class ThreadsConnector(BaseConnector):
             return None
         return self._followers_from_profile(f"https://www.threads.com/@{username}")
 
+    @classmethod
+    def _metric_number(cls, value) -> int | None:
+        if isinstance(value, dict):
+            value = value.get("count") or value.get("total_count") or value.get("value")
+        if isinstance(value, (int, float)):
+            return int(value)
+        if not isinstance(value, str):
+            return None
+        return cls._human_count(value)
+
+    @classmethod
+    def _target_view_counts(cls, html: str, shortcode: str) -> list[int]:
+        keys = {
+            "view_count",
+            "view_counts",
+            "views_count",
+            "play_count",
+            "video_view_count",
+        }
+        counts: list[int] = []
+        soup = BeautifulSoup(html, "lxml")
+        for payload in cls._embedded_json(soup):
+            for node in cls._walk(payload):
+                post = node.get("post") if isinstance(node.get("post"), dict) else node
+                code = post.get("code") or post.get("shortcode")
+                if str(code or "").casefold() != shortcode.casefold():
+                    continue
+                for part in cls._walk(post):
+                    for key in keys:
+                        count = cls._metric_number(part.get(key))
+                        if count is not None:
+                            counts.append(count)
+
+        code_matches = list(
+            re.finditer(r'"(?:code|shortcode)"\s*:\s*"([^"\\]+)"', html, re.I)
+        )
+        metric_pattern = r'"(?:view_counts?|views_count|play_count|video_view_count)"\s*:\s*"?([\d.,]+\s*(?:k|m|b)?)"?'
+        for metric in re.finditer(metric_pattern, html, re.I):
+            if not code_matches:
+                break
+            closest = min(
+                code_matches,
+                key=lambda code: (abs(code.start() - metric.start()), code.start() > metric.start()),
+            )
+            if closest.group(1).casefold() != shortcode.casefold():
+                continue
+            if abs(closest.start() - metric.start()) > 40_000:
+                continue
+            count = cls._metric_number(metric.group(1))
+            if count is not None:
+                counts.append(count)
+        return counts
+
+    @classmethod
+    def _visible_view_count(cls, html: str) -> int | None:
+        soup = BeautifulSoup(html, "lxml")
+        for node in soup.select("script, style, noscript"):
+            node.decompose()
+        visible = re.search(
+            r"([\d.,]+\s*(?:k|m|b|rb|ribu|jt|juta)?)\s+(?:views?|tayangan)\b",
+            soup.get_text(" ", strip=True),
+            re.I,
+        )
+        return cls._metric_number(visible.group(1)) if visible else None
+
     def _platform_metrics(self, html: str, url: str) -> dict[str, int]:
         metrics: dict[str, int] = {}
-        match = re.search(r'"view_counts?"\s*:\s*"?(\d+)"?', html, re.I)
-        if match:
-            metrics["views"] = int(match.group(1))
-        else:
-            visible = re.search(r"([\d.,]+\s*(?:k|m|b|rb|ribu|jt|juta)?)\s+views?\b", html, re.I)
-            count = self._human_count(visible.group(1)) if visible else None
-            if count is not None:
-                metrics["views"] = count
-
         shortcode = self._post_shortcode(url)
         if shortcode:
+            view_counts = self._target_view_counts(html, shortcode)
+            visible_views = self._visible_view_count(html)
+            if visible_views is not None:
+                view_counts.append(visible_views)
+            if view_counts:
+                metrics["views"] = max(view_counts)
+
             code_matches = list(re.finditer(r'"code"\s*:\s*"([^"]+)"', html, re.I))
             reply_counts = [
                 (reply.start(), int(reply.group(1)))
@@ -61,6 +124,10 @@ class ThreadsConnector(BaseConnector):
                     candidates.append((distance, count))
             if candidates:
                 metrics["comments"] = min(candidates, key=lambda item: item[0])[1]
+        else:
+            visible_views = self._visible_view_count(html)
+            if visible_views is not None:
+                metrics["views"] = visible_views
         return metrics
 
     def _platform_posted_at(self, html: str, soup, url: str, current: str | None) -> str | None:
