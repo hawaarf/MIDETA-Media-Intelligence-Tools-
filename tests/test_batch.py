@@ -1,5 +1,5 @@
 import unittest
-from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, format_posting_date, is_current_social_batch, parse_url_list, rank_comment_rows, social_result_row
+from src.batch import SOCIAL_BATCH_VERSION, compact_comment_export_rows, compact_social_export_row, format_comment_date, format_posting_date, is_current_social_batch, parse_url_list, rank_comment_rows, social_result_row
 from src.connectors import get_connector
 
 class BatchTests(unittest.TestCase):
@@ -17,6 +17,27 @@ class BatchTests(unittest.TestCase):
         ranked = rank_comment_rows(rows)
         self.assertEqual([row["Komentar"] for row in ranked], ["B", "A", "C"])
         self.assertEqual([row["Rank"] for row in ranked], [1, 2, 3])
+
+    def test_comment_export_matches_reference_columns_and_date(self):
+        rows = rank_comment_rows([
+            {
+                "Tanggal komentar": "2026-08-20T12:15:00+00:00",
+                "Author": "@ayu",
+                "Tipe": "parent",
+                "Komentar": "Baris pertama\nbaris kedua",
+                "Likes": 11,
+                "Jumlah reply": 2,
+            }
+        ])
+        exported = compact_comment_export_rows(rows)
+        self.assertEqual(list(exported[0]), ["index", "date", "author", "type", "comment", "like"])
+        self.assertEqual(exported[0]["date"], "Aug 20, 2026")
+        self.assertEqual(exported[0]["author"], "ayu")
+        self.assertEqual(exported[0]["comment"], "Baris pertama baris kedua")
+        self.assertEqual(exported[0]["like"], 11)
+
+    def test_comment_date_keeps_reference_format(self):
+        self.assertEqual(format_comment_date("Aug 20, 2026"), "Aug 20, 2026")
 
     def test_social_export_contains_requested_metrics(self):
         result = get_connector("https://youtu.be/demo").mock_enrichment("https://youtu.be/demo")

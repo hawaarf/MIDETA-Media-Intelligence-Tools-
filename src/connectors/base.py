@@ -46,6 +46,34 @@ class BaseConnector(ABC):
                 continue
 
     @staticmethod
+    def _embedded_json(soup: BeautifulSoup) -> Iterable[Any]:
+        """Yield JSON payloads exposed by script tags on a public page."""
+        decoder = json.JSONDecoder()
+        for script in soup.select("script"):
+            source = script.string or script.get_text()
+            if not source or not source.strip():
+                continue
+            source = source.strip()
+            try:
+                yield json.loads(source)
+                continue
+            except (json.JSONDecodeError, TypeError):
+                pass
+            # Some platform pages assign one JSON object to a JavaScript
+            # variable. raw_decode lets us read that object without executing
+            # the surrounding JavaScript.
+            for marker in ("{", "["):
+                offset = source.find(marker)
+                if offset < 0:
+                    continue
+                try:
+                    value, _ = decoder.raw_decode(source[offset:])
+                except json.JSONDecodeError:
+                    continue
+                yield value
+                break
+
+    @staticmethod
     def _walk(value: Any) -> Iterable[dict]:
         if isinstance(value, dict):
             yield value
@@ -152,6 +180,10 @@ class BaseConnector(ABC):
     ) -> int | None:
         """Return post views from a platform-specific public fallback."""
         return None
+
+    def _platform_comments(self, html: str, final_url: str) -> list[PublicComment]:
+        """Return comments from platform-specific public script data."""
+        return []
 
     @staticmethod
     def _human_count(value: str) -> int | None:
@@ -347,21 +379,22 @@ class BaseConnector(ABC):
             status = FieldStatus.LOGIN_REQUIRED if "login" in str(exc).lower() else FieldStatus.BLOCKED if "ditolak" in str(exc).lower() or "dibatasi" in str(exc).lower() else FieldStatus.FAILED
             return CommentCollection(url=url, platform=self.platform, status=status, reason=str(exc))
         soup = BeautifulSoup(html, "lxml")
-        comments: list[PublicComment] = []
-        for item in self._json_objects(soup):
-            for node, comment_type in self._comment_nodes(item):
-                text = node.get("text") or node.get("commentText")
-                if not text: continue
-                author = node.get("author")
-                author_name = author.get("name") if isinstance(author, dict) else author
-                nested_replies = list(self._comment_nodes(node.get("comment") or node.get("replies") or [], nested=True))
-                reply_count = node.get("replyCount")
-                try: reply_count = int(reply_count) if reply_count is not None else len(nested_replies)
-                except (TypeError, ValueError): reply_count = len(nested_replies)
-                likes = node.get("upvoteCount") or node.get("likeCount")
-                try: likes = int(likes) if likes is not None else None
-                except (TypeError, ValueError): likes = None
-                comments.append(PublicComment(author=author_name, comment=str(text), commented_at=node.get("dateCreated") or node.get("datePublished"), likes=likes, reply_count=reply_count, comment_type=comment_type, source_url=final_url))
+        comments = self._platform_comments(html, final_url)
+        if not comments:
+            for item in self._json_objects(soup):
+                for node, comment_type in self._comment_nodes(item):
+                    text = node.get("text") or node.get("commentText")
+                    if not text: continue
+                    author = node.get("author")
+                    author_name = author.get("name") if isinstance(author, dict) else author
+                    nested_replies = list(self._comment_nodes(node.get("comment") or node.get("replies") or [], nested=True))
+                    reply_count = node.get("replyCount")
+                    try: reply_count = int(reply_count) if reply_count is not None else len(nested_replies)
+                    except (TypeError, ValueError): reply_count = len(nested_replies)
+                    likes = node.get("upvoteCount") or node.get("likeCount")
+                    try: likes = int(likes) if likes is not None else None
+                    except (TypeError, ValueError): likes = None
+                    comments.append(PublicComment(author=author_name, comment=str(text), commented_at=node.get("dateCreated") or node.get("datePublished"), likes=likes, reply_count=reply_count, comment_type=comment_type, source_url=final_url))
         if not comments:
             return CommentCollection(url=final_url, platform=self.platform, status=FieldStatus.NOT_PUBLIC, reason="Tidak ada komentar yang tersedia sebagai data terstruktur publik pada halaman ini.")
         return CommentCollection(url=final_url, platform=self.platform, comments=comments, status=FieldStatus.AVAILABLE)

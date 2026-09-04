@@ -5,7 +5,8 @@ import re
 
 from src.models import SocialResult
 
-SOCIAL_BATCH_VERSION = 14
+SOCIAL_BATCH_VERSION = 20
+COMMENT_BATCH_VERSION = 2
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -26,6 +27,31 @@ def format_posting_date(value) -> str:
             except ValueError:
                 return text
     return f"{parsed.day:02d}-{MONTH_NAMES[parsed.month - 1]}-{parsed.year:04d}"
+
+
+def format_comment_date(value) -> str:
+    """Use the short English date format from the comment reference file."""
+    if value in (None, ""):
+        return "Tidak tersedia"
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, datetime.min.time())
+    else:
+        text = str(value).strip()
+        parsed = None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            for pattern in ("%b %d, %Y", "%a %b %d %H:%M:%S %z %Y"):
+                try:
+                    parsed = datetime.strptime(text, pattern)
+                    break
+                except ValueError:
+                    continue
+        if parsed is None:
+            return text
+    return f"{MONTH_NAMES[parsed.month - 1]} {parsed.day}, {parsed.year:04d}"
 
 def parse_url_list(value: str) -> list[str]:
     """Return unique nonempty URLs while preserving input order."""
@@ -104,3 +130,26 @@ def rank_comment_rows(rows: list[dict]) -> list[dict]:
         row["Rank"] = index
         row["Skor engagement"] = value(row, "Likes") + 2 * value(row, "Jumlah reply")
     return ranked
+
+
+def compact_comment_export_rows(rows: list[dict]) -> list[dict]:
+    """Match the concise column layout used by the supplied comment CSV."""
+    export_rows = []
+    for position, row in enumerate(rows, 1):
+        author = re.sub(r"\s+", " ", str(row.get("Author") or "Tidak tersedia")).strip().lstrip("@")
+        comment = re.sub(r"\s+", " ", str(row.get("Komentar") or "")).strip()
+        try:
+            likes = int(row.get("Likes") or 0)
+        except (TypeError, ValueError):
+            likes = 0
+        export_rows.append(
+            {
+                "index": int(row.get("Rank") or position),
+                "date": format_comment_date(row.get("Tanggal komentar")),
+                "author": author,
+                "type": row.get("Tipe") or "parent",
+                "comment": comment,
+                "like": likes,
+            }
+        )
+    return export_rows

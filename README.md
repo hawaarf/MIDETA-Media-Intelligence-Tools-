@@ -1,6 +1,6 @@
 # MIDETA
 
-MIDETA adalah aplikasi lokal untuk mengumpulkan metadata posting media sosial dan komentar yang tersedia secara publik. Aplikasi dibuat dengan Python dan Streamlit. Hasil pengambilan dapat diperiksa di browser, disimpan ke riwayat, lalu diunduh sebagai CSV atau XLSX.
+MIDETA adalah aplikasi lokal untuk mengumpulkan metadata posting media sosial dan komentar. Aplikasi dibuat dengan Python dan Streamlit. Hasil pengambilan dapat diperiksa di browser, disimpan ke riwayat, lalu diunduh sebagai CSV atau XLSX.
 
 MIDETA mendukung YouTube, TikTok, Facebook, Instagram, Threads, dan X. Setiap platform mempunyai bagian input sendiri agar URL dan proses pengambilannya tidak tercampur.
 
@@ -23,6 +23,8 @@ Pengguna dapat memasukkan beberapa URL sekaligus dengan menulis satu URL pada se
 
 Data yang memang tidak diberikan oleh platform akan ditandai sebagai tidak tersedia. Khusus Followers dan Views pada Facebook, Instagram, TikTok, serta Threads, MIDETA menampilkan angka 0 jika platform tidak menyediakan nilainya. Reposts Instagram juga menjadi 0 jika angkanya tidak tercantum. Untuk Facebook, jumlah followers diprioritaskan. Jika followers tidak ditampilkan tetapi jumlah friends tersedia secara publik, MIDETA menggunakan jumlah friends. Views Reel Facebook dan Instagram juga dicari dari daftar Reel publik author dengan mencocokkan ID posting yang sama. Tanggal posting pada tabel dan file unduhan menggunakan format seperti `25-Aug-2026`.
 
+Instagram mempunyai mode browser untuk data yang hanya terlihat setelah login. Mode ini membaca followers dari profil, repost dari halaman posting, dan views dari Reel dengan shortcode yang sama. Chrome yang dipakai terpisah dari Chrome utama agar sesi MIDETA tidak tercampur dengan profil kerja atau profil pribadi lainnya.
+
 Pada Facebook, author dan angka engagement dicocokkan dengan ID posting target. Data dari posting rekomendasi tidak dipakai. Jika Reel target tidak menampilkan angka likes atau comments, nilainya menjadi 0. Untuk posting grup, profil author juga diperiksa agar followers atau friends yang tersedia tetap dapat digunakan.
 
 Jumlah komentar Threads dibaca dari `direct_reply_count` milik posting yang shortcode-nya sama. Cara ini mencegah jumlah reply dari posting rekomendasi ikut masuk ke hasil.
@@ -31,9 +33,15 @@ Tanggal Threads dibaca dari `taken_at` yang paling dekat dengan shortcode postin
 
 ### Comment Scrapper
 
-Comment Scrapper membaca komentar yang tersedia sebagai data publik. Hasilnya berisi tanggal komentar, author, isi komentar, tipe komentar, jumlah likes, dan jumlah reply.
+Comment Scrapper membaca komentar yang tersedia pada percakapan posting. YouTube, TikTok, Facebook, Instagram, Threads, dan X mempunyai pilihan input sendiri agar URL serta hasilnya tidak tercampur.
+
+Threads dan X memuat komentar melalui JavaScript, sehingga keduanya mempunyai mode browser khusus. Chrome MIDETA membuka percakapan, menampilkan balasan yang tersedia, lalu membaca tanggal, username author, isi komentar, likes, dan jumlah reply. Data hanya diambil dari percakapan posting target. Bagian rekomendasi tidak dimasukkan.
 
 Tipe `parent` berarti komentar tersebut ditulis langsung pada posting. Tipe `reply` berarti komentar tersebut merupakan balasan. Urutan ranking dihitung dari kombinasi likes dan jumlah reply agar komentar dengan engagement terbesar muncul lebih dahulu.
+
+File CSV dan XLSX mengikuti susunan `index`, `date`, `author`, `type`, `comment`, dan `like`. Kolom `index` menjadi urutan ranking. Tanggal ditulis seperti `Aug 20, 2026`, sesuai format file contoh.
+
+Setelah proses selesai, halaman menampilkan preview postingan pertama, jumlah seluruh komentar, jumlah parent, dan jumlah reply. Jika beberapa URL ditempel sekaligus, semua komentarnya tetap digabungkan dalam satu hasil untuk platform yang sedang dipilih.
 
 ### Riwayat Analisis
 
@@ -47,6 +55,38 @@ Setiap proses disimpan ke database SQLite lokal. Halaman riwayat menyediakan pen
 4. Tempel satu atau beberapa URL. Gunakan satu baris untuk satu URL.
 5. Tekan tombol pengambilan data.
 6. Periksa hasilnya, lalu unduh CSV atau XLSX jika diperlukan.
+
+### Mode browser Instagram
+
+1. Pilih Instagram pada halaman Social Media Enrichment.
+2. Aktifkan `Gunakan browser Instagram`.
+3. Tekan `Buka Chrome Instagram`.
+4. Login langsung di jendela Chrome yang terbuka.
+5. Kembali ke MIDETA dan tekan `Periksa Login`.
+6. Masukkan URL lalu jalankan pengambilan metadata seperti biasa.
+
+Login cukup dilakukan sekali selama sesi Instagram masih aktif. Password diketik langsung di Instagram dan tidak dibaca oleh MIDETA.
+
+### Mode browser Threads dan X
+
+1. Pilih Threads atau X pada halaman Comment Scrapper.
+2. Biarkan pilihan browser untuk platform tersebut tetap aktif.
+3. Masukkan URL posting dan tekan `Ambil Semua Komentar`.
+4. Jika percakapan dibatasi, tekan tombol untuk membuka sesi platform, login langsung di Chrome MIDETA satu kali, lalu tekan `Periksa Login`.
+
+Threads dan X memakai profil Chrome yang berbeda. Sesi otomatis dipakai kembali sampai kedaluwarsa atau pengguna logout. Password tetap diketik langsung di situs dan tidak dibaca MIDETA.
+
+## Cara kerja Comment Scrapper untuk Threads dan X
+
+1. URL diperiksa dan harus sesuai dengan platform yang sedang dipilih.
+2. ID posting Threads atau status X dibaca dari URL.
+3. MIDETA membuka halaman percakapan dan menampilkan balasan yang masih tersembunyi.
+4. Pada Threads, setiap komentar dicocokkan melalui ID parent dan ID posting utama.
+5. Pada X, komentar dicocokkan melalui `conversation_id` dan ID tweet yang dibalas.
+6. Posting utama dan rekomendasi dibuang dari hasil.
+7. Komentar langsung diberi tipe `parent`, sedangkan balasan komentar diberi tipe `reply`.
+8. Likes dan jumlah reply dipakai untuk menyusun ranking.
+9. Hasil disimpan ke riwayat dan dapat diunduh sebagai CSV atau XLSX.
 
 ## Cara kerja Social Media Enrichment
 
@@ -101,6 +141,8 @@ app.py                         halaman utama
 pages/                         halaman fitur Streamlit
 src/connectors/                parser untuk setiap platform
 src/http_client.py             request HTTP dan pemeriksaan redirect
+src/instagram_browser.py       pembacaan Instagram melalui Chrome yang sudah login
+src/comment_browser.py         pembacaan komentar dinamis Threads dan X melalui Chrome
 src/validators.py              validasi URL dan perlindungan jaringan lokal
 src/models.py                  bentuk data hasil pengambilan
 src/batch.py                   pemrosesan beberapa URL dan ranking komentar
@@ -113,7 +155,7 @@ tests/                         automated tests
 
 ## Instalasi
 
-MIDETA membutuhkan Python 3.12 atau versi yang lebih baru.
+MIDETA membutuhkan Python 3.12 atau versi yang lebih baru. Mode browser Instagram, Threads, dan X juga membutuhkan Google Chrome.
 
 ```bash
 python3 -m venv .venv
@@ -132,7 +174,7 @@ Jalankan pemeriksaan syntax dan seluruh automated tests dengan perintah berikut:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Tests mencakup validasi URL, pemilihan connector, parsing metadata, parsing Facebook Reel dan grup, pengambilan caption lengkap, pemisahan data posting utama dari rekomendasi, ranking komentar, database, CSV, dan XLSX.
+Tests mencakup validasi URL, pemilihan connector, parsing metadata, parsing Facebook Reel dan grup, pengambilan caption lengkap, pemisahan data posting utama dari rekomendasi, pembacaan angka browser Instagram, koleksi parent dan reply Threads serta X, ranking komentar, database, CSV, dan XLSX.
 
 ## Data contoh
 
@@ -140,7 +182,7 @@ Social Media Enrichment dan Comment Scrapper mempunyai pilihan data contoh. Pili
 
 ## Batasan
 
-MIDETA hanya membaca informasi yang diberikan pada halaman publik. Aplikasi tidak melewati login, CAPTCHA, pembatasan request, atau kontrol akses platform.
+Secara bawaan, MIDETA hanya membaca informasi yang diberikan pada halaman publik. Mode browser Instagram, Threads, dan X dapat menggunakan login yang dilakukan sendiri oleh pengguna. MIDETA tidak mengisi password, melewati CAPTCHA, atau mencoba menembus pembatasan platform.
 
 Struktur halaman media sosial dapat berubah. Jika platform mengubah nama field atau susunan datanya, connector terkait perlu diperbarui. Jumlah informasi yang tersedia juga dapat berbeda pada setiap posting.
 
@@ -148,4 +190,4 @@ Struktur halaman media sosial dapat berubah. Jika platform mengubah nama field a
 
 URL diperiksa sebelum request dan setelah redirect. Alamat lokal, jaringan privat, kredensial di URL, serta port yang bukan port web ditolak. Request mempunyai batas waktu dan ukuran respons dibatasi hingga 8 MB.
 
-Repository tidak menyimpan cookie browser, token, password, file `.env`, Streamlit secrets, atau database riwayat pengguna.
+Repository tidak menyimpan token, password, file `.env`, Streamlit secrets, database riwayat pengguna, atau profil browser. Sesi Chrome MIDETA berada di `data/browser_profiles/` pada komputer lokal dan folder tersebut diabaikan oleh Git.

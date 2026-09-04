@@ -9,6 +9,7 @@ secrets.toml
 .streamlit/secrets.toml
 data/*.db
 data/*.db-*
+data/browser_profiles/
 *.sqlite
 *.sqlite3
 *.tmp

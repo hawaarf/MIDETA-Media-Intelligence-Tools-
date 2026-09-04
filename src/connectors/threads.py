@@ -2,7 +2,10 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import unquote, urlparse
 
+from bs4 import BeautifulSoup
+
 from src.connectors.base import BaseConnector
+from src.models import PublicComment
 
 
 class ThreadsConnector(BaseConnector):
@@ -93,3 +96,159 @@ class ThreadsConnector(BaseConnector):
             return datetime.strptime(match.group(1), "%m/%d/%y").date().isoformat()
         except ValueError:
             return None
+
+    @staticmethod
+    def _number(value, default: int = 0) -> int:
+        try:
+            return int(value) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _reference(node: dict, *keys: str) -> str | None:
+        for key in keys:
+            value = node.get(key)
+            if isinstance(value, dict):
+                value = value.get("pk") or value.get("id") or value.get("code")
+            if value not in (None, ""):
+                return str(value)
+        return None
+
+    @classmethod
+    def _post_record(cls, node: dict) -> dict | None:
+        post = node.get("post") if isinstance(node.get("post"), dict) else node
+        code = post.get("code") or post.get("shortcode")
+        app_info = post.get("text_post_app_info")
+        if not isinstance(app_info, dict):
+            app_info = {}
+        caption = post.get("caption")
+        text = caption.get("text") if isinstance(caption, dict) else caption
+        text = text or post.get("text") or app_info.get("text")
+        user = post.get("user")
+        if not code or not text or not isinstance(user, dict):
+            return None
+        identifier = post.get("pk") or post.get("id") or code
+        parent = cls._reference(
+            app_info,
+            "reply_to_post_id",
+            "replied_to_post_id",
+            "parent_post_id",
+            "reply_to_media_id",
+            "reply_to_post",
+        ) or cls._reference(
+            post,
+            "reply_to_post_id",
+            "replied_to_post_id",
+            "parent_post_id",
+            "reply_to_media_id",
+            "reply_to_post",
+        )
+        root = cls._reference(
+            app_info,
+            "root_post_id",
+            "root_media_id",
+            "conversation_id",
+        ) or cls._reference(post, "root_post_id", "root_media_id", "conversation_id")
+        timestamp = post.get("taken_at") or post.get("created_at")
+        commented_at = None
+        if timestamp is not None:
+            if isinstance(timestamp, (int, float)) or str(timestamp).isdigit():
+                value = int(timestamp)
+                if value > 9_999_999_999:
+                    value //= 1000
+                try:
+                    commented_at = datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+                except (OverflowError, OSError, ValueError):
+                    commented_at = None
+            else:
+                commented_at = str(timestamp)
+        return {
+            "id": str(identifier),
+            "code": str(code),
+            "parent": parent,
+            "root": root,
+            "author": user.get("username") or user.get("name"),
+            "comment": str(text).strip(),
+            "date": commented_at,
+            "likes": cls._number(post.get("like_count") or post.get("likeCount")),
+            "replies": cls._number(
+                app_info.get("direct_reply_count")
+                or post.get("direct_reply_count")
+                or post.get("reply_count")
+            ),
+        }
+
+    def _platform_comments(self, html: str, final_url: str) -> list[PublicComment]:
+        shortcode = self._post_shortcode(final_url)
+        if not shortcode:
+            return []
+        soup = BeautifulSoup(html, "lxml")
+        records: dict[str, dict] = {}
+        fallback_groups: list[list[dict]] = []
+        for payload in self._embedded_json(soup):
+            for node in self._walk(payload):
+                record = self._post_record(node)
+                if record:
+                    records.setdefault(record["id"], record)
+                for key in ("thread_items", "items"):
+                    values = node.get(key)
+                    if not isinstance(values, list):
+                        continue
+                    group = [item for item in (self._post_record(value) for value in values if isinstance(value, dict)) if item]
+                    if group:
+                        fallback_groups.append(group)
+
+        target = next(
+            (record for record in records.values() if record["code"].casefold() == shortcode.casefold()),
+            None,
+        )
+        if not target:
+            return []
+        target_refs = {target["id"], target["code"]}
+        connected: dict[str, str] = {}
+        known_refs = set(target_refs)
+        pending = [record for record in records.values() if record is not target]
+        changed = True
+        while changed:
+            changed = False
+            for record in pending:
+                if record["id"] in connected:
+                    continue
+                parent = record.get("parent")
+                root = record.get("root")
+                if parent in known_refs or root in target_refs:
+                    connected[record["id"]] = "parent" if parent in target_refs else "reply"
+                    known_refs.update({record["id"], record["code"]})
+                    changed = True
+
+        # Some Threads responses omit parent IDs but keep the root and its
+        # direct replies in one thread_items list. Use that bounded list only.
+        if not connected:
+            for group in fallback_groups:
+                target_index = next(
+                    (index for index, item in enumerate(group) if item["code"].casefold() == shortcode.casefold()),
+                    None,
+                )
+                if target_index is None:
+                    continue
+                for record in group[target_index + 1 :]:
+                    records.setdefault(record["id"], record)
+                    connected.setdefault(record["id"], "parent")
+
+        comments = []
+        for identifier, comment_type in connected.items():
+            record = records.get(identifier)
+            if not record or not record["comment"]:
+                continue
+            comments.append(
+                PublicComment(
+                    author=record["author"],
+                    comment=record["comment"],
+                    commented_at=record["date"],
+                    likes=record["likes"],
+                    reply_count=record["replies"],
+                    comment_type=comment_type,
+                    source_url=final_url,
+                )
+            )
+        return comments

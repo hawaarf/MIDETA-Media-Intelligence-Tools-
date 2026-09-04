@@ -78,10 +78,24 @@ class FacebookConnector(BaseConnector):
             positions.update(match.start() for match in re.finditer(pattern, html, re.I))
         return sorted(positions)
 
+    def _target_feedback_positions(self, html: str, url: str) -> list[int]:
+        """Prefer the post-level summary over repeated IDs inside comment records."""
+        identifiers = self._post_identifiers(url)
+        positions: set[int] = set()
+        for identifier in identifiers:
+            target = re.escape(identifier)
+            patterns = (
+                rf'"subscription_target_id"\s*:\s*"{target}"',
+                rf'\\"subscription_target_id\\"\s*:\s*\\"{target}\\"',
+            )
+            for pattern in patterns:
+                positions.update(match.start() for match in re.finditer(pattern, html, re.I))
+        return sorted(positions) or self._target_anchor_positions(html, url)
+
     def _target_windows(self, html: str, url: str, radius: int = 4_000) -> list[tuple[int, str]]:
         return [
             (position, html[max(0, position - radius):min(len(html), position + radius)])
-            for position in self._target_anchor_positions(html, url)
+            for position in self._target_feedback_positions(html, url)
         ]
 
     def _target_owner(self, html: str, url: str) -> tuple[str | None, str | None]:
@@ -373,10 +387,23 @@ class FacebookConnector(BaseConnector):
                 elif reduced_count is not None:
                     metrics["likes"] = reduced_count
             comment_matches = re.findall(r'"total_comment_count"\s*:\s*"?(\d+)"?', window, re.I)
+            if not comment_matches:
+                comment_matches = re.findall(
+                    r'"comment_rendering_instance"\s*:\s*\{[^{}]{0,240}?"comments"\s*:\s*\{\s*"total_count"\s*:\s*"?(\d+)"?',
+                    window,
+                    re.I,
+                )
             if comment_matches:
                 metrics["comments"] = int(comment_matches[-1])
             share_matches = re.findall(r'"share_count_reduced"\s*:\s*"([^"]+)"', window, re.I)
             shares = self._localized_count(share_matches[-1]) if share_matches else None
+            if shares is None:
+                exact_shares = re.findall(
+                    r'"share_count"\s*:\s*\{\s*"count"\s*:\s*"?(\d+)"?',
+                    window,
+                    re.I,
+                )
+                shares = int(exact_shares[-1]) if exact_shares else None
             if shares is not None:
                 metrics["shares"] = int(shares)
             for output, patterns in {
@@ -394,7 +421,11 @@ class FacebookConnector(BaseConnector):
                         metrics[output] = count
                         break
             if metrics:
-                score = len(metrics) * 100 + (10 if "story_location\\\":12" in window or 'story_location":12' in window else 0)
+                score = len(metrics) * 100
+                if "subscription_target_id" in window:
+                    score += 1_000
+                if "story_location\\\":12" in window or 'story_location":12' in window:
+                    score += 10
                 found.append((score, metrics))
         return max(found, key=lambda item: item[0])[1] if found else {}
 

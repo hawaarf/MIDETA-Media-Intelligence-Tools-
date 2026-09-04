@@ -1,6 +1,8 @@
 import re
 from urllib.parse import unquote, urlparse
 
+from bs4 import BeautifulSoup
+
 from src.connectors.base import BaseConnector
 
 
@@ -94,6 +96,9 @@ class InstagramConnector(BaseConnector):
             re.I | re.S,
         )
         caption = match.group(1).strip() if match else current.strip()
+        wrapped = re.fullmatch(r'["“](.*)["”]\s*\.?', caption, re.S)
+        if wrapped:
+            return wrapped.group(1).strip() or current
         quote_pairs = (("\"", "\""), ("“", "”"), ("‘", "’"))
         for opening, closing in quote_pairs:
             if caption.startswith(opening) and caption.endswith(closing):
@@ -122,7 +127,24 @@ class InstagramConnector(BaseConnector):
         username = (author or "").strip().lstrip("@")
         if not re.fullmatch(r"[A-Za-z0-9._]+", username):
             return None
-        return self._followers_from_profile(f"https://www.instagram.com/{username}/")
+        profile_html = self._public_profile_html(f"https://www.instagram.com/{username}/")
+        if not profile_html:
+            return None
+        profile_soup = BeautifulSoup(profile_html, "lxml")
+        visible_text = profile_soup.get_text(" ", strip=True)
+        visible_match = re.search(
+            r"(\d[\d.,]*\s*(?:k|m|b)?)\s+followers\b",
+            visible_text,
+            re.I,
+        )
+        if visible_match:
+            visible_count = self._human_count(visible_match.group(1))
+            if visible_count is not None:
+                return visible_count
+        exact_match = re.search(r'"follower_count"\s*:\s*"?(\d+)"?', profile_html, re.I)
+        if exact_match:
+            return int(exact_match.group(1))
+        return self._profile_count_by_label(profile_html, profile_soup, "followers?")
 
     def _platform_views(self, html: str, soup, url: str, author: str | None) -> int | None:
         username = (author or "").strip().lstrip("@")

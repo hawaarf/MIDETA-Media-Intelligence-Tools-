@@ -4,10 +4,11 @@ import pandas as pd
 import streamlit as st
 from src.database import delete_history, list_history
 from src.exporters import to_csv_bytes, to_xlsx_bytes
-from src.ui import apply_theme, page_intro
+from src.ui import apply_theme, page_intro, render_footer, render_github_profile
 
 st.set_page_config(page_title="Riwayat Analisis | MIDETA", page_icon="🗂️", layout="wide")
 apply_theme()
+render_github_profile()
 page_intro("03", "Riwayat Analisis", "Temukan kembali dan kelola hasil yang tersimpan di perangkat Anda.")
 
 filters = st.columns([2, 1, 1, 1, 1])
@@ -46,3 +47,5 @@ if records:
                 st.error("Hasil tidak ditemukan.")
 else:
     st.info("Belum ada riwayat yang cocok dengan filter.")
+
+render_footer()

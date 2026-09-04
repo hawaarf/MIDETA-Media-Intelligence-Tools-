@@ -1,10 +1,11 @@
 """Premium landing page for MIDETA."""
 import streamlit as st
 from src.config import PAGE_TITLE
-from src.ui import apply_theme, render_brand_header
+from src.ui import apply_theme, render_brand_header, render_footer, render_github_profile
 
 st.set_page_config(page_title=PAGE_TITLE, page_icon="◉", layout="wide", initial_sidebar_state="collapsed")
 apply_theme()
+render_github_profile()
 render_brand_header()
 
 hero_text, hero_visual = st.columns([1.08, .92], gap="large", vertical_alignment="center")
@@ -36,4 +37,4 @@ with principles:
 st.markdown('<div class="cta"><div class="section-label">MULAI DARI SATU TAUTAN</div><h2>SIAP MELIHAT INFORMASI DENGAN LEBIH JELAS?</h2><p>Masukkan tautan publik dan MIDETA akan membantu merapikan datanya.</p></div>', unsafe_allow_html=True)
 _, launch, _ = st.columns([1, 1, 1])
 launch.page_link("pages/1_Social_Media_Enrichment.py", label="Buka MIDETA", icon=":material/rocket_launch:", width="stretch")
-st.markdown('<footer><b>MIDETA</b><span>Media Intelligence Tools · Berjalan secara lokal</span></footer>', unsafe_allow_html=True)
+render_footer()
