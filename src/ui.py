@@ -38,18 +38,18 @@ ENRICHMENT_GUIDES = {
         "note": "Posting privat, grup tertutup, dan halaman yang memaksa login akan ditandai tidak tersedia atau diblokir.",
     },
     "Instagram": {
-        "summary": "Pilih jalur cepat tanpa login atau jalur lengkap untuk followers, views, dan repost yang lebih akurat.",
+        "summary": "Pilih Fast untuk engagement atau Advanced untuk metadata lengkap. Keduanya memakai sesi Instagram yang sudah login.",
         "modes": [
-            ("Jalur cepat · tanpa login", "Matikan ‘Gunakan browser Instagram’. Cocok jika butuh caption, tanggal, likes/comments, dan metadata publik secepatnya. Repost dapat tampil 0 jika tidak diberikan publik."),
-            ("Jalur lengkap · login sekali", "Aktifkan browser Instagram, buka Chrome Instagram, login satu kali, lalu Periksa Login. Gunakan jalur ini jika membutuhkan followers, views Reel, dan repost."),
+            ("Fast enrichment · login", "Membuka halaman posting saja untuk mengambil likes, comments, shares, dan repost lebih cepat. Followers dan views tidak dicari."),
+            ("Advanced enrichment · login", "Membuka posting lalu profil/Reels untuk melengkapi followers dan views, selain engagement posting. Waktunya lebih lama."),
         ],
         "steps": [
-            ("Tentukan kebutuhan", "Pilih cepat tanpa repost lengkap, atau browser untuk data yang hanya muncul setelah login."),
-            ("Siapkan sesi", "Untuk jalur lengkap, login satu kali di Chrome khusus MIDETA; sesi akan digunakan kembali."),
+            ("Tentukan kebutuhan", "Pilih Fast untuk engagement saja atau Advanced untuk followers dan views juga."),
+            ("Siapkan sesi", "Login satu kali di Chrome khusus MIDETA; sesi yang sama digunakan oleh kedua mode."),
             ("Tempel URL", "Masukkan URL post atau Reel Instagram, satu URL per baris."),
             ("Ambil & periksa", "Jalankan proses, cek catatan browser, lalu unduh CSV atau XLSX."),
         ],
-        "note": "Password diketik langsung di Instagram dan tidak dibaca MIDETA. Tanpa browser, proses tetap bisa berjalan tetapi repost/views/followers dapat 0 atau dibulatkan.",
+        "note": "Password diketik langsung di Instagram dan tidak dibaca MIDETA. Fast tidak membuka profil/Reels; gunakan Advanced jika Followers dan Views diperlukan.",
     },
     "Threads": {
         "summary": "Untuk post Threads publik. Enrichment metadata tidak memerlukan login.",
@@ -113,7 +113,7 @@ COMMENT_GUIDES = {
             ("Ambil komentar", "MIDETA membaca komentar yang tersedia sebagai data terstruktur publik."),
             ("Periksa hasil", "Jika kosong, lihat alasan pada bagian URL yang memerlukan perhatian."),
         ],
-        "note": "Login Instagram pada halaman Enrichment digunakan untuk followers/views/repost, bukan untuk membuka komentar privat di Comment Scrapper.",
+        "note": "Login Instagram pada halaman Enrichment digunakan untuk metadata posting dan mode Advanced, bukan untuk membuka komentar privat di Comment Scrapper.",
     },
     "Threads": {
         "summary": "MIDETA otomatis memakai browser Threads agar komentar dinamis, parent, dan reply dapat dibaca.",

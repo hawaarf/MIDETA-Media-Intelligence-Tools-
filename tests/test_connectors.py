@@ -71,6 +71,18 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.views.value, 0)
         self.assertEqual(result.reposts.value, 0)
 
+    @patch("src.connectors.base.fetch_public_html", return_value=(INSTAGRAM_PROFILE_POST_HTML, "https://www.instagram.com/p/profiletest/"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/profiletest/")
+    def test_instagram_post_only_enrichment_skips_profile_requests(self, _validate, _fetch):
+        url = "https://www.instagram.com/p/profiletest/"
+
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+
+        self.assertEqual(result.username.value, "profilcontoh")
+        self.assertEqual(result.followers.value, 0)
+        self.assertEqual(result.views.value, 0)
+        self.assertEqual(_fetch.call_count, 1)
+
     @patch("src.connectors.base.fetch_public_html", return_value=(INSTAGRAM_REPOST_HTML, "https://www.instagram.com/p/DcRepost123/"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/DcRepost123/")
     def test_instagram_reads_reposts_from_matching_post(self, _validate, _fetch):

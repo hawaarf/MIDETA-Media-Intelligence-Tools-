@@ -46,11 +46,15 @@ class InstagramBrowserTests(unittest.TestCase):
         )
 
     def test_reads_authenticated_media_info(self):
-        source = '{"items":[{"pk":"3969850591815677297","play_count":7630,"media_repost_count":2}]}'
+        source = '{"items":[{"pk":"3969850591815677297","play_count":7630,"media_repost_count":2,"like_count":59,"comment_count":3,"share_count":4}]}'
         self.assertEqual(
             InstagramBrowserCollector._media_info_metrics(source),
             (2, 7_630),
         )
+        engagement = InstagramBrowserCollector._media_info_engagement(source)
+        self.assertEqual(engagement.likes, 59)
+        self.assertEqual(engagement.comments, 3)
+        self.assertEqual(engagement.shares, 4)
 
     def test_browser_metrics_replace_public_fallbacks(self):
         result = get_connector("https://www.instagram.com/p/demo/").mock_enrichment(
@@ -105,6 +109,55 @@ class InstagramBrowserTests(unittest.TestCase):
             "Dc2ayNXjxmW",
             find_views=True,
         )
+
+    def test_fast_mode_does_not_open_profile_or_return_profile_metrics(self):
+        collector = InstagramBrowserCollector()
+        collector.is_logged_in = Mock(return_value=True)
+        collector._post_metrics = Mock(
+            return_value=InstagramBrowserMetrics(
+                username="ctv.now",
+                followers=36_500,
+                views=1_211,
+                likes=35,
+                comments=0,
+                shares=2,
+                reposts=1,
+            )
+        )
+        collector._profile_metrics = Mock()
+
+        metrics = collector.collect(
+            "https://www.instagram.com/p/Dc2ayNXjxmW/",
+            None,
+            mode="fast",
+        )
+
+        self.assertEqual(metrics.username, "ctv.now")
+        self.assertIsNone(metrics.followers)
+        self.assertIsNone(metrics.views)
+        self.assertEqual(metrics.likes, 35)
+        self.assertEqual(metrics.comments, 0)
+        self.assertEqual(metrics.shares, 2)
+        self.assertEqual(metrics.reposts, 1)
+        collector._profile_metrics.assert_not_called()
+
+    def test_fast_metrics_hide_public_profile_fallbacks(self):
+        result = get_connector("https://www.instagram.com/p/demo/").mock_enrichment(
+            "https://www.instagram.com/p/demo/"
+        )
+        updated = apply_instagram_browser_metrics(
+            result,
+            InstagramBrowserMetrics(likes=9, comments=2, shares=1, reposts=3),
+            mode="fast",
+        )
+
+        self.assertEqual(updated.followers.value, 0)
+        self.assertEqual(updated.views.value, 0)
+        self.assertEqual(updated.likes.value, 9)
+        self.assertEqual(updated.comments.value, 2)
+        self.assertEqual(updated.shares.value, 1)
+        self.assertEqual(updated.reposts.value, 3)
+        self.assertIn("Fast enrichment", updated.note)
 
     def test_browser_metadata_fills_an_empty_public_result(self):
         result = get_connector("https://www.instagram.com/p/demo/").mock_enrichment(

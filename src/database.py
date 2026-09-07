@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS social_jobs (
     total INTEGER NOT NULL,
     mock_mode INTEGER NOT NULL DEFAULT 0,
     browser_mode INTEGER NOT NULL DEFAULT 0,
+    enrichment_mode TEXT NOT NULL DEFAULT 'standard',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -55,6 +56,14 @@ def connect(path: Path = DATABASE_PATH) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(SCHEMA)
+    job_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(social_jobs)").fetchall()
+    }
+    if "enrichment_mode" not in job_columns:
+        connection.execute(
+            "ALTER TABLE social_jobs ADD COLUMN enrichment_mode TEXT NOT NULL DEFAULT 'standard'"
+        )
     return connection
 
 
@@ -64,14 +73,17 @@ def create_social_job(
     schema_version: int,
     mock_mode: bool = False,
     browser_mode: bool = False,
+    enrichment_mode: str = "standard",
     path: Path = DATABASE_PATH,
 ) -> int:
     """Create a durable enrichment queue and return its ID."""
+    if enrichment_mode not in {"standard", "fast", "advanced"}:
+        raise ValueError("Mode enrichment tidak dikenal.")
     now = datetime.now().isoformat(timespec="seconds")
     with connect(path) as connection:
         cursor = connection.execute(
-            "INSERT INTO social_jobs(schema_version, platform, status, total, mock_mode, browser_mode, created_at, updated_at) VALUES (?, ?, 'running', ?, ?, ?, ?, ?)",
-            (schema_version, platform, len(urls), int(mock_mode), int(browser_mode), now, now),
+            "INSERT INTO social_jobs(schema_version, platform, status, total, mock_mode, browser_mode, enrichment_mode, created_at, updated_at) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?)",
+            (schema_version, platform, len(urls), int(mock_mode), int(browser_mode), enrichment_mode, now, now),
         )
         job_id = int(cursor.lastrowid)
         connection.executemany(
@@ -154,6 +166,9 @@ def get_social_job(job_id: int, path: Path = DATABASE_PATH) -> dict[str, Any] | 
         if item["browser_issue_json"]:
             browser_issues.append(json.loads(item["browser_issue_json"]))
     processed = sum(item["status"] != "pending" for item in items)
+    enrichment_mode = job["enrichment_mode"] or "standard"
+    if enrichment_mode == "standard" and job["platform"] == "Instagram" and bool(job["browser_mode"]):
+        enrichment_mode = "advanced"
     return {
         "id": job["id"],
         "schema_version": job["schema_version"],
@@ -164,6 +179,7 @@ def get_social_job(job_id: int, path: Path = DATABASE_PATH) -> dict[str, Any] | 
         "pending": job["total"] - processed,
         "mock_mode": bool(job["mock_mode"]),
         "browser_mode": bool(job["browser_mode"]),
+        "enrichment_mode": enrichment_mode,
         "results": results,
         "errors": errors,
         "browser_issues": browser_issues,

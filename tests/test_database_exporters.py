@@ -1,10 +1,11 @@
 import io
+import sqlite3
 import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
 import pandas as pd
-from src.database import add_history, create_social_job, delete_history, get_latest_social_job, get_social_job, list_history, next_social_job_items, record_social_job_item, set_social_job_status
+from src.database import add_history, connect, create_social_job, delete_history, get_latest_social_job, get_social_job, list_history, next_social_job_items, record_social_job_item, set_social_job_status
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 
 class DatabaseAndExporterTests(unittest.TestCase):
@@ -66,6 +67,50 @@ class DatabaseAndExporterTests(unittest.TestCase):
             self.assertEqual(saved["status"], "completed")
             self.assertEqual(saved["processed"], 1)
             self.assertEqual(saved["pending"], 0)
+
+    def test_instagram_job_keeps_its_enrichment_mode_when_resumed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "history.db"
+            job_id = create_social_job(
+                "Instagram",
+                ["https://www.instagram.com/p/example/"],
+                schema_version=23,
+                browser_mode=True,
+                enrichment_mode="fast",
+                path=path,
+            )
+            set_social_job_status(job_id, "paused", path)
+
+            saved = get_social_job(job_id, path)
+            self.assertTrue(saved["browser_mode"])
+            self.assertEqual(saved["enrichment_mode"], "fast")
+            self.assertEqual(saved["status"], "paused")
+
+    def test_existing_job_database_adds_enrichment_mode_column(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "history.db"
+            with sqlite3.connect(path) as connection:
+                connection.execute(
+                    """CREATE TABLE social_jobs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        schema_version INTEGER NOT NULL,
+                        platform TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        total INTEGER NOT NULL,
+                        mock_mode INTEGER NOT NULL DEFAULT 0,
+                        browser_mode INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+
+            with connect(path) as connection:
+                columns = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(social_jobs)")
+                }
+
+            self.assertIn("enrichment_mode", columns)
 
     def test_history_crud_and_filters(self):
         with tempfile.TemporaryDirectory() as folder:

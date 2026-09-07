@@ -10,7 +10,7 @@ MIDETA mendukung YouTube, TikTok, Facebook, Instagram, Threads, dan X. Setiap pl
 
 Pengguna dapat memasukkan beberapa URL sekaligus dengan menulis satu URL pada setiap baris. MIDETA akan mencoba mengambil data berikut dari setiap posting:
 
-Satu proses dapat memuat sampai 1.000 URL. MIDETA mengerjakan maksimal 20 URL per tahap dan langsung menyimpan hasil setiap URL ke SQLite. Mode browser Instagram memakai tahap yang lebih kecil karena setiap posting perlu dibuka di Chrome. Tahap berikutnya berjalan otomatis. Jika aplikasi atau koneksi terhenti, antrean tetap tersimpan dan dapat dilanjutkan melalui tombol `Lanjutkan proses`.
+Satu proses dapat memuat sampai 1.000 URL. MIDETA mengerjakan maksimal 20 URL per tahap dan langsung menyimpan hasil setiap URL ke SQLite. Fast enrichment Instagram memakai 10 URL per tahap, sedangkan Advanced enrichment memakai 5 URL per tahap karena juga membuka profil/Reels. Tahap berikutnya berjalan otomatis. Jika aplikasi atau koneksi terhenti, antrean dan pilihan mode tetap tersimpan dan dapat dilanjutkan melalui tombol `Lanjutkan proses`.
 
 Angka engagement seperti views merupakan snapshot saat URL diperiksa dan dapat bertambah setelah proses selesai. Untuk Threads, MIDETA mencocokkan angka dengan shortcode posting dan memprioritaskan nilai terbaru yang tersedia pada respons halaman.
 
@@ -27,7 +27,7 @@ Angka engagement seperti views merupakan snapshot saat URL diperiksa dan dapat b
 
 Data yang memang tidak diberikan oleh platform akan ditandai sebagai tidak tersedia. Khusus Followers dan Views pada Facebook, Instagram, TikTok, serta Threads, MIDETA menampilkan angka 0 jika platform tidak menyediakan nilainya. Reposts Instagram juga menjadi 0 jika angkanya tidak tercantum. Untuk Facebook, jumlah followers diprioritaskan. Jika followers tidak ditampilkan tetapi jumlah friends tersedia secara publik, MIDETA menggunakan jumlah friends. Views Reel Facebook dan Instagram juga dicari dari daftar Reel publik author dengan mencocokkan ID posting yang sama. Tanggal posting pada tabel dan file unduhan menggunakan format seperti `25-Aug-2026`.
 
-Instagram mempunyai mode browser untuk data yang hanya terlihat setelah login. Jika request publik tidak memberikan hasil, browser juga dapat mengisi author, caption, tanggal, likes, dan comments dari halaman posting. Followers dibaca dari profil, sedangkan repost dan views dicocokkan dengan shortcode yang sama. Chrome yang dipakai terpisah dari Chrome utama agar sesi MIDETA tidak tercampur dengan profil kerja atau profil pribadi lainnya.
+Instagram mempunyai dua mode yang sama-sama memakai browser yang sudah login. Fast enrichment hanya membuka halaman posting untuk mengambil author, caption, tanggal, likes, comments, shares, dan repost. Mode ini tidak mencari Followers atau Views sehingga lebih cepat. Advanced enrichment mengambil seluruh data Fast, lalu membuka profil/Reels untuk melengkapi Followers dan Views. Angka engagement dicocokkan dengan shortcode posting yang sama. Chrome yang dipakai terpisah dari Chrome utama agar sesi MIDETA tidak tercampur dengan profil kerja atau profil pribadi lainnya.
 
 Pada Facebook, author dan angka engagement dicocokkan dengan ID posting target. Data dari posting rekomendasi tidak dipakai. Jika Reel target tidak menampilkan angka likes atau comments, nilainya menjadi 0. Untuk posting grup, profil author juga diperiksa agar followers atau friends yang tersedia tetap dapat digunakan.
 
@@ -65,13 +65,13 @@ Untuk daftar besar, tempel sampai 1.000 URL dari satu platform. Halaman menampil
 ### Mode browser Instagram
 
 1. Pilih Instagram pada halaman Social Media Enrichment.
-2. Aktifkan `Gunakan browser Instagram`.
+2. Pilih `Fast enrichment` untuk engagement posting saja, atau `Advanced enrichment` jika Followers dan Views juga diperlukan.
 3. Tekan `Buka Chrome Instagram`.
 4. Login langsung di jendela Chrome yang terbuka.
 5. Kembali ke MIDETA dan tekan `Periksa Login`.
-6. Masukkan URL lalu jalankan pengambilan metadata seperti biasa.
+6. Masukkan URL lalu tekan tombol enrichment sesuai mode yang dipilih.
 
-Login cukup dilakukan sekali selama sesi Instagram masih aktif. Password diketik langsung di Instagram dan tidak dibaca oleh MIDETA.
+Kedua mode membutuhkan login. Login cukup dilakukan sekali selama sesi Instagram masih aktif. Password diketik langsung di Instagram dan tidak dibaca oleh MIDETA.
 
 ### Mode browser Threads dan X
 
@@ -107,7 +107,7 @@ Proses enrichment dimulai dari URL dan berakhir sebagai baris data yang sudah se
 6. Data di sekitar ID tersebut dipilih agar hasil tidak tertukar dengan posting rekomendasi yang berada pada halaman yang sama.
 7. Author, caption, tanggal posting, dan angka engagement diambil dari metadata, JSON LD, serta data script publik yang tersedia.
 8. Hasil dinormalisasi ke struktur `SocialResult` agar semua platform mempunyai bentuk output yang sama.
-9. Untuk daftar besar, antrean dibagi menjadi tahap berisi 20 URL. Posisi antrean dan setiap hasil disimpan ke SQLite.
+9. Untuk daftar besar, antrean dibagi menjadi tahap berisi 20 URL pada platform biasa, 10 URL untuk Fast Instagram, atau 5 URL untuk Advanced Instagram. Posisi antrean, pilihan mode, dan setiap hasil disimpan ke SQLite.
 10. Setelah seluruh tahap selesai, hasil digabungkan dan disiapkan untuk ekspor CSV atau XLSX.
 
 ## Cara kerja enrichment Facebook

@@ -39,14 +39,21 @@ class InstagramBrowserMetrics:
     views: int | None = None
     likes: int | None = None
     comments: int | None = None
+    shares: int | None = None
     reposts: int | None = None
 
 
 def apply_instagram_browser_metrics(
     result: SocialResult,
     metrics: InstagramBrowserMetrics,
+    mode: str = "advanced",
 ) -> SocialResult:
     """Replace public fallbacks with values displayed by the logged-in browser."""
+    if mode == "fast":
+        # Keep the fast contract explicit: these profile-level values were not
+        # collected, even if a public fallback happened to expose one.
+        result.followers = DataField(value=0, status=FieldStatus.NOT_SUPPORTED)
+        result.views = DataField(value=0, status=FieldStatus.NOT_SUPPORTED)
     if metrics.username:
         result.username = DataField(value=metrics.username, status=FieldStatus.AVAILABLE)
     if metrics.caption:
@@ -61,9 +68,15 @@ def apply_instagram_browser_metrics(
         result.likes = DataField(value=metrics.likes, status=FieldStatus.AVAILABLE)
     if metrics.comments is not None:
         result.comments = DataField(value=metrics.comments, status=FieldStatus.AVAILABLE)
+    if metrics.shares is not None:
+        result.shares = DataField(value=metrics.shares, status=FieldStatus.AVAILABLE)
     if metrics.reposts is not None:
         result.reposts = DataField(value=metrics.reposts, status=FieldStatus.AVAILABLE)
-    browser_note = "Metadata Instagram diperiksa melalui browser MIDETA yang sudah login."
+    browser_note = (
+        "Instagram diperiksa dengan Fast enrichment melalui halaman posting di browser MIDETA yang sudah login."
+        if mode == "fast"
+        else "Instagram diperiksa dengan Advanced enrichment melalui posting dan profil/Reels di browser MIDETA yang sudah login."
+    )
     result.note = f"{result.note} {browser_note}".strip() if result.note else browser_note
     return result
 
@@ -160,17 +173,21 @@ class InstagramBrowserCollector:
             "comments_count",
             "total_comment_count",
         )
+        shares = cls._target_metric(source, shortcode, "share_count", "shares_count")
         if description:
             if likes is None:
                 likes = cls._labeled_count(description, "like", "likes")
             if comments is None:
                 comments = cls._labeled_count(description, "comment", "comments")
+            if shares is None:
+                shares = cls._labeled_count(description, "share", "shares")
         return InstagramBrowserMetrics(
             username=author,
             caption=caption,
             posted_at=posted_at,
             likes=likes,
             comments=comments,
+            shares=shares,
         )
 
     def _username_from_dom(self) -> str | None:
@@ -252,24 +269,39 @@ class InstagramBrowserCollector:
     @classmethod
     def _media_info_metrics(cls, source: str) -> tuple[int | None, int | None]:
         """Read reposts and views from the response for one exact media ID."""
-        reposts = cls._target_metric_from_exact_media(
-            source,
-            "media_repost_count",
-            "repost_count",
-            "reposts_count",
-            "reshare_count",
-            "reshares_count",
-            "repost_count_reduced",
-            "reshare_count_reduced",
+        metrics = cls._media_info_engagement(source)
+        return metrics.reposts, metrics.views
+
+    @classmethod
+    def _media_info_engagement(cls, source: str) -> InstagramBrowserMetrics:
+        """Read exact engagement values from Instagram's authenticated media response."""
+        return InstagramBrowserMetrics(
+            reposts=cls._target_metric_from_exact_media(
+                source,
+                "media_repost_count",
+                "repost_count",
+                "reposts_count",
+                "reshare_count",
+                "reshares_count",
+                "repost_count_reduced",
+                "reshare_count_reduced",
+            ),
+            views=cls._target_metric_from_exact_media(
+                source,
+                "play_count",
+                "view_count",
+                "video_view_count",
+                "ig_play_count",
+            ),
+            likes=cls._target_metric_from_exact_media(source, "like_count", "likes_count"),
+            comments=cls._target_metric_from_exact_media(
+                source,
+                "comment_count",
+                "comments_count",
+                "total_comment_count",
+            ),
+            shares=cls._target_metric_from_exact_media(source, "share_count", "shares_count"),
         )
-        views = cls._target_metric_from_exact_media(
-            source,
-            "play_count",
-            "view_count",
-            "video_view_count",
-            "ig_play_count",
-        )
-        return reposts, views
 
     @staticmethod
     def _target_metric_from_exact_media(source: str, *keys: str) -> int | None:
@@ -397,10 +429,10 @@ class InstagramBrowserCollector:
                 continue
         return 0 if found_icon else None
 
-    def _authenticated_media_metrics(self, source: str, shortcode: str) -> tuple[int | None, int | None]:
+    def _authenticated_media_metrics(self, source: str, shortcode: str) -> InstagramBrowserMetrics:
         media_pk = self._target_media_pk(source, shortcode)
         if not media_pk:
-            return None, None
+            return InstagramBrowserMetrics()
         try:
             self.driver.set_script_timeout(self.wait_seconds)
             response = self.driver.execute_async_script(
@@ -420,10 +452,10 @@ class InstagramBrowserCollector:
                 media_pk,
             )
         except WebDriverException:
-            return None, None
+            return InstagramBrowserMetrics()
         if not isinstance(response, dict) or int(response.get("status") or 0) != 200:
-            return None, None
-        return self._media_info_metrics(str(response.get("text") or ""))
+            return InstagramBrowserMetrics()
+        return self._media_info_engagement(str(response.get("text") or ""))
 
     def _post_metrics(self, url: str, shortcode: str) -> InstagramBrowserMetrics:
         driver = self.start()
@@ -436,8 +468,14 @@ class InstagramBrowserCollector:
         metadata = self._post_metadata(source, url, shortcode)
         if not metadata.username:
             metadata.username = self._username_from_dom()
-        api_reposts, api_views = self._authenticated_media_metrics(source, shortcode)
-        reposts = api_reposts
+        api_metrics = self._authenticated_media_metrics(source, shortcode)
+        if api_metrics.likes is not None:
+            metadata.likes = api_metrics.likes
+        if api_metrics.comments is not None:
+            metadata.comments = api_metrics.comments
+        if api_metrics.shares is not None:
+            metadata.shares = api_metrics.shares
+        reposts = api_metrics.reposts
         if reposts is None:
             reposts = self._target_metric(
                 source,
@@ -453,7 +491,7 @@ class InstagramBrowserCollector:
             reposts = self._metric_by_icon("repost")
         if reposts is None:
             reposts = self._labeled_count(body, "repost", "reposts", "reshare", "reshares")
-        views = api_views
+        views = api_metrics.views
         if views is None:
             views = self._target_metric(source, shortcode, "play_count", "view_count", "video_view_count")
         if views is None:
@@ -462,6 +500,8 @@ class InstagramBrowserCollector:
             metadata.likes = self._metric_by_icon("like")
         if metadata.comments is None:
             metadata.comments = self._metric_by_icon("comment")
+        if metadata.shares is None:
+            metadata.shares = self._labeled_count(body, "share", "shares")
         metadata.reposts = reposts
         metadata.views = views
         return metadata
@@ -522,7 +562,14 @@ class InstagramBrowserCollector:
             time.sleep(0.7)
         return followers, views
 
-    def collect(self, url: str, author: str | None) -> InstagramBrowserMetrics:
+    def collect(
+        self,
+        url: str,
+        author: str | None,
+        mode: str = "advanced",
+    ) -> InstagramBrowserMetrics:
+        if mode not in {"fast", "advanced"}:
+            raise InstagramBrowserError("Mode enrichment Instagram tidak dikenal.")
         if not self.is_logged_in():
             raise InstagramLoginRequired(
                 "Instagram belum login. Tekan Buka Chrome Instagram, selesaikan login, lalu periksa kembali."
@@ -531,15 +578,22 @@ class InstagramBrowserCollector:
         if not shortcode:
             raise InstagramBrowserError("Shortcode posting Instagram tidak dapat dibaca dari URL.")
         post_metrics = self._post_metrics(url, shortcode)
-        username = self._username(author) or post_metrics.username
+        username = post_metrics.username or self._username(author)
         if not username:
             raise InstagramBrowserError("Username Instagram tidak ditemukan pada halaman posting.")
+        post_metrics.username = username
+        if mode == "fast":
+            # Fast mode intentionally avoids profile/Reels. Even when a view
+            # happens to be present in the post response, keep this mode's
+            # output limited to engagement selected by the user.
+            post_metrics.followers = None
+            post_metrics.views = None
+            return post_metrics
         followers, grid_views = self._profile_metrics(
             username,
             shortcode,
             find_views=post_metrics.views is None,
         )
-        post_metrics.username = username
         post_metrics.followers = followers
         if grid_views is not None:
             post_metrics.views = grid_views

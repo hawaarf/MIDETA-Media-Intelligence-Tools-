@@ -305,7 +305,12 @@ class BaseConnector(ABC):
             return None
         return candidate
 
-    def enrich(self, url: str) -> SocialResult:
+    def enrich(self, url: str, *, include_platform_profile: bool = True) -> SocialResult:
+        """Read one post, optionally skipping slower profile-level fallbacks.
+
+        Instagram's authenticated fast mode uses the post response and browser
+        only. Advanced mode can then read the profile/Reels page separately.
+        """
         validate_public_url(url)
         try:
             html, final_url = fetch_public_html(url)
@@ -344,11 +349,11 @@ class BaseConnector(ABC):
                     action_names = {"like": "likes", "comment": "comments", "share": "shares", "view": "views", "follow": "followers", "save": "bookmarks", "bookmark": "bookmarks", "repost": "reposts"}
                     for key, output in action_names.items():
                         if key in kind: stats[output] = count
-        if stats.get("followers") is None or self.prefer_profile_followers:
+        if include_platform_profile and (stats.get("followers") is None or self.prefer_profile_followers):
             public_followers = self._platform_followers(html, soup, canonical_url or final_url, author)
             if public_followers is not None:
                 stats["followers"] = public_followers
-        if stats.get("views") is None:
+        if include_platform_profile and stats.get("views") is None:
             public_views = self._platform_views(html, soup, canonical_url or final_url, author)
             if public_views is not None:
                 stats["views"] = public_views
