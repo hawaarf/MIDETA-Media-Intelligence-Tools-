@@ -5,6 +5,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 import pandas as pd
+from openpyxl import load_workbook
 from src.database import add_history, connect, create_social_job, delete_history, get_latest_social_job, get_social_job, list_history, next_social_job_items, record_social_job_item, set_social_job_status
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 
@@ -137,3 +138,16 @@ class DatabaseAndExporterTests(unittest.TestCase):
         self.assertEqual(xlsx.loc[0, "Tanggal posting"], "25-Aug-2026")
         self.assertEqual(csv.loc[0, "Followers"], 0)
         self.assertEqual(xlsx.loc[0, "Views"], 0)
+
+    def test_xlsx_uses_arial_size_ten_for_headers_and_data(self):
+        payload = to_xlsx_bytes([{"Platform": "Instagram", "Likes": 12}], "Enrichment")
+        workbook = load_workbook(io.BytesIO(payload))
+        worksheet = workbook["Enrichment"]
+
+        for row in worksheet.iter_rows():
+            for cell in row:
+                self.assertEqual(cell.font.name, "Arial")
+                self.assertEqual(cell.font.sz, 10)
+
+        self.assertTrue(worksheet["A1"].font.bold)
+        self.assertFalse(worksheet["A2"].font.bold)

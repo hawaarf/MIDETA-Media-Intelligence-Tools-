@@ -31,6 +31,7 @@ FACEBOOK_REEL_FEEDBACK_HTML = """<html><head><link rel="canonical" href="https:/
 FACEBOOK_REEL_LIKERS_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akun/videos/judul/1407754307910903"><meta property="og:description" content="Caption Reel"></head><script>{"feedback":{"likers":{"count":3},"unified_reactors":{"count":3},"total_comment_count":1,"share_count_reduced":"0"},"tracking":"{\\"top_level_post_id\\":\\"1407754307910903\\",\\"video_id\\":\\"1407754307910903\\"}"}</script></html>"""
 FACEBOOK_REEL_ZERO_LIKERS_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akun/videos/judul/1064880916011501"><meta property="og:description" content="Caption Reel"></head><script>{"feedback":{"likers":{"count":0},"unified_reactors":{"count":0},"total_comment_count":0,"share_count_reduced":"0"},"tracking":"{\\"top_level_post_id\\":\\"1064880916011501\\",\\"video_id\\":\\"1064880916011501\\"}"}</script></html>"""
 FACEBOOK_REEL_REDUCED_LIKES_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akun/videos/judul/2586740801787372"><meta property="og:description" content="Caption Reel"></head><script>{"feedback":{"reaction_count_reduced":"1,2 rb","total_comment_count":4},"tracking":"{\\"top_level_post_id\\":\\"2586740801787372\\",\\"video_id\\":\\"2586740801787372\\"}"}</script></html>"""
+FACEBOOK_REEL_BOOKMARK_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akun/videos/judul/123"><meta property="og:description" content="Caption Reel"></head><script>{"feedback":{"likers":{"count":9},"total_comment_count":3,"save_count":17},"tracking":"{\\"top_level_post_id\\":\\"123\\",\\"video_id\\":\\"123\\"}"}</script></html>"""
 FACEBOOK_CANONICAL_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akuratco/posts/judul/789"><meta property="og:description" content="Caption"></head><script>{"id":"789","feedback":{"reaction_count":{"count":5},"share_count":{"count":1},"comment_rendering_instance":{"comments":{"total_count":0}}}}</script></html>"""
 FACEBOOK_FULL_CAPTION_HTML = """<html><head><meta property="og:description" content="Paragraf pertama yang lengkap..."></head><body><div data-ad-rendering-role="story_message"><div dir="auto">Paragraf pertama yang lengkap.</div><div dir="auto">Paragraf kedua juga harus masuk.</div></div></body></html>"""
 FACEBOOK_GROUP_HTML = """<html><head><meta property="og:title" content="LIOC ( LIKA LIKU OJOL &amp; CUSTOMER ) | Caption grup | Facebook"><meta property="og:description" content="Caption grup..."><meta property="og:url" content="https://www.facebook.com/groups/1657323981260301/posts/4699586193700716/"></head><body><script>{"join_action":{"group":{"id":"1657323981260301","name":"LIOC ( LIKA LIKU OJOL & CUSTOMER )"}},"node_v2":{"actors":[{"name":"Gondrong Saja","id":"100012853172729","url":null}],"message":{"text":"Caption grup lengkap. Paragraf kedua juga masuk."},"post_id":"4699586193700716"}}</script></body></html>"""
@@ -312,6 +313,13 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.comments.value, 1468)
         self.assertEqual(result.shares.value, 1300)
         self.assertEqual(result.caption.value, "Caption Reel lengkap. Paragraf kedua juga masuk.")
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_REEL_BOOKMARK_HTML, "https://www.facebook.com/reel/123"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/reel/123")
+    def test_facebook_reel_reads_target_bookmark_count_when_public(self, _validate, _fetch):
+        result = get_connector("https://www.facebook.com/reel/123").enrich("https://www.facebook.com/reel/123")
+        self.assertEqual(result.bookmarks.value, 17)
+        self.assertEqual(result.bookmarks.status, FieldStatus.AVAILABLE)
 
     @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_REEL_LIKERS_HTML, "https://www.facebook.com/reel/1407754307910903"))
     @patch("src.connectors.base.validate_public_url", return_value="https://web.facebook.com/share/v/1HMevHPUYY/")

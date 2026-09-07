@@ -406,6 +406,27 @@ class FacebookConnector(BaseConnector):
                 shares = int(exact_shares[-1]) if exact_shares else None
             if shares is not None:
                 metrics["shares"] = int(shares)
+            exact_bookmarks = re.findall(
+                r'"(?:bookmark_count|save_count|saved_count|video_save_count)"\s*:\s*"?(\d+)"?',
+                window,
+                re.I,
+            )
+            if not exact_bookmarks:
+                exact_bookmarks = re.findall(
+                    r'"(?:bookmark_count|save_count|saved_count|video_save_count)"\s*:\s*\{[^{}]{0,240}?"(?:count|total_count)"\s*:\s*"?(\d+)"?',
+                    window,
+                    re.I,
+                )
+            reduced_bookmarks = re.findall(
+                r'"(?:bookmark_count_reduced|save_count_reduced|saved_count_reduced)"\s*:\s*"([^"]+)"',
+                window,
+                re.I,
+            )
+            reduced_bookmark_count = self._localized_count(reduced_bookmarks[-1]) if reduced_bookmarks else None
+            if exact_bookmarks:
+                metrics["bookmarks"] = int(exact_bookmarks[-1])
+            elif reduced_bookmark_count is not None:
+                metrics["bookmarks"] = reduced_bookmark_count
             for output, patterns in {
                 "views": (
                     r'"play_count"\s*:\s*"?(\d+)"?',
@@ -431,7 +452,17 @@ class FacebookConnector(BaseConnector):
 
     def _metric_source(self, html: str, url: str) -> str:
         """Focus metric parsing on the requested story instead of recommendations."""
-        markers = ("reaction_count", "total_comment_count", "comment_count", "share_count", "play_count", "video_view_count", "feedback")
+        markers = (
+            "reaction_count",
+            "total_comment_count",
+            "comment_count",
+            "share_count",
+            "bookmark_count",
+            "save_count",
+            "play_count",
+            "video_view_count",
+            "feedback",
+        )
         windows: list[tuple[int, str]] = []
         for _, window in self._target_windows(html, url):
             valid_metrics = self._script_metrics(window)

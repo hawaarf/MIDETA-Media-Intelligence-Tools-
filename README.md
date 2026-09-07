@@ -8,9 +8,11 @@ MIDETA mendukung YouTube, TikTok, Facebook, Instagram, Threads, dan X. Setiap pl
 
 ### Social Media Enrichment
 
-Pengguna dapat memasukkan beberapa URL sekaligus dengan menulis satu URL pada setiap baris. MIDETA akan mencoba mengambil data berikut dari setiap posting:
+Pengguna dapat memasukkan beberapa URL sekaligus dengan menulis satu URL pada setiap baris. URL juga dapat ditempel bersama tanggal atau kolom lain dari spreadsheet, misalnya `Aug 30, 2026 https://www.instagram.com/p/contoh/`; MIDETA hanya mengambil bagian URL-nya. MIDETA akan mencoba mengambil data berikut dari setiap posting:
 
 Satu proses dapat memuat sampai 1.000 URL. MIDETA mengerjakan maksimal 20 URL per tahap dan langsung menyimpan hasil setiap URL ke SQLite. Fast enrichment Instagram memakai 10 URL per tahap, sedangkan Advanced enrichment memakai 5 URL per tahap karena juga membuka profil/Reels. Tahap berikutnya berjalan otomatis. Jika aplikasi atau koneksi terhenti, antrean dan pilihan mode tetap tersimpan dan dapat dilanjutkan melalui tombol `Lanjutkan proses`.
+
+Pada halaman Social Media Enrichment dan Comment Scrapper tersedia tampilan `Split Screen` dan `Triple Screen` untuk menjalankan dua atau tiga platform berbeda sekaligus. Setiap panel mempunyai pilihan platform, input URL, proses, progres, hasil, dan unduhan sendiri. MIDETA memakai maksimal tiga worker—satu untuk setiap platform—sementara URL di dalam masing-masing antrean tetap diproses berurutan agar data posting tidak tertukar. Kecepatan tetap bergantung pada koneksi, respons platform, dan pembatasan request.
 
 Angka engagement seperti views merupakan snapshot saat URL diperiksa dan dapat bertambah setelah proses selesai. Untuk Threads, MIDETA mencocokkan angka dengan shortcode posting dan memprioritaskan nilai terbaru yang tersedia pada respons halaman.
 
@@ -27,9 +29,9 @@ Angka engagement seperti views merupakan snapshot saat URL diperiksa dan dapat b
 
 Data yang memang tidak diberikan oleh platform akan ditandai sebagai tidak tersedia. Khusus Followers dan Views pada Facebook, Instagram, TikTok, serta Threads, MIDETA menampilkan angka 0 jika platform tidak menyediakan nilainya. Reposts Instagram juga menjadi 0 jika angkanya tidak tercantum. Untuk Facebook, jumlah followers diprioritaskan. Jika followers tidak ditampilkan tetapi jumlah friends tersedia secara publik, MIDETA menggunakan jumlah friends. Views Reel Facebook dan Instagram juga dicari dari daftar Reel publik author dengan mencocokkan ID posting yang sama. Tanggal posting pada tabel dan file unduhan menggunakan format seperti `25-Aug-2026`.
 
-Instagram mempunyai dua mode yang sama-sama memakai browser yang sudah login. Fast enrichment hanya membuka halaman posting untuk mengambil author, caption, tanggal, likes, comments, shares, dan repost. Mode ini tidak mencari Followers atau Views sehingga lebih cepat. Advanced enrichment mengambil seluruh data Fast, lalu membuka profil/Reels untuk melengkapi Followers dan Views. Angka engagement dicocokkan dengan shortcode posting yang sama. Chrome yang dipakai terpisah dari Chrome utama agar sesi MIDETA tidak tercampur dengan profil kerja atau profil pribadi lainnya.
+Instagram mempunyai dua mode yang sama-sama memakai browser yang sudah login. Fast enrichment hanya membuka halaman posting untuk mengambil author, caption, tanggal, likes, comments, shares, dan repost. Mode ini tidak membuka profil/Reels dan tidak mencari Followers atau Views sehingga lebih cepat. Advanced enrichment memeriksa setiap halaman posting, lalu membuka profil dan tab Reels author untuk melengkapi Followers dan Views. Advanced sengaja memakai tahap yang lebih kecil dan membutuhkan waktu lebih lama. Angka engagement dicocokkan dengan shortcode posting yang sama. Chrome yang dipakai terpisah dari Chrome utama agar sesi MIDETA tidak tercampur dengan profil kerja atau profil pribadi lainnya.
 
-Pada Facebook, author dan angka engagement dicocokkan dengan ID posting target. Data dari posting rekomendasi tidak dipakai. Jika Reel target tidak menampilkan angka likes atau comments, nilainya menjadi 0. Untuk posting grup, profil author juga diperiksa agar followers atau friends yang tersedia tetap dapat digunakan.
+Pada Facebook, author dan angka engagement dicocokkan dengan ID posting target. Data dari posting rekomendasi tidak dipakai. Jika Reel target tidak menampilkan angka likes atau comments, nilainya menjadi 0. Jumlah bookmark/save diisi bila Facebook mempublikasikan angkanya di data Reel target; tombol Save tanpa angka tetap ditandai tidak tersedia agar tidak menghasilkan nilai tebakan. Untuk posting grup, profil author juga diperiksa agar followers atau friends yang tersedia tetap dapat digunakan.
 
 Jumlah komentar Threads dibaca dari `direct_reply_count` milik posting yang shortcode-nya sama. Cara ini mencegah jumlah reply dari posting rekomendasi ikut masuk ke hasil.
 
@@ -72,6 +74,19 @@ Untuk daftar besar, tempel sampai 1.000 URL dari satu platform. Halaman menampil
 6. Masukkan URL lalu tekan tombol enrichment sesuai mode yang dipilih.
 
 Kedua mode membutuhkan login. Login cukup dilakukan sekali selama sesi Instagram masih aktif. Password diketik langsung di Instagram dan tidak dibaca oleh MIDETA.
+
+### Split dan Triple Screen
+
+1. Buka halaman Social Media Enrichment atau Comment Scrapper, lalu pilih `Split Screen` atau `Triple Screen` pada bagian Tampilan proses.
+2. Pilih dua atau tiga platform berbeda pada panel yang tersedia.
+3. Masukkan URL untuk setiap platform pada kotak yang sesuai.
+4. Jika salah satu platform adalah Instagram, pilih Fast atau Advanced enrichment dan pastikan Chrome MIDETA sudah login.
+5. Tekan `Mulai Dua Proses` atau `Mulai Tiga Proses` untuk menjalankannya bersamaan.
+6. Pantau progres, jeda atau lanjutkan antrean, lalu unduh hasil dari panel masing-masing.
+
+Maksimal tiga platform dijalankan bersamaan. Pemisahan proses dan hasil menjaga data Facebook, Threads, Instagram, atau platform lain tetap berada pada panelnya sendiri.
+
+File XLSX hasil unduhan memakai font Arial ukuran 10 untuk header dan seluruh data. Format CSV tidak menyimpan pengaturan font karena CSV merupakan data teks polos.
 
 ### Mode browser Threads dan X
 

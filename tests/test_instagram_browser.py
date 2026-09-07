@@ -85,7 +85,7 @@ class InstagramBrowserTests(unittest.TestCase):
         self.assertEqual(metrics.likes, 1)
         self.assertEqual(metrics.comments, 0)
 
-    def test_collect_uses_username_from_browser_when_public_author_is_missing(self):
+    def test_advanced_mode_opens_profile_for_followers_and_missing_views(self):
         collector = InstagramBrowserCollector()
         collector.is_logged_in = Mock(return_value=True)
         collector._post_metrics = Mock(
@@ -98,12 +98,17 @@ class InstagramBrowserTests(unittest.TestCase):
                 reposts=0,
             )
         )
-        collector._profile_metrics = Mock(return_value=(36_500, None))
+        collector._profile_metrics = Mock(return_value=(36_500, 1_211))
 
-        metrics = collector.collect("https://www.instagram.com/p/Dc2ayNXjxmW/", None)
+        metrics = collector.collect(
+            "https://www.instagram.com/p/Dc2ayNXjxmW/",
+            None,
+            mode="advanced",
+        )
 
         self.assertEqual(metrics.username, "ctv.now")
         self.assertEqual(metrics.followers, 36_500)
+        self.assertEqual(metrics.views, 1_211)
         collector._profile_metrics.assert_called_once_with(
             "ctv.now",
             "Dc2ayNXjxmW",

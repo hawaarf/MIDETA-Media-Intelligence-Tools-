@@ -7,6 +7,24 @@ class BatchTests(unittest.TestCase):
         value = "https://youtube.com/watch?v=1\n\nhttps://x.com/a/status/2\nhttps://youtube.com/watch?v=1"
         self.assertEqual(parse_url_list(value), ["https://youtube.com/watch?v=1", "https://x.com/a/status/2"])
 
+    def test_parse_url_list_extracts_urls_from_pasted_spreadsheet_rows(self):
+        value = (
+            "Aug 30, 2026 https://www.instagram.com/p/DcpQElkziXD/\n"
+            "Aug 31, 2026,https://www.instagram.com/p/Dcspim8kilm/,Organic\n"
+            "[https://www.instagram.com/p/DcpQElkziXD/](https://www.instagram.com/p/DcpQElkziXD/)"
+        )
+        self.assertEqual(
+            parse_url_list(value),
+            [
+                "https://www.instagram.com/p/DcpQElkziXD/",
+                "https://www.instagram.com/p/Dcspim8kilm/",
+            ],
+        )
+
+    def test_parse_url_list_ignores_rows_without_urls(self):
+        value = "Aug 30, 2026\ncaption tanpa tautan\nhttps://www.threads.com/@akun/post/ABC."
+        self.assertEqual(parse_url_list(value), ["https://www.threads.com/@akun/post/ABC"])
+
     def test_stale_social_batch_is_rejected_after_parser_update(self):
         self.assertFalse(is_current_social_batch({"results": []}))
         self.assertFalse(is_current_social_batch({"schema_version": SOCIAL_BATCH_VERSION - 1, "results": []}))

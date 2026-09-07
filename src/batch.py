@@ -5,7 +5,7 @@ import re
 
 from src.models import SocialResult
 
-SOCIAL_BATCH_VERSION = 23
+SOCIAL_BATCH_VERSION = 24
 COMMENT_BATCH_VERSION = 3
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -53,9 +53,26 @@ def format_comment_date(value) -> str:
             return text
     return f"{MONTH_NAMES[parsed.month - 1]} {parsed.day}, {parsed.year:04d}"
 
+URL_PATTERN = re.compile(r"https?://[^\s,<>\"'\[\](){}]+", re.IGNORECASE)
+URL_TRAILING_PUNCTUATION = ".,;:!?"
+
+
 def parse_url_list(value: str) -> list[str]:
-    """Return unique nonempty URLs while preserving input order."""
-    return list(dict.fromkeys(line.strip() for line in value.splitlines() if line.strip()))
+    """Extract unique URLs from pasted rows while preserving input order.
+
+    Spreadsheet rows often include a date or another column before the URL.
+    Only the URL itself is sent to the connector, so values such as
+    ``Aug 30, 2026 https://www.instagram.com/p/example/`` remain valid input.
+    """
+    urls: list[str] = []
+    seen: set[str] = set()
+    for line in value.splitlines():
+        for match in URL_PATTERN.findall(line):
+            url = match.rstrip(URL_TRAILING_PUNCTUATION)
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+    return urls
 
 
 def is_current_social_batch(batch: dict) -> bool:

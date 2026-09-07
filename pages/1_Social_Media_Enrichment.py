@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, parse_url_list, social_result_row
-from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS
+from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS
 from src.connectors import PLATFORM_OPTIONS, get_platform_connector
 from src.database import add_history, create_social_job, get_latest_social_job, get_social_job, next_social_job_items, record_social_job_item, set_social_job_status
 from src.exporters import to_csv_bytes, to_xlsx_bytes
@@ -27,7 +27,7 @@ page_intro(
 )
 st.info(
     "Tulis satu URL pada setiap baris. MIDETA dapat menerima sampai 1.000 URL per platform dan menyimpannya bertahap. "
-    "Split Screen menjalankan maksimal dua platform secara paralel dengan antrean terpisah."
+    f"Split atau Triple Screen menjalankan maksimal {MAX_PARALLEL_PLATFORMS} platform secara paralel dengan antrean terpisah."
 )
 
 PLATFORM_ICONS = {
@@ -74,11 +74,12 @@ def render_instagram_controls(slot: str) -> str:
     if enrichment_mode == "fast":
         st.caption(
             "Fast: mengambil author, caption, tanggal, likes, comments, shares, dan repost dari halaman posting. "
-            "Followers dan Views tidak dicari."
+            f"Mode ini tidak membuka profil/Reels untuk Followers dan Views, sehingga lebih cepat ({ENRICHMENT_FAST_CHUNK_SIZE} URL per tahap)."
         )
     else:
         st.caption(
-            "Advanced: mengambil seluruh data Fast, lalu membuka profil/Reels untuk Followers dan Views. Proses lebih lama."
+            "Advanced: memeriksa setiap halaman posting, lalu membuka profil dan tab Reels author untuk Followers dan Views. "
+            f"Mode ini sengaja lebih teliti dan lebih lama ({ENRICHMENT_BROWSER_CHUNK_SIZE} URL per tahap)."
         )
     st.caption(
         "Kedua mode membutuhkan login di Chrome khusus MIDETA. Password tidak dibaca aplikasi dan profil browser tidak dimasukkan ke GitHub."
@@ -181,7 +182,7 @@ def render_job_controls(job: dict[str, Any], slot: str) -> None:
             st.rerun()
         mode_text = job["enrichment_mode"].title() if job["enrichment_mode"] != "standard" else "Standard"
         control_cols[1].caption(
-            f"Mode {mode_text}: {job_chunk_size(job)} URL per tahap. Dalam Split Screen, worker platform ini tetap terpisah."
+            f"Mode {mode_text}: {job_chunk_size(job)} URL per tahap. Dalam layar paralel, worker platform ini tetap terpisah."
         )
     else:
         if control_cols[0].button("Lanjutkan proses", key=f"resume_social_{slot}_{job['id']}", type="primary", width="stretch"):
@@ -427,7 +428,10 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
     completed_workers = 0
     processed_counts = {task["job"]["id"]: task["job"]["processed"] for task in tasks}
     tasks_by_id = {task["job"]["id"]: task for task in tasks}
-    with ThreadPoolExecutor(max_workers=len(tasks), thread_name_prefix="mideta-platform") as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(len(tasks), MAX_PARALLEL_PLATFORMS),
+        thread_name_prefix="mideta-platform",
+    ) as executor:
         for task in tasks:
             executor.submit(collect_job_chunk, task, output)
         while completed_workers < len(tasks):
@@ -448,95 +452,85 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
 
 layout_mode = st.segmented_control(
     "Tampilan proses",
-    ("Satu platform", "Split Screen"),
+    ("Satu platform", "Split Screen", "Triple Screen"),
     default="Satu platform",
-    help="Split Screen menjalankan dua platform berbeda secara paralel. Setiap platform tetap memakai parser, antrean, dan hasilnya sendiri.",
+    help="Split Screen menjalankan dua platform dan Triple Screen menjalankan tiga platform berbeda secara paralel.",
     key="social_enrichment_layout",
     width="stretch",
 )
 
 job_panels: list[tuple[dict[str, Any] | None, Any]] = []
 
-if layout_mode == "Split Screen":
+if layout_mode in {"Split Screen", "Triple Screen"}:
+    panel_count = 2 if layout_mode == "Split Screen" else MAX_PARALLEL_PLATFORMS
+    panel_word = "dua" if panel_count == 2 else "tiga"
     st.caption(
-        "Pilih dua platform berbeda. Keduanya diproses bersamaan dengan satu worker per platform; urutan URL di dalam setiap platform tetap dijaga agar engagement presisi."
+        f"Pilih {panel_word} platform berbeda. Semuanya diproses bersamaan dengan satu worker per platform; "
+        "urutan URL di dalam setiap platform tetap dijaga agar engagement presisi."
     )
-    left_col, right_col = st.columns(2, gap="large")
-    with left_col:
-        left_platform = st.selectbox(
-            "Platform kiri",
-            PLATFORM_OPTIONS,
-            index=PLATFORM_OPTIONS.index("Facebook"),
-            format_func=lambda value: PLATFORM_ICONS[value],
-            key="split_left_platform",
-        )
-    right_options = [platform for platform in PLATFORM_OPTIONS if platform != left_platform]
-    right_default = right_options.index("Threads") if "Threads" in right_options else 0
-    with right_col:
-        right_platform = st.selectbox(
-            "Platform kanan",
-            right_options,
-            index=right_default,
-            format_func=lambda value: PLATFORM_ICONS[value],
-            key="split_right_platform",
-        )
-
-    with left_col:
-        left_mode = render_platform_setup(left_platform, "left", compact=True)
-    with right_col:
-        right_mode = render_platform_setup(right_platform, "right", compact=True)
-
-    with st.form("split_enrichment_form"):
-        form_left, form_right = st.columns(2, gap="large")
-        with form_left:
-            left_url_text = st.text_area(
-                f"Daftar URL {left_platform}",
-                height=180,
-                placeholder=f"{PLACEHOLDERS[left_platform]}\n{PLACEHOLDERS[left_platform]}",
-                key=f"social_urls_left_{left_platform}",
+    slot_names = ["left", "center", "right"] if panel_count == 3 else ["left", "right"]
+    slot_labels = ["kiri", "tengah", "kanan"] if panel_count == 3 else ["kiri", "kanan"]
+    default_platforms = ["Facebook", "Threads", "Instagram"]
+    setup_columns = st.columns(panel_count, gap="large")
+    selected_platforms: list[str] = []
+    for index, (column, slot, label) in enumerate(zip(setup_columns, slot_names, slot_labels)):
+        options = [platform for platform in PLATFORM_OPTIONS if platform not in selected_platforms]
+        preferred = default_platforms[index]
+        default_index = options.index(preferred) if preferred in options else 0
+        with column:
+            platform = st.selectbox(
+                f"Platform {label}",
+                options,
+                index=default_index,
+                format_func=lambda value: PLATFORM_ICONS[value],
+                key=f"multi_{slot}_platform",
             )
-            left_mock = st.checkbox(
-                f"Gunakan data contoh {left_platform}",
-                key=f"social_mock_left_{left_platform}",
-            )
-        with form_right:
-            right_url_text = st.text_area(
-                f"Daftar URL {right_platform}",
-                height=180,
-                placeholder=f"{PLACEHOLDERS[right_platform]}\n{PLACEHOLDERS[right_platform]}",
-                key=f"social_urls_right_{right_platform}",
-            )
-            right_mock = st.checkbox(
-                f"Gunakan data contoh {right_platform}",
-                key=f"social_mock_right_{right_platform}",
-            )
-        split_submitted = st.form_submit_button("Mulai Dua Proses", type="primary", width="stretch")
+        selected_platforms.append(platform)
 
-    if split_submitted:
-        create_requested_jobs(
-            [
-                {
-                    "platform": left_platform,
-                    "url_text": left_url_text,
-                    "mock_mode": left_mock,
-                    "enrichment_mode": left_mode,
-                },
-                {
-                    "platform": right_platform,
-                    "url_text": right_url_text,
-                    "mock_mode": right_mock,
-                    "enrichment_mode": right_mode,
-                },
-            ]
-        )
+    enrichment_modes: list[str] = []
+    for column, platform, slot in zip(setup_columns, selected_platforms, slot_names):
+        with column:
+            enrichment_modes.append(render_platform_setup(platform, slot, compact=True))
 
-    result_left, result_right = st.columns(2, gap="large")
-    with result_left:
-        st.markdown(f"#### Hasil {left_platform}")
-        job_panels.append(render_job_panel(left_platform, "left"))
-    with result_right:
-        st.markdown(f"#### Hasil {right_platform}")
-        job_panels.append(render_job_panel(right_platform, "right"))
+    requests: list[dict[str, Any]] = []
+    with st.form(f"multi_enrichment_form_{panel_count}"):
+        form_columns = st.columns(panel_count, gap="large")
+        for column, platform, slot, enrichment_mode in zip(
+            form_columns,
+            selected_platforms,
+            slot_names,
+            enrichment_modes,
+        ):
+            with column:
+                url_text = st.text_area(
+                    f"Daftar URL {platform}",
+                    height=180,
+                    placeholder=f"{PLACEHOLDERS[platform]}\n{PLACEHOLDERS[platform]}",
+                    key=f"social_urls_{slot}_{platform}",
+                )
+                mock_mode = st.checkbox(
+                    f"Gunakan data contoh {platform}",
+                    key=f"social_mock_{slot}_{platform}",
+                )
+                requests.append(
+                    {
+                        "platform": platform,
+                        "url_text": url_text,
+                        "mock_mode": mock_mode,
+                        "enrichment_mode": enrichment_mode,
+                    }
+                )
+        button_label = "Mulai Dua Proses" if panel_count == 2 else "Mulai Tiga Proses"
+        multi_submitted = st.form_submit_button(button_label, type="primary", width="stretch")
+
+    if multi_submitted:
+        create_requested_jobs(requests)
+
+    result_columns = st.columns(panel_count, gap="large")
+    for column, platform, slot in zip(result_columns, selected_platforms, slot_names):
+        with column:
+            st.markdown(f"#### Hasil {platform}")
+            job_panels.append(render_job_panel(platform, slot))
 else:
     selected_platform = st.segmented_control(
         "Pilih media sosial",
