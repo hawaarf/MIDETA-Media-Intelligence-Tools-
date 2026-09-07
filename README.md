@@ -1,20 +1,25 @@
 # MIDETA
 
-MIDETA adalah aplikasi lokal untuk mengumpulkan metadata posting media sosial dan komentar. Aplikasi dibuat dengan Python dan Streamlit. Hasil pengambilan dapat diperiksa di browser, disimpan ke riwayat, lalu diunduh sebagai CSV atau XLSX.
+[Bahasa Indonesia](#bahasa-indonesia) · [English](#english)
 
-MIDETA mendukung YouTube, TikTok, Facebook, Instagram, Threads, dan X. Setiap platform mempunyai bagian input sendiri agar URL dan proses pengambilannya tidak tercampur.
+## Bahasa Indonesia
 
-## Fitur utama
+MIDETA adalah aplikasi lokal untuk mengambil metadata posting dan komentar media sosial. Aplikasi ini dibuat dengan Python dan Streamlit.
 
-### Social Media Enrichment
+Platform yang didukung:
 
-Pengguna dapat memasukkan beberapa URL sekaligus dengan menulis satu URL pada setiap baris. URL juga dapat ditempel bersama tanggal atau kolom lain dari spreadsheet, misalnya `Aug 30, 2026 https://www.instagram.com/p/contoh/`; MIDETA hanya mengambil bagian URL-nya. MIDETA akan mencoba mengambil data berikut dari setiap posting:
+- YouTube
+- TikTok
+- Facebook
+- Instagram
+- Threads
+- X
 
-Satu proses dapat memuat sampai 1.000 URL. MIDETA mengerjakan maksimal 20 URL per tahap dan langsung menyimpan hasil setiap URL ke SQLite. Fast enrichment Instagram memakai 10 URL per tahap, sedangkan Advanced enrichment memakai 5 URL per tahap karena juga membuka profil/Reels. Tahap berikutnya berjalan otomatis. Jika aplikasi atau koneksi terhenti, antrean dan pilihan mode tetap tersimpan dan dapat dilanjutkan melalui tombol `Lanjutkan proses`.
+### Fitur
 
-Pada halaman Social Media Enrichment dan Comment Scrapper tersedia tampilan `Split Screen` dan `Triple Screen` untuk menjalankan dua atau tiga platform berbeda sekaligus. Setiap panel mempunyai pilihan platform, input URL, proses, progres, hasil, dan unduhan sendiri. MIDETA memakai maksimal tiga worker—satu untuk setiap platform—sementara URL di dalam masing-masing antrean tetap diproses berurutan agar data posting tidak tertukar. Kecepatan tetap bergantung pada koneksi, respons platform, dan pembatasan request.
+#### Social Media Enrichment
 
-Angka engagement seperti views merupakan snapshot saat URL diperiksa dan dapat bertambah setelah proses selesai. Untuk Threads, MIDETA mencocokkan angka dengan shortcode posting dan memprioritaskan nilai terbaru yang tersedia pada respons halaman.
+Fitur ini mengambil data berikut dari sebuah posting:
 
 1. Tanggal posting
 2. Author
@@ -27,158 +32,86 @@ Angka engagement seperti views merupakan snapshot saat URL diperiksa dan dapat b
 9. Shares
 10. Reposts
 
-Data yang memang tidak diberikan oleh platform akan ditandai sebagai tidak tersedia. Khusus Followers dan Views pada Facebook, Instagram, TikTok, serta Threads, MIDETA menampilkan angka 0 jika platform tidak menyediakan nilainya. Reposts Instagram juga menjadi 0 jika angkanya tidak tercantum. Untuk Facebook, jumlah followers diprioritaskan. Jika followers tidak ditampilkan tetapi jumlah friends tersedia secara publik, MIDETA menggunakan jumlah friends. Views Reel Facebook dan Instagram juga dicari dari daftar Reel publik author dengan mencocokkan ID posting yang sama. Tanggal posting pada tabel dan file unduhan menggunakan format seperti `25-Aug-2026`.
+Masukkan satu URL per baris. Maksimal 1.000 URL untuk setiap proses.
 
-Instagram mempunyai dua mode yang sama-sama memakai browser yang sudah login. Fast enrichment hanya membuka halaman posting untuk mengambil author, caption, tanggal, likes, comments, shares, dan repost. Mode ini tidak membuka profil/Reels dan tidak mencari Followers atau Views sehingga lebih cepat. Advanced enrichment memeriksa setiap halaman posting, lalu membuka profil dan tab Reels author untuk melengkapi Followers dan Views. Advanced sengaja memakai tahap yang lebih kecil dan membutuhkan waktu lebih lama. Angka engagement dicocokkan dengan shortcode posting yang sama. Chrome yang dipakai terpisah dari Chrome utama agar sesi MIDETA tidak tercampur dengan profil kerja atau profil pribadi lainnya.
-
-Pada Facebook, author dan angka engagement dicocokkan dengan ID posting target. Data dari posting rekomendasi tidak dipakai. Jika Reel target tidak menampilkan angka likes atau comments, nilainya menjadi 0. Jumlah bookmark/save diisi bila Facebook mempublikasikan angkanya di data Reel target; tombol Save tanpa angka tetap ditandai tidak tersedia agar tidak menghasilkan nilai tebakan. Untuk posting grup, profil author juga diperiksa agar followers atau friends yang tersedia tetap dapat digunakan.
-
-Jumlah komentar Threads dibaca dari `direct_reply_count` milik posting yang shortcode-nya sama. Cara ini mencegah jumlah reply dari posting rekomendasi ikut masuk ke hasil.
-
-Tanggal Threads dibaca dari `taken_at` yang paling dekat dengan shortcode posting. Reposts Instagram dibaca dari field repost atau reshare milik posting yang sama.
-
-### Comment Scrapper
-
-Comment Scrapper membaca komentar yang tersedia pada percakapan posting. YouTube, TikTok, Facebook, Instagram, Threads, dan X mempunyai pilihan input sendiri agar URL serta hasilnya tidak tercampur.
-
-Threads dan X memuat komentar melalui JavaScript, sehingga MIDETA otomatis memakai browser khusus untuk kedua platform tersebut. Chrome MIDETA membuka percakapan, menampilkan balasan yang tersedia, lalu membaca tanggal, username author, isi komentar, likes, dan jumlah reply. Data hanya diambil jika ID posting target ditemukan pada halaman. Bagian rekomendasi tidak dimasukkan.
-
-Tipe `parent` berarti komentar tersebut ditulis langsung pada posting. Tipe `reply` berarti komentar tersebut merupakan balasan. Urutan ranking dihitung dari kombinasi likes dan jumlah reply agar komentar dengan engagement terbesar muncul lebih dahulu.
-
-File CSV dan XLSX mengikuti susunan `index`, `date`, `author`, `type`, `comment`, dan `like`. Kolom `index` menjadi urutan ranking. Tanggal ditulis seperti `Aug 20, 2026`, sesuai format file contoh.
-
-Setelah proses selesai, halaman menampilkan preview postingan pertama, jumlah seluruh komentar, jumlah parent, dan jumlah reply. Jika beberapa URL ditempel sekaligus, semua komentarnya tetap digabungkan dalam satu hasil untuk platform yang sedang dipilih.
-
-### Riwayat Analisis
-
-Setiap proses disimpan ke database SQLite lokal. Halaman riwayat menyediakan pencarian, filter berdasarkan fitur, platform, dan tanggal, serta pilihan untuk melihat detail atau menghapus hasil.
-
-## Cara menggunakan
-
-1. Jalankan MIDETA dan buka `http://localhost:8501`.
-2. Masuk ke Social Media Enrichment atau Comment Scrapper.
-3. Pilih platform yang ingin diproses.
-4. Tempel satu atau beberapa URL. Gunakan satu baris untuk satu URL.
-5. Tekan tombol pengambilan data.
-6. Periksa hasilnya, lalu unduh CSV atau XLSX jika diperlukan.
-
-Untuk daftar besar, tempel sampai 1.000 URL dari satu platform. Halaman menampilkan jumlah URL yang sudah tersimpan dan menyediakan tombol `Jeda proses`. URL diproses secara berurutan agar request ke platform tidak melonjak. URL yang gagal dicatat pada bagian yang perlu diperiksa. Jika platform mengirim pembatasan request, MIDETA menjeda antrean agar pengguna dapat melanjutkannya nanti.
-
-### Mode browser Instagram
-
-1. Pilih Instagram pada halaman Social Media Enrichment.
-2. Pilih `Fast enrichment` untuk engagement posting saja, atau `Advanced enrichment` jika Followers dan Views juga diperlukan.
-3. Tekan `Buka Chrome Instagram`.
-4. Login langsung di jendela Chrome yang terbuka.
-5. Kembali ke MIDETA dan tekan `Periksa Login`.
-6. Masukkan URL lalu tekan tombol enrichment sesuai mode yang dipilih.
-
-Kedua mode membutuhkan login. Login cukup dilakukan sekali selama sesi Instagram masih aktif. Password diketik langsung di Instagram dan tidak dibaca oleh MIDETA.
-
-### Split dan Triple Screen
-
-1. Buka halaman Social Media Enrichment atau Comment Scrapper, lalu pilih `Split Screen` atau `Triple Screen` pada bagian Tampilan proses.
-2. Pilih dua atau tiga platform berbeda pada panel yang tersedia.
-3. Masukkan URL untuk setiap platform pada kotak yang sesuai.
-4. Jika salah satu platform adalah Instagram, pilih Fast atau Advanced enrichment dan pastikan Chrome MIDETA sudah login.
-5. Tekan `Mulai Dua Proses` atau `Mulai Tiga Proses` untuk menjalankannya bersamaan.
-6. Pantau progres, jeda atau lanjutkan antrean, lalu unduh hasil dari panel masing-masing.
-
-Maksimal tiga platform dijalankan bersamaan. Pemisahan proses dan hasil menjaga data Facebook, Threads, Instagram, atau platform lain tetap berada pada panelnya sendiri.
-
-File XLSX hasil unduhan memakai font Arial ukuran 10 untuk header dan seluruh data. Format CSV tidak menyimpan pengaturan font karena CSV merupakan data teks polos.
-
-### Mode browser Threads dan X
-
-1. Pilih Threads atau X pada halaman Comment Scrapper.
-2. Masukkan URL posting dan tekan `Ambil Semua Komentar`.
-3. MIDETA akan membuka browser platform tersebut secara otomatis.
-4. Jika posting tidak terlihat, tekan tombol untuk membuka sesi platform, login langsung di Chrome MIDETA satu kali, lalu tekan `Periksa Login`.
-5. Jalankan kembali URL setelah login terdeteksi.
-
-Threads dan X memakai profil Chrome yang berbeda. Sesi otomatis dipakai kembali sampai kedaluwarsa atau pengguna logout. Password tetap diketik langsung di situs dan tidak dibaca MIDETA.
-
-## Cara kerja Comment Scrapper untuk Threads dan X
-
-1. URL diperiksa dan harus sesuai dengan platform yang sedang dipilih.
-2. ID posting Threads atau status X dibaca dari URL.
-3. MIDETA membuka halaman percakapan dan memastikan ID posting target benar-benar tampil.
-4. Pada Threads, setiap komentar dicocokkan melalui ID parent dan ID posting utama.
-5. Pada X, komentar dicocokkan melalui `conversation_id` dan ID tweet yang dibalas.
-6. Posting utama dan seluruh rekomendasi di luar percakapan dibuang dari hasil.
-7. Komentar langsung diberi tipe `parent`, sedangkan balasan komentar diberi tipe `reply`.
-8. Likes dan jumlah reply dipakai untuk menyusun ranking.
-9. Hasil disimpan ke riwayat dan dapat diunduh sebagai CSV atau XLSX.
-
-## Cara kerja Social Media Enrichment
-
-Proses enrichment dimulai dari URL dan berakhir sebagai baris data yang sudah seragam. Alurnya sebagai berikut:
-
-1. `get_connector()` membaca domain URL dan memilih connector yang sesuai.
-2. `validate_public_url()` memeriksa format URL, port, alamat jaringan, dan kredensial yang mungkin tersisip di URL.
-3. `fetch_public_html()` membuka halaman publik dan mengikuti redirect. Tahap ini berguna untuk link singkat atau link share yang mengarah ke alamat posting asli.
-4. HTML dibaca dengan BeautifulSoup. Data JSON yang terdapat di dalam tag script juga ikut diperiksa.
-5. Connector mencari ID posting dari URL final atau URL canonical.
-6. Data di sekitar ID tersebut dipilih agar hasil tidak tertukar dengan posting rekomendasi yang berada pada halaman yang sama.
-7. Author, caption, tanggal posting, dan angka engagement diambil dari metadata, JSON LD, serta data script publik yang tersedia.
-8. Hasil dinormalisasi ke struktur `SocialResult` agar semua platform mempunyai bentuk output yang sama.
-9. Untuk daftar besar, antrean dibagi menjadi tahap berisi 20 URL pada platform biasa, 10 URL untuk Fast Instagram, atau 5 URL untuk Advanced Instagram. Posisi antrean, pilihan mode, dan setiap hasil disimpan ke SQLite.
-10. Setelah seluruh tahap selesai, hasil digabungkan dan disiapkan untuk ekspor CSV atau XLSX.
-
-## Cara kerja enrichment Facebook
-
-Facebook mempunyai beberapa bentuk URL, antara lain post, video, reel, share, dan permalink grup. Connector Facebook menangani perbedaan tersebut dengan langkah berikut:
-
-1. Link dibuka sampai mendapatkan URL tujuan sebenarnya.
-2. ID post atau video diambil dari URL final.
-3. Connector mencari bagian data Facebook yang mempunyai ID sama.
-4. Author dibaca dari data `actors` atau `owning_profile` milik post tersebut.
-5. Untuk posting grup, nama grup dibaca dari objek grup. Kolom Author kemudian ditulis sebagai `Nama author - Nama grup`.
-6. Caption pendek dari metadata dibandingkan dengan teks post di dalam script. Jika versi lengkap tersedia, MIDETA memakai versi lengkap.
-7. Views, likes, comments, dan shares dibaca dari data feedback, metadata, atau label publik yang tersedia.
-8. Angka singkat seperti `23 rb` dan `1,3 jt` diubah menjadi nilai numerik agar dapat dipakai untuk analisis.
-
-Domain Facebook yang dikenali adalah `facebook.com`, `www.facebook.com`, `web.facebook.com`, `m.facebook.com`, dan `fb.watch`.
-
-Contoh alur fungsi dalam bentuk sederhana:
-
-```python
-def enrich(url):
-    validate_public_url(url)
-    connector = get_connector(url)
-    html, final_url = fetch_public_html(url)
-
-    post_id = connector.find_post_id(final_url)
-    post_data = connector.find_post_data(html, post_id)
-
-    result = connector.extract(post_data)
-    return normalize_result(result)
-```
-
-Potongan di atas hanya menggambarkan alurnya. Implementasi sebenarnya memisahkan validasi, request HTTP, parsing umum, parsing khusus platform, penyimpanan, dan ekspor ke modul yang berbeda.
-
-## Struktur project
+URL boleh ditempel bersama data lain dari spreadsheet. Contoh:
 
 ```text
-app.py                         halaman utama
-pages/                         halaman fitur Streamlit
-src/connectors/                parser untuk setiap platform
-src/http_client.py             request HTTP dan pemeriksaan redirect
-src/instagram_browser.py       pembacaan Instagram melalui Chrome yang sudah login
-src/comment_browser.py         pembacaan komentar dinamis Threads dan X melalui Chrome
-src/validators.py              validasi URL dan perlindungan jaringan lokal
-src/models.py                  bentuk data hasil pengambilan
-src/batch.py                   pemrosesan beberapa URL dan ranking komentar
-src/database.py                penyimpanan riwayat SQLite
-src/exporters.py               pembuatan CSV dan XLSX
-assets/styles.css              tampilan aplikasi
-sample_data/                   data contoh
-tests/                         automated tests
+Aug 30, 2026 https://www.instagram.com/p/contoh/
 ```
 
-## Instalasi
+MIDETA akan mengambil bagian URL-nya saja.
 
-MIDETA membutuhkan Python 3.12 atau versi yang lebih baru. Mode browser Instagram, Threads, dan X juga membutuhkan Google Chrome.
+Hasil disimpan setelah setiap URL selesai. Jika aplikasi atau koneksi terhenti, proses dapat dilanjutkan dari URL terakhir yang belum selesai.
+
+#### Mode Instagram
+
+Fast dan Advanced sama-sama membutuhkan login Instagram di Chrome MIDETA.
+
+| Mode | Data yang diambil | Kecepatan |
+| --- | --- | --- |
+| Fast | Author, caption, tanggal, likes, comments, shares, dan repost | Lebih cepat. Tidak membuka profil atau tab Reels untuk mencari Followers dan Views. |
+| Advanced | Semua data Fast, ditambah Followers dan Views | Lebih lama karena membuka posting, profil author, dan tab Reels. |
+
+Fast memproses 10 URL per tahap. Advanced memproses 5 URL per tahap agar pemeriksaan Followers dan Views lebih stabil.
+
+Cara login:
+
+1. Pilih Instagram di halaman Social Media Enrichment.
+2. Pilih Fast atau Advanced.
+3. Tekan `Buka Chrome Instagram`.
+4. Login langsung di Instagram.
+5. Kembali ke MIDETA, lalu tekan `Periksa Login`.
+6. Masukkan URL dan mulai enrichment.
+
+Password hanya diketik di Instagram dan tidak dibaca oleh MIDETA.
+
+#### Split Screen dan Triple Screen
+
+Gunakan tampilan berikut untuk menjalankan beberapa platform sekaligus:
+
+- `Satu platform` untuk satu proses.
+- `Split Screen` untuk dua platform.
+- `Triple Screen` untuk tiga platform.
+
+Setiap panel mempunyai input, progres, hasil, dan file unduhan sendiri. Maksimal tiga platform berjalan bersamaan. URL di dalam setiap panel tetap diproses secara berurutan supaya datanya tidak tertukar.
+
+#### Catatan platform
+
+- Facebook mencocokkan data dengan ID posting target agar data dari posting rekomendasi tidak ikut terbaca.
+- Facebook memakai jumlah followers. Jika followers tidak tersedia tetapi jumlah friends tersedia, MIDETA memakai jumlah friends.
+- Bookmark Facebook Reel hanya diisi jika angkanya memang tersedia.
+- Views Facebook dan Instagram Reel dicari dari posting atau daftar Reels author yang cocok.
+- Threads mencocokkan tanggal, views, dan jumlah komentar dengan posting target.
+- Nilai engagement adalah snapshot saat URL diperiksa. Angkanya dapat berubah setelah proses selesai.
+- Data yang tidak diberikan platform akan ditulis sebagai `Tidak tersedia` atau `0`, sesuai jenis datanya.
+
+#### Comment Scrapper
+
+Fitur ini mengambil komentar dari sebuah posting. Setiap platform mempunyai panel sendiri agar URL dan hasilnya tidak tercampur.
+
+Untuk Threads dan X, MIDETA memakai Chrome khusus karena komentarnya dimuat melalui JavaScript. Jika posting tidak terlihat, buka sesi platform, login, periksa login, lalu jalankan kembali prosesnya.
+
+Hasil komentar berisi:
+
+- `index`: urutan ranking
+- `date`: tanggal komentar
+- `author`: username
+- `type`: `parent` atau `reply`
+- `comment`: isi komentar
+- `like`: jumlah likes
+
+`parent` adalah komentar langsung pada posting. `reply` adalah balasan terhadap komentar lain.
+
+Tanggal komentar memakai format seperti `Aug 20, 2026`. Tanggal posting enrichment memakai format seperti `25-Aug-2026`.
+
+#### Riwayat Analisis
+
+Hasil proses disimpan di database SQLite lokal. Riwayat dapat dicari dan difilter berdasarkan fitur, platform, dan tanggal.
+
+### Cara menjalankan
+
+MIDETA membutuhkan Python 3.12 atau yang lebih baru. Fitur browser membutuhkan Google Chrome.
 
 ```bash
 python3 -m venv .venv
@@ -186,31 +119,237 @@ python3 -m venv .venv
 .venv/bin/streamlit run app.py
 ```
 
-Database akan dibuat otomatis di `data/mideta.db`. File database tidak dimasukkan ke repository.
+Buka `http://localhost:8501` setelah aplikasi berjalan.
 
-## Pengujian
+Database dibuat otomatis di `data/mideta.db` dan tidak dimasukkan ke GitHub.
 
-Jalankan pemeriksaan syntax dan seluruh automated tests dengan perintah berikut:
+### Cara pakai
+
+1. Buka Social Media Enrichment atau Comment Scrapper.
+2. Pilih tampilan proses dan platform.
+3. Tempel satu atau beberapa URL.
+4. Untuk Instagram, pilih Fast atau Advanced dan pastikan sudah login.
+5. Tekan tombol mulai.
+6. Periksa hasilnya.
+7. Unduh CSV atau XLSX jika diperlukan.
+
+Untuk proses besar, gunakan tombol `Jeda proses` atau `Lanjutkan proses`. Jika platform membatasi request, MIDETA akan menjeda antrean agar dapat dilanjutkan nanti.
+
+### Format file
+
+- CSV berisi data teks dan tidak menyimpan pengaturan font.
+- XLSX memakai font Arial ukuran 10 untuk header dan data.
+
+### Struktur project
+
+```text
+app.py                         halaman utama
+pages/                         halaman Streamlit
+src/connectors/                pembaca data setiap platform
+src/instagram_browser.py       browser Instagram
+src/comment_browser.py         browser komentar Threads dan X
+src/batch.py                   antrean URL dan hasil
+src/database.py                database SQLite
+src/exporters.py               pembuat CSV dan XLSX
+assets/styles.css              tampilan aplikasi
+sample_data/                   data contoh
+tests/                         automated tests
+```
+
+### Pengujian
 
 ```bash
 .venv/bin/python -m compileall app.py pages src tests
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Tests mencakup validasi URL, pemilihan connector, parsing metadata, parsing Facebook Reel dan grup, pengambilan caption lengkap, pemisahan data posting utama dari rekomendasi, pembacaan angka browser Instagram, koleksi parent dan reply Threads serta X, ranking komentar, database, CSV, dan XLSX.
+### Batasan
 
-## Data contoh
+- Hasil bergantung pada data yang ditampilkan oleh platform.
+- Struktur halaman media sosial dapat berubah dan membuat beberapa data tidak terbaca.
+- Postingan privat, login yang kedaluwarsa, CAPTCHA, dan pembatasan request dapat menghentikan proses.
+- MIDETA tidak melewati login, CAPTCHA, atau batas akses platform.
 
-Social Media Enrichment dan Comment Scrapper mempunyai pilihan data contoh. Pilihan ini hanya digunakan untuk melihat bentuk hasil tanpa melakukan request ke platform. Setiap hasil contoh diberi penanda agar tidak dianggap sebagai hasil pengambilan nyata.
+### Privasi
 
-## Batasan
+- URL diperiksa sebelum dibuka.
+- Alamat lokal, jaringan privat, kredensial di URL, dan port non-web ditolak.
+- Repository tidak menyimpan password, token, file `.env`, database riwayat, atau profil browser.
+- Sesi Chrome MIDETA disimpan lokal di `data/browser_profiles/` dan folder tersebut tidak dimasukkan ke GitHub.
 
-Secara bawaan, MIDETA hanya membaca informasi yang diberikan pada halaman publik. Mode browser Instagram, Threads, dan X dapat menggunakan login yang dilakukan sendiri oleh pengguna. MIDETA tidak mengisi password, melewati CAPTCHA, atau mencoba menembus pembatasan platform.
+---
 
-Struktur halaman media sosial dapat berubah. Jika platform mengubah nama field atau susunan datanya, connector terkait perlu diperbarui. Jumlah informasi yang tersedia juga dapat berbeda pada setiap posting.
+## English
 
-## Privasi dan keamanan
+MIDETA is a local app for collecting social media post metadata and comments. It is built with Python and Streamlit.
 
-URL diperiksa sebelum request dan setelah redirect. Alamat lokal, jaringan privat, kredensial di URL, serta port yang bukan port web ditolak. Request mempunyai batas waktu dan ukuran respons dibatasi hingga 8 MB.
+Supported platforms:
 
-Repository tidak menyimpan token, password, file `.env`, Streamlit secrets, database riwayat pengguna, atau profil browser. Sesi Chrome MIDETA berada di `data/browser_profiles/` pada komputer lokal dan folder tersebut diabaikan oleh Git.
+- YouTube
+- TikTok
+- Facebook
+- Instagram
+- Threads
+- X
+
+### Features
+
+#### Social Media Enrichment
+
+This feature collects the following data from a post:
+
+1. Post date
+2. Author
+3. Caption
+4. Followers
+5. Views
+6. Likes
+7. Comments
+8. Saves or bookmarks
+9. Shares
+10. Reposts
+
+Enter one URL per line. Each run can contain up to 1,000 URLs.
+
+You can also paste URLs with other spreadsheet data. Example:
+
+```text
+Aug 30, 2026 https://www.instagram.com/p/example/
+```
+
+MIDETA will use the URL and ignore the other text.
+
+Each result is saved as soon as the URL is finished. If the app or connection stops, the run can continue from the last unfinished URL.
+
+#### Instagram modes
+
+Fast and Advanced both require an Instagram login in the MIDETA Chrome window.
+
+| Mode | Data collected | Speed |
+| --- | --- | --- |
+| Fast | Author, caption, date, likes, comments, shares, and reposts | Faster. It does not open the profile or Reels tab to find Followers and Views. |
+| Advanced | All Fast data, plus Followers and Views | Slower because it opens the post, author profile, and Reels tab. |
+
+Fast processes 10 URLs per stage. Advanced processes 5 URLs per stage to make the Followers and Views checks more stable.
+
+How to log in:
+
+1. Select Instagram on the Social Media Enrichment page.
+2. Select Fast or Advanced.
+3. Click `Buka Chrome Instagram`.
+4. Log in directly on Instagram.
+5. Return to MIDETA and click `Periksa Login`.
+6. Enter the URLs and start enrichment.
+
+Your password is entered only on Instagram and is not read by MIDETA.
+
+#### Split Screen and Triple Screen
+
+Use these layouts to run more than one platform:
+
+- `Satu platform` for one process.
+- `Split Screen` for two platforms.
+- `Triple Screen` for three platforms.
+
+Each panel has its own input, progress, results, and downloads. Up to three platforms can run at the same time. URLs inside each panel are still processed in order so results do not get mixed.
+
+#### Platform notes
+
+- Facebook matches data to the target post ID so recommended posts are not included.
+- Facebook uses the follower count. If followers are unavailable but friends are public, MIDETA uses the friend count.
+- Facebook Reel bookmarks are only filled when a public count is available.
+- Facebook and Instagram Reel views are checked on the matching post or the author's Reels list.
+- Threads matches the date, views, and comment count to the target post.
+- Engagement values are a snapshot taken during the run. They may change later.
+- Missing platform data is shown as `Tidak tersedia` or `0`, depending on the field.
+
+#### Comment Scrapper
+
+This feature collects comments from a post. Each platform has a separate panel so URLs and results do not get mixed.
+
+For Threads and X, MIDETA uses a dedicated Chrome window because comments are loaded with JavaScript. If the post is not visible, open the platform session, log in, check the login, and run the URL again.
+
+Comment results contain:
+
+- `index`: ranking order
+- `date`: comment date
+- `author`: username
+- `type`: `parent` or `reply`
+- `comment`: comment text
+- `like`: like count
+
+A `parent` is a direct comment on the post. A `reply` is a response to another comment.
+
+Comment dates use a format such as `Aug 20, 2026`. Enrichment post dates use a format such as `25-Aug-2026`.
+
+#### Analysis History
+
+Run results are saved in a local SQLite database. History can be searched and filtered by feature, platform, and date.
+
+### Setup
+
+MIDETA requires Python 3.12 or newer. Browser features also require Google Chrome.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/streamlit run app.py
+```
+
+Open `http://localhost:8501` after the app starts.
+
+The database is created automatically at `data/mideta.db` and is not committed to GitHub.
+
+### How to use
+
+1. Open Social Media Enrichment or Comment Scrapper.
+2. Select the process layout and platform.
+3. Paste one or more URLs.
+4. For Instagram, select Fast or Advanced and make sure you are logged in.
+5. Start the process.
+6. Review the results.
+7. Download CSV or XLSX if needed.
+
+For large runs, use `Jeda proses` or `Lanjutkan proses`. If a platform limits requests, MIDETA pauses the queue so it can be resumed later.
+
+### File format
+
+- CSV contains text data and cannot store font settings.
+- XLSX uses Arial size 10 for headers and data.
+
+### Project structure
+
+```text
+app.py                         main page
+pages/                         Streamlit pages
+src/connectors/                platform data readers
+src/instagram_browser.py       Instagram browser support
+src/comment_browser.py         Threads and X comment browser
+src/batch.py                   URL queues and results
+src/database.py                SQLite database
+src/exporters.py               CSV and XLSX exports
+assets/styles.css              app styles
+sample_data/                   sample data
+tests/                         automated tests
+```
+
+### Tests
+
+```bash
+.venv/bin/python -m compileall app.py pages src tests
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+### Limitations
+
+- Results depend on the data shown by each platform.
+- Social media page structures can change and may cause some fields to become unavailable.
+- Private posts, expired logins, CAPTCHAs, and request limits can stop a run.
+- MIDETA does not bypass logins, CAPTCHAs, or platform access limits.
+
+### Privacy
+
+- URLs are checked before they are opened.
+- Local addresses, private networks, credentials in URLs, and non-web ports are rejected.
+- The repository does not store passwords, tokens, `.env` files, history databases, or browser profiles.
+- MIDETA Chrome sessions are stored locally in `data/browser_profiles/`. This folder is not committed to GitHub.
