@@ -36,7 +36,10 @@ class ThreadsConnector(BaseConnector):
     @classmethod
     def _metric_number(cls, value) -> int | None:
         if isinstance(value, dict):
-            value = value.get("count") or value.get("total_count") or value.get("value")
+            value = next(
+                (value[key] for key in ("count", "total_count", "value") if key in value),
+                None,
+            )
         if isinstance(value, (int, float)):
             return int(value)
         if not isinstance(value, str):
@@ -70,6 +73,56 @@ class ThreadsConnector(BaseConnector):
             re.finditer(r'"(?:code|shortcode)"\s*:\s*"([^"\\]+)"', html, re.I)
         )
         metric_pattern = r'"(?:view_counts?|views_count|play_count|video_view_count)"\s*:\s*"?([\d.,]+\s*(?:k|m|b)?)"?'
+        for metric in re.finditer(metric_pattern, html, re.I):
+            if not code_matches:
+                break
+            closest = min(
+                code_matches,
+                key=lambda code: (abs(code.start() - metric.start()), code.start() > metric.start()),
+            )
+            if closest.group(1).casefold() != shortcode.casefold():
+                continue
+            if abs(closest.start() - metric.start()) > 40_000:
+                continue
+            count = cls._metric_number(metric.group(1))
+            if count is not None:
+                counts.append(count)
+        return counts
+
+    @classmethod
+    def _target_share_counts(cls, html: str, shortcode: str) -> list[int]:
+        """Return public share counts belonging to the requested Threads post."""
+        keys = {"reshare_count", "share_count", "shares_count"}
+        counts: list[int] = []
+        soup = BeautifulSoup(html, "lxml")
+        for payload in cls._embedded_json(soup):
+            for node in cls._walk(payload):
+                post = node.get("post") if isinstance(node.get("post"), dict) else node
+                code = post.get("code") or post.get("shortcode")
+                if str(code or "").casefold() != shortcode.casefold():
+                    continue
+                sources = [post]
+                app_info = post.get("text_post_app_info")
+                if isinstance(app_info, dict):
+                    sources.append(app_info)
+                for source in sources:
+                    for key in keys:
+                        if key not in source:
+                            continue
+                        count = cls._metric_number(source[key])
+                        # Threads uses null when the public share icon has no
+                        # count. Treat that explicit field as zero.
+                        counts.append(0 if count is None else count)
+
+        # Parsed objects are safer than proximity matching because a compact
+        # response can place the next post code close to the previous metric.
+        if counts:
+            return counts
+
+        code_matches = list(
+            re.finditer(r'"(?:code|shortcode)"\s*:\s*"([^"\\]+)"', html, re.I)
+        )
+        metric_pattern = r'"(?:reshare_count|shares?_count)"\s*:\s*"?([\d.,]+\s*(?:k|m|b)?)"?'
         for metric in re.finditer(metric_pattern, html, re.I):
             if not code_matches:
                 break
@@ -124,6 +177,10 @@ class ThreadsConnector(BaseConnector):
                     candidates.append((distance, count))
             if candidates:
                 metrics["comments"] = min(candidates, key=lambda item: item[0])[1]
+
+            share_counts = self._target_share_counts(html, shortcode)
+            if share_counts:
+                metrics["shares"] = max(share_counts)
         else:
             visible_views = self._visible_view_count(html)
             if visible_views is not None:

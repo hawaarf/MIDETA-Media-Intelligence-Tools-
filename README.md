@@ -82,7 +82,7 @@ Setiap panel mempunyai input, progres, hasil, dan file unduhan sendiri. Maksimal
 - Facebook memakai jumlah followers. Jika followers tidak tersedia tetapi jumlah friends tersedia, MIDETA memakai jumlah friends.
 - Bookmark Facebook Reel hanya diisi jika angkanya memang tersedia.
 - Views Facebook dan Instagram Reel dicari dari posting atau daftar Reels author yang cocok.
-- Threads mencocokkan tanggal, views, dan jumlah komentar dengan posting target.
+- Threads mencocokkan tanggal, views, jumlah komentar, dan shares dengan posting target.
 - Nilai engagement adalah snapshot saat URL diperiksa. Angkanya dapat berubah setelah proses selesai.
 - Data yang tidak diberikan platform akan ditulis sebagai `Tidak tersedia` atau `0`, sesuai jenis datanya.
 
@@ -259,7 +259,7 @@ Each panel has its own input, progress, results, and downloads. Up to three plat
 - Facebook uses the follower count. If followers are unavailable but friends are public, MIDETA uses the friend count.
 - Facebook Reel bookmarks are only filled when a public count is available.
 - Facebook and Instagram Reel views are checked on the matching post or the author's Reels list.
-- Threads matches the date, views, and comment count to the target post.
+- Threads matches the date, views, comment count, and shares to the target post.
 - Engagement values are a snapshot taken during the run. They may change later.
 - Missing platform data is shown as `Tidak tersedia` or `0`, depending on the field.
 
