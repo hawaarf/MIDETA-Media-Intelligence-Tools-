@@ -1,9 +1,11 @@
 """Instagram enrichment through a dedicated, user-authenticated Chrome profile."""
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -41,6 +43,7 @@ class InstagramBrowserMetrics:
     comments: int | None = None
     shares: int | None = None
     reposts: int | None = None
+    views_applicable: bool | None = None
 
 
 def apply_instagram_browser_metrics(
@@ -75,10 +78,36 @@ def apply_instagram_browser_metrics(
     browser_note = (
         "Instagram diperiksa dengan Fast enrichment melalui halaman posting di browser MIDETA yang sudah login."
         if mode == "fast"
-        else "Instagram diperiksa dengan Advanced enrichment melalui posting dan profil/Reels di browser MIDETA yang sudah login."
+        else (
+            "Instagram diperiksa dengan Advanced enrichment melalui posting dan profil di browser MIDETA yang sudah login; "
+            "Views hanya diisi ketika tersedia untuk video/Reels."
+        )
     )
     result.note = f"{result.note} {browser_note}".strip() if result.note else browser_note
     return result
+
+
+def build_instagram_browser_result(
+    url: str,
+    metrics: InstagramBrowserMetrics,
+    mode: str = "advanced",
+) -> SocialResult:
+    """Build an Instagram result using only the authenticated post response."""
+    result = SocialResult(
+        url=url,
+        platform="Instagram",
+        username=DataField(value=None, status=FieldStatus.NOT_PUBLIC),
+        caption=DataField(value=None, status=FieldStatus.NOT_PUBLIC),
+        posted_at=DataField(value=None, status=FieldStatus.NOT_PUBLIC),
+        followers=DataField(value=None, status=FieldStatus.NOT_PUBLIC),
+        likes=DataField(value=None, status=FieldStatus.NOT_PUBLIC),
+        comments=DataField(value=None, status=FieldStatus.NOT_PUBLIC),
+        shares=DataField(value=None, status=FieldStatus.NOT_SUPPORTED),
+        views=DataField(value=None, status=FieldStatus.NOT_PUBLIC),
+        bookmarks=DataField(value=None, status=FieldStatus.NOT_SUPPORTED),
+        reposts=DataField(value=None, status=FieldStatus.NOT_PUBLIC),
+    )
+    return apply_instagram_browser_metrics(result, metrics, mode=mode)
 
 
 class InstagramBrowserCollector:
@@ -92,6 +121,7 @@ class InstagramBrowserCollector:
         self.wait_seconds = wait_seconds
         self.headless = headless
         self.driver = None
+        self._followers_cache: dict[str, tuple[float, int]] = {}
 
     @staticmethod
     def _shortcode(url: str) -> str | None:
@@ -275,6 +305,56 @@ class InstagramBrowserCollector:
     @classmethod
     def _media_info_engagement(cls, source: str) -> InstagramBrowserMetrics:
         """Read exact engagement values from Instagram's authenticated media response."""
+        try:
+            payload = json.loads(source)
+        except (json.JSONDecodeError, TypeError):
+            payload = None
+        items = payload.get("items") if isinstance(payload, dict) else None
+        item = items[0] if isinstance(items, list) and items and isinstance(items[0], dict) else None
+        if item is not None:
+            user = item.get("user") if isinstance(item.get("user"), dict) else {}
+            caption = item.get("caption") if isinstance(item.get("caption"), dict) else {}
+            posted_at = None
+            taken_at = item.get("taken_at")
+            try:
+                if taken_at is not None:
+                    posted_at = datetime.fromtimestamp(int(taken_at), tz=timezone.utc).isoformat()
+            except (TypeError, ValueError, OverflowError, OSError):
+                posted_at = None
+            media_type = item.get("media_type")
+            product_type = str(item.get("product_type") or "").casefold()
+            views_applicable = media_type == 2 or product_type in {"clips", "reel", "reels"}
+            return InstagramBrowserMetrics(
+                username=cls._username(user.get("username")),
+                caption=str(caption.get("text") or "").strip() or None,
+                posted_at=posted_at,
+                reposts=cls._mapping_count(
+                    item,
+                    "media_repost_count",
+                    "repost_count",
+                    "reposts_count",
+                    "reshare_count",
+                    "reshares_count",
+                    "repost_count_reduced",
+                    "reshare_count_reduced",
+                ),
+                views=cls._mapping_count(
+                    item,
+                    "play_count",
+                    "view_count",
+                    "video_view_count",
+                    "ig_play_count",
+                ),
+                likes=cls._mapping_count(item, "like_count", "likes_count"),
+                comments=cls._mapping_count(
+                    item,
+                    "comment_count",
+                    "comments_count",
+                    "total_comment_count",
+                ),
+                shares=cls._mapping_count(item, "share_count", "shares_count"),
+                views_applicable=views_applicable,
+            )
         return InstagramBrowserMetrics(
             reposts=cls._target_metric_from_exact_media(
                 source,
@@ -302,6 +382,33 @@ class InstagramBrowserCollector:
             ),
             shares=cls._target_metric_from_exact_media(source, "share_count", "shares_count"),
         )
+
+    @staticmethod
+    def _mapping_count(item: dict, *keys: str) -> int | None:
+        for key in keys:
+            value = item.get(key)
+            if isinstance(value, dict):
+                value = value.get("count", value.get("total_count"))
+            if isinstance(value, bool) or value is None:
+                continue
+            if isinstance(value, (int, float)):
+                return int(value)
+            count = BaseConnector._human_count(str(value))
+            if count is not None:
+                return count
+        return None
+
+    @classmethod
+    def _profile_info_followers(cls, source: str) -> int | None:
+        try:
+            payload = json.loads(source)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        user = data.get("user") if isinstance(data, dict) else None
+        if not isinstance(user, dict):
+            return None
+        return cls._mapping_count(user, "follower_count", "followers_count", "edge_followed_by")
 
     @staticmethod
     def _target_metric_from_exact_media(source: str, *keys: str) -> int | None:
@@ -457,6 +564,32 @@ class InstagramBrowserCollector:
             return InstagramBrowserMetrics()
         return self._media_info_engagement(str(response.get("text") or ""))
 
+    def _authenticated_profile_followers(self, username: str) -> int | None:
+        try:
+            self.driver.set_script_timeout(self.wait_seconds)
+            response = self.driver.execute_async_script(
+                """
+                const username = arguments[0];
+                const done = arguments[arguments.length - 1];
+                const query = encodeURIComponent(username);
+                fetch(`/api/v1/users/web_profile_info/?username=${query}`, {
+                  credentials: 'include',
+                  headers: {
+                    'X-IG-App-ID': '936619743392459',
+                    'X-Requested-With': 'XMLHttpRequest'
+                  }
+                })
+                  .then(async response => done({status: response.status, text: await response.text()}))
+                  .catch(() => done({status: 0, text: ''}));
+                """,
+                username,
+            )
+        except WebDriverException:
+            return None
+        if not isinstance(response, dict) or int(response.get("status") or 0) != 200:
+            return None
+        return self._profile_info_followers(str(response.get("text") or ""))
+
     def _post_metrics(self, url: str, shortcode: str) -> InstagramBrowserMetrics:
         driver = self.start()
         driver.get(url)
@@ -469,6 +602,12 @@ class InstagramBrowserCollector:
         if not metadata.username:
             metadata.username = self._username_from_dom()
         api_metrics = self._authenticated_media_metrics(source, shortcode)
+        if api_metrics.username:
+            metadata.username = api_metrics.username
+        if api_metrics.caption:
+            metadata.caption = api_metrics.caption
+        if api_metrics.posted_at and not metadata.posted_at:
+            metadata.posted_at = api_metrics.posted_at
         if api_metrics.likes is not None:
             metadata.likes = api_metrics.likes
         if api_metrics.comments is not None:
@@ -504,6 +643,7 @@ class InstagramBrowserCollector:
             metadata.shares = self._labeled_count(body, "share", "shares")
         metadata.reposts = reposts
         metadata.views = views
+        metadata.views_applicable = api_metrics.views_applicable
         return metadata
 
     def _profile_metrics(
@@ -512,11 +652,25 @@ class InstagramBrowserCollector:
         shortcode: str,
         find_views: bool = True,
     ) -> tuple[int | None, int | None]:
+        cache_key = username.casefold()
+        cached = self._followers_cache.get(cache_key)
+        cached_followers = None
+        if cached and time.monotonic() - cached[0] <= 300:
+            cached_followers = cached[1]
+        if not find_views and cached_followers is not None:
+            return cached_followers, None
+
         driver = self.start()
-        driver.get(f"https://www.instagram.com/{username}/reels/")
+        profile_path = "reels/" if find_views else ""
+        driver.get(f"https://www.instagram.com/{username}/{profile_path}")
         self._wait_for_page()
         body = self._body_text()
-        followers = self._labeled_count(body, "follower", "followers")
+        exact_followers = self._authenticated_profile_followers(username)
+        followers = exact_followers
+        if followers is None:
+            followers = self._labeled_count(body, "follower", "followers") or cached_followers
+        if followers is not None:
+            self._followers_cache[cache_key] = (time.monotonic(), followers)
         views = None
         if not find_views:
             return followers, views
@@ -592,7 +746,10 @@ class InstagramBrowserCollector:
         followers, grid_views = self._profile_metrics(
             username,
             shortcode,
-            find_views=post_metrics.views is None,
+            find_views=(
+                post_metrics.views is None
+                and post_metrics.views_applicable is not False
+            ),
         )
         post_metrics.followers = followers
         if grid_views is not None:

@@ -6,6 +6,7 @@ from src.instagram_browser import (
     InstagramBrowserCollector,
     InstagramBrowserMetrics,
     apply_instagram_browser_metrics,
+    build_instagram_browser_result,
 )
 
 
@@ -46,7 +47,7 @@ class InstagramBrowserTests(unittest.TestCase):
         )
 
     def test_reads_authenticated_media_info(self):
-        source = '{"items":[{"pk":"3969850591815677297","play_count":7630,"media_repost_count":2,"like_count":59,"comment_count":3,"share_count":4}]}'
+        source = '''{"items":[{"pk":"3969850591815677297","code":"DcXvhSAjDVx","media_type":2,"product_type":"clips","play_count":7630,"media_repost_count":2,"like_count":59,"comment_count":3,"share_count":4,"taken_at":1788249600,"user":{"username":"liputan6"},"caption":{"text":"Caption utama"},"carousel_media":[{"like_count":9999,"comment_count":9999}]}]}'''
         self.assertEqual(
             InstagramBrowserCollector._media_info_metrics(source),
             (2, 7_630),
@@ -55,6 +56,25 @@ class InstagramBrowserTests(unittest.TestCase):
         self.assertEqual(engagement.likes, 59)
         self.assertEqual(engagement.comments, 3)
         self.assertEqual(engagement.shares, 4)
+        self.assertEqual(engagement.username, "liputan6")
+        self.assertEqual(engagement.caption, "Caption utama")
+        self.assertTrue(engagement.views_applicable)
+
+    def test_carousel_uses_main_media_counts_and_skips_view_lookup(self):
+        source = '''{"items":[{"media_type":8,"product_type":"carousel_container","media_repost_count":12,"like_count":958,"comment_count":21,"carousel_media":[{"like_count":9999,"comment_count":9999,"play_count":9999}]}]}'''
+        engagement = InstagramBrowserCollector._media_info_engagement(source)
+        self.assertEqual(engagement.likes, 958)
+        self.assertEqual(engagement.comments, 21)
+        self.assertEqual(engagement.reposts, 12)
+        self.assertIsNone(engagement.views)
+        self.assertFalse(engagement.views_applicable)
+
+    def test_reads_exact_followers_from_authenticated_profile_info(self):
+        source = '''{"data":{"user":{"username":"idx_channel","follower_count":1123456,"edge_followed_by":{"count":999}}}}'''
+        self.assertEqual(
+            InstagramBrowserCollector._profile_info_followers(source),
+            1_123_456,
+        )
 
     def test_browser_metrics_replace_public_fallbacks(self):
         result = get_connector("https://www.instagram.com/p/demo/").mock_enrichment(
@@ -85,7 +105,7 @@ class InstagramBrowserTests(unittest.TestCase):
         self.assertEqual(metrics.likes, 1)
         self.assertEqual(metrics.comments, 0)
 
-    def test_advanced_mode_opens_profile_for_followers_and_missing_views(self):
+    def test_advanced_carousel_opens_profile_without_slow_view_search(self):
         collector = InstagramBrowserCollector()
         collector.is_logged_in = Mock(return_value=True)
         collector._post_metrics = Mock(
@@ -96,6 +116,7 @@ class InstagramBrowserTests(unittest.TestCase):
                 likes=1,
                 comments=0,
                 reposts=0,
+                views_applicable=False,
             )
         )
         collector._profile_metrics = Mock(return_value=(36_500, 1_211))
@@ -112,8 +133,28 @@ class InstagramBrowserTests(unittest.TestCase):
         collector._profile_metrics.assert_called_once_with(
             "ctv.now",
             "Dc2ayNXjxmW",
-            find_views=True,
+            find_views=False,
         )
+
+    def test_browser_result_keeps_original_url_and_does_not_invent_photo_views(self):
+        url = "https://www.instagram.com/p/Db9aVzLkx0i/"
+        result = build_instagram_browser_result(
+            url,
+            InstagramBrowserMetrics(
+                username="idx_channel",
+                followers=1_100_000,
+                likes=958,
+                comments=21,
+                reposts=12,
+                views_applicable=False,
+            ),
+            mode="advanced",
+        )
+        self.assertEqual(result.url, url)
+        self.assertEqual(result.likes.value, 958)
+        self.assertEqual(result.comments.value, 21)
+        self.assertEqual(result.reposts.value, 12)
+        self.assertIsNone(result.views.value)
 
     def test_fast_mode_does_not_open_profile_or_return_profile_metrics(self):
         collector = InstagramBrowserCollector()

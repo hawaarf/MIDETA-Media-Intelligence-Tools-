@@ -12,7 +12,7 @@ from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENR
 from src.connectors import PLATFORM_OPTIONS, get_platform_connector
 from src.database import add_history, create_social_job, get_latest_social_job, get_social_job, next_social_job_items, record_social_job_item, set_social_job_status
 from src.exporters import to_csv_bytes, to_xlsx_bytes
-from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, InstagramLoginRequired, apply_instagram_browser_metrics
+from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, InstagramLoginRequired, build_instagram_browser_result
 from src.models import FieldStatus, SocialResult
 from src.ui import apply_theme, page_intro, render_footer, render_github_profile, render_platform_guide, status_label
 
@@ -66,7 +66,7 @@ def render_instagram_controls(slot: str) -> str:
         "Mode enrichment Instagram",
         ("Fast enrichment", "Advanced enrichment"),
         default="Fast enrichment",
-        help="Kedua mode memakai Chrome Instagram yang sudah login. Advanced membuka profil/Reels sehingga waktunya lebih lama.",
+        help="Kedua mode memakai Chrome Instagram yang sudah login. Advanced juga membuka profil sehingga waktunya lebih lama.",
         key=f"instagram_enrichment_mode_{slot}",
         width="stretch",
     )
@@ -78,7 +78,8 @@ def render_instagram_controls(slot: str) -> str:
         )
     else:
         st.caption(
-            "Advanced: memeriksa setiap halaman posting, lalu membuka profil dan tab Reels author untuk Followers dan Views. "
+            "Advanced: memeriksa halaman posting dan profil author untuk Followers. Views hanya diambil jika Instagram "
+            "menyediakannya untuk video/Reels; foto dan carousel ditulis Tidak tersedia, bukan 0. "
             f"Mode ini sengaja lebih teliti dan lebih lama ({ENRICHMENT_BROWSER_CHUNK_SIZE} URL per tahap)."
         )
     st.caption(
@@ -284,25 +285,30 @@ def collect_one_item(job: dict[str, Any], item: dict[str, Any], active_browser: 
         connector = get_platform_connector(url, job["platform"])
         if job["mock_mode"]:
             result = connector.mock_enrichment(url)
-        elif active_browser is not None:
-            result = connector.enrich(url, include_platform_profile=False)
-        else:
-            result = connector.enrich(url)
-
         browser_issue = None
-        if active_browser is not None:
+        if active_browser is not None and not job["mock_mode"]:
             try:
                 metrics = active_browser.collect(
-                    result.url,
-                    result.username.value,
+                    url,
+                    None,
                     mode=job["enrichment_mode"],
                 )
-                result = apply_instagram_browser_metrics(result, metrics, mode=job["enrichment_mode"])
+                result = build_instagram_browser_result(
+                    url,
+                    metrics,
+                    mode=job["enrichment_mode"],
+                )
             except InstagramLoginRequired as exc:
                 return {"kind": "login_required", "reason": str(exc), "position": position, "url": url}
             except InstagramBrowserError as exc:
-                browser_issue = {"URL": url, "Alasan": str(exc)}
-                result.note = f"{result.note} Pemeriksaan melalui browser belum berhasil: {exc}".strip()
+                return {
+                    "kind": "failed",
+                    "position": position,
+                    "url": url,
+                    "error": {"URL": url, "Platform": job["platform"], "Alasan": str(exc)},
+                }
+        elif not job["mock_mode"]:
+            result = connector.enrich(url)
 
         fields = [
             result.username,
