@@ -55,8 +55,8 @@ def apply_instagram_browser_metrics(
     if mode == "fast":
         # Keep the fast contract explicit: these profile-level values were not
         # collected, even if a public fallback happened to expose one.
-        result.followers = DataField(value=0, status=FieldStatus.NOT_SUPPORTED)
-        result.views = DataField(value=0, status=FieldStatus.NOT_SUPPORTED)
+        result.followers = DataField(value=None, status=FieldStatus.NOT_SUPPORTED)
+        result.views = DataField(value=None, status=FieldStatus.NOT_SUPPORTED)
     if metrics.username:
         result.username = DataField(value=metrics.username, status=FieldStatus.AVAILABLE)
     if metrics.caption:

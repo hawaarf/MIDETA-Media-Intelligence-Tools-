@@ -197,8 +197,8 @@ class InstagramBrowserTests(unittest.TestCase):
             mode="fast",
         )
 
-        self.assertEqual(updated.followers.value, 0)
-        self.assertEqual(updated.views.value, 0)
+        self.assertIsNone(updated.followers.value)
+        self.assertIsNone(updated.views.value)
         self.assertEqual(updated.likes.value, 9)
         self.assertEqual(updated.comments.value, 2)
         self.assertEqual(updated.shares.value, 1)
