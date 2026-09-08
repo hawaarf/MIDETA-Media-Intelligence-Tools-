@@ -25,6 +25,10 @@ class CommentBrowserLoginRequired(CommentBrowserError):
 
 
 class CommentBrowserCollector:
+    THREADS_MAX_SCROLL_ROUNDS = 180
+    OTHER_MAX_SCROLL_ROUNDS = 30
+    END_STABLE_ROUNDS = 3
+    IDLE_STABLE_ROUNDS = 8
     LOGIN_URLS = {
         "Threads": "https://www.threads.com/login/",
         "X": "https://x.com/i/flow/login",
@@ -141,20 +145,52 @@ class CommentBrowserCollector:
         )
         time.sleep(1.2)
 
-    def _load_conversation(self) -> None:
+    @staticmethod
+    def _merge_thread_rows(stored: dict[str, dict], rows: list[dict]) -> int:
+        added = 0
+        for row in rows:
+            code = str(row.get("code") or "").strip()
+            if not code:
+                continue
+            if code not in stored:
+                stored[code] = row
+                added += 1
+                continue
+            stored[code].update({key: value for key, value in row.items() if value not in (None, "")})
+        return added
+
+    def _load_conversation(self, target_code: str = "") -> list[dict]:
         driver = self.start()
-        for _ in range(12):
+        thread_rows: dict[str, dict] = {}
+        stable_rounds = 0
+        idle_rounds = 0
+        previous_scroll = None
+        previous_height = None
+        max_rounds = self.THREADS_MAX_SCROLL_ROUNDS if self.platform == "Threads" else self.OTHER_MAX_SCROLL_ROUNDS
+        for _ in range(max_rounds):
+            added = 0
+            if self.platform == "Threads" and target_code:
+                try:
+                    added += self._merge_thread_rows(thread_rows, self._threads_dom_rows(target_code))
+                except WebDriverException:
+                    pass
             try:
-                reached_end = driver.execute_script(
+                state = driver.execute_script(
                     """
                     const labels = [
                       'show replies', 'show more replies', 'view replies', 'view more replies',
                       'tampilkan balasan', 'lihat balasan', 'balasan lainnya',
-                      'show more', 'view more', 'tampilkan lainnya', 'lihat lainnya'
+                      'show more', 'view more', 'see more',
+                      'tampilkan lainnya', 'lihat lainnya', 'lihat komentar lainnya'
                     ];
+                    let clicked = 0;
                     for (const node of document.querySelectorAll('button, [role="button"]')) {
                       const text = (node.innerText || node.getAttribute('aria-label') || '').trim().toLowerCase();
-                      if (labels.some(label => text.includes(label))) node.click();
+                      const replyLoader = /^(show|view|see|load|tampilkan|lihat).*?(repl|balasan|komentar|more|lain)/i.test(text);
+                      if (labels.some(label => text.includes(label)) || replyLoader) {
+                        node.click();
+                        clicked += 1;
+                      }
                     }
                     const endLabels = ['related threads', 'thread terkait', 'threads terkait'];
                     const end = Array.from(document.querySelectorAll('div, span')).find(node => {
@@ -163,19 +199,42 @@ class CommentBrowserCollector:
                         (child.textContent || '').trim().toLowerCase() === text
                       );
                     });
-                    if (end) {
-                      end.scrollIntoView({block: 'end'});
-                      return true;
-                    }
+                    const reachedEnd = Boolean(end && end.getBoundingClientRect().top <= window.innerHeight * 1.1);
                     window.scrollBy(0, Math.max(window.innerHeight * 0.85, 600));
-                    return false;
+                    return {
+                      reachedEnd,
+                      clicked,
+                      scrollY: window.scrollY,
+                      height: document.documentElement.scrollHeight
+                    };
                     """
                 )
             except WebDriverException:
                 break
             time.sleep(0.7)
-            if reached_end:
+
+            if self.platform == "Threads" and target_code:
+                try:
+                    added += self._merge_thread_rows(thread_rows, self._threads_dom_rows(target_code))
+                except WebDriverException:
+                    pass
+
+            state = state if isinstance(state, dict) else {"reachedEnd": bool(state)}
+            scroll_position = state.get("scrollY")
+            page_height = state.get("height")
+            moved = previous_scroll is None or scroll_position != previous_scroll
+            grew = previous_height is None or page_height != previous_height
+            clicked = bool(state.get("clicked"))
+            stable_rounds = stable_rounds + 1 if added == 0 else 0
+            idle_rounds = idle_rounds + 1 if not (added or moved or grew or clicked) else 0
+            previous_scroll = scroll_position
+            previous_height = page_height
+
+            if state.get("reachedEnd") and stable_rounds >= self.END_STABLE_ROUNDS:
                 break
+            if idle_rounds >= self.IDLE_STABLE_ROUNDS:
+                break
+        return list(thread_rows.values())
 
     def _x_dom_rows(self) -> list[dict]:
         return self.start().execute_script(
@@ -239,9 +298,13 @@ class CommentBrowserCollector:
               const match = href.match(/\/(@[^/]+)\/post\/([^/?#]+)/);
               return Boolean(match && match[2] === targetCode);
             });
-            if (!targetAnchor) return [];
-            const targetBox = targetAnchor.closest('[data-pressable-container="true"]') || targetAnchor;
-            const targetTop = targetBox.getBoundingClientRect().top;
+            const pagePath = decodeURIComponent(window.location.pathname || '');
+            const pageMatch = pagePath.match(/\/@[^/]+\/post\/([^/?#]+)/);
+            if (!targetAnchor && (!pageMatch || pageMatch[1] !== targetCode)) return [];
+            const targetBox = targetAnchor
+              ? (targetAnchor.closest('[data-pressable-container="true"]') || targetAnchor)
+              : null;
+            const targetTop = targetBox ? targetBox.getBoundingClientRect().top : Number.NEGATIVE_INFINITY;
             rows.push({code: targetCode, comment: '', is_target: true});
             seen.add(targetCode);
 
@@ -259,7 +322,7 @@ class CommentBrowserCollector:
               }
               if (!box || box.parentElement?.closest('[data-pressable-container="true"]')) continue;
               const top = box.getBoundingClientRect().top;
-              if (top >= endTop || (match[2] !== targetCode && top <= targetTop)) continue;
+              if (top >= endTop || (targetBox && match[2] !== targetCode && top <= targetTop)) continue;
               seen.add(match[2]);
               const candidates = Array.from(box.querySelectorAll('[dir="auto"]'))
                 .map(node => (node.innerText || '').trim())
@@ -298,7 +361,7 @@ class CommentBrowserCollector:
             target_code,
         )
 
-    def _dom_comments(self, url: str) -> list[PublicComment]:
+    def _dom_comments(self, url: str, thread_rows: list[dict] | None = None) -> list[PublicComment]:
         if self.platform == "X":
             target_match = re.search(r"/status/(\d+)", url)
             target_id = target_match.group(1) if target_match else ""
@@ -325,7 +388,7 @@ class CommentBrowserCollector:
 
         target_match = re.search(r"/post/([^/?#]+)", url, re.I)
         target_code = target_match.group(1) if target_match else ""
-        rows = self._threads_dom_rows(target_code)
+        rows = thread_rows if thread_rows is not None else self._threads_dom_rows(target_code)
         if not any(str(row.get("code") or "").casefold() == target_code.casefold() for row in rows):
             return []
         comments = []
@@ -343,27 +406,54 @@ class CommentBrowserCollector:
             ))
         return comments
 
+    @staticmethod
+    def _merge_comments(*groups: list[PublicComment]) -> list[PublicComment]:
+        merged: list[PublicComment] = []
+        seen: set[tuple[str, str]] = set()
+        text_authors: dict[str, set[str]] = {}
+        for group in groups:
+            for comment in group:
+                text = " ".join(str(comment.comment or "").split()).casefold()
+                author = str(comment.author or "").strip().lstrip("@").casefold()
+                if not text:
+                    continue
+                authors = text_authors.get(text, set())
+                if (author, text) in seen or (not author and authors) or (author and "" in authors):
+                    continue
+                seen.add((author, text))
+                text_authors.setdefault(text, set()).add(author)
+                merged.append(comment)
+        return merged
+
     def collect(self, url: str) -> CommentCollection:
         connector = get_platform_connector(url, self.platform)
         driver = self.start()
         driver.get(url)
         self._wait_for_page()
-        self._load_conversation()
-        comments = connector._platform_comments(driver.page_source, driver.current_url or url)
-        if not comments:
-            comments = self._dom_comments(driver.current_url or url)
+        current_url = driver.current_url or url
+        target_match = re.search(r"/post/([^/?#]+)", current_url, re.I) if self.platform == "Threads" else None
+        target_code = target_match.group(1) if target_match else ""
+        thread_rows = self._load_conversation(target_code)
+        if not isinstance(thread_rows, list):
+            thread_rows = []
+        structured_comments = connector._platform_comments(driver.page_source, current_url)
+        if self.platform == "Threads":
+            dom_comments = self._dom_comments(current_url, thread_rows)
+            comments = self._merge_comments(structured_comments, dom_comments)
+        else:
+            comments = structured_comments or self._dom_comments(current_url)
         if not comments:
             login_hint = ""
             if not self.is_logged_in(open_platform=False):
                 login_hint = f" Login di Chrome {self.platform}, pastikan posting target terlihat, lalu coba lagi."
             return CommentCollection(
-                url=driver.current_url or url,
+                url=current_url,
                 platform=self.platform,
                 status=FieldStatus.NOT_PUBLIC,
                 reason=f"Posting target atau komentarnya belum dapat dibaca dari percakapan ini.{login_hint}",
             )
         return CommentCollection(
-            url=driver.current_url or url,
+            url=current_url,
             platform=self.platform,
             comments=comments,
             status=FieldStatus.AVAILABLE,

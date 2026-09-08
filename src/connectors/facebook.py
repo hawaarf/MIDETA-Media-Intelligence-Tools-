@@ -54,7 +54,7 @@ class FacebookConnector(BaseConnector):
         parts = [unquote(part) for part in parsed.path.split("/") if part]
         identifiers = [part for part in reversed(parts) if part.isdigit() or part.casefold().startswith("pfbid")]
         query = parse_qs(parsed.query)
-        for key in ("story_fbid", "fbid", "video_id"):
+        for key in ("story_fbid", "fbid", "video_id", "v"):
             for value in query.get(key, []):
                 if value.isdigit() or value.casefold().startswith("pfbid"):
                     identifiers.append(value)
@@ -72,8 +72,6 @@ class FacebookConnector(BaseConnector):
         )
         for pattern in strong_patterns:
             positions.update(match.start() for match in re.finditer(pattern, html, re.I))
-        if positions:
-            return sorted(positions)
         for pattern in (rf'"id"\s*:\s*"{target}"', rf'\\"id\\"\s*:\s*\\"{target}\\"'):
             positions.update(match.start() for match in re.finditer(pattern, html, re.I))
         return sorted(positions)
@@ -90,9 +88,10 @@ class FacebookConnector(BaseConnector):
             )
             for pattern in patterns:
                 positions.update(match.start() for match in re.finditer(pattern, html, re.I))
-        return sorted(positions) or self._target_anchor_positions(html, url)
+        positions.update(self._target_anchor_positions(html, url))
+        return sorted(positions)
 
-    def _target_windows(self, html: str, url: str, radius: int = 4_000) -> list[tuple[int, str]]:
+    def _target_windows(self, html: str, url: str, radius: int = 12_000) -> list[tuple[int, str]]:
         return [
             (position, html[max(0, position - radius):min(len(html), position + radius)])
             for position in self._target_feedback_positions(html, url)
@@ -324,6 +323,17 @@ class FacebookConnector(BaseConnector):
                         metrics[output] = count
         return metrics
 
+    def _merge_meta_metrics(self, stats, meta_metrics):
+        """Use meta tags only when the target post payload has no exact value.
+
+        Facebook's meta descriptions can contain cached or recommendation
+        counts. They must not replace an explicit zero (or another exact
+        value) from the requested photo, Reel, or video payload.
+        """
+        for metric, value in meta_metrics.items():
+            stats.setdefault(metric, value)
+        return stats
+
     @staticmethod
     def _clean_caption_candidate(value: str) -> str:
         cleaned = value.strip()
@@ -444,7 +454,7 @@ class FacebookConnector(BaseConnector):
             if metrics:
                 score = len(metrics) * 100
                 if "subscription_target_id" in window:
-                    score += 1_000
+                    score += 50
                 if "story_location\\\":12" in window or 'story_location":12' in window:
                     score += 10
                 found.append((score, metrics))

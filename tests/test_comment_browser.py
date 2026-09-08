@@ -6,6 +6,37 @@ from src.models import FieldStatus, PublicComment
 
 
 class CommentBrowserTests(unittest.TestCase):
+    def test_threads_loader_keeps_rows_collected_before_dom_virtualization(self):
+        collector = CommentBrowserCollector("Threads")
+        collector.END_STABLE_ROUNDS = 2
+        collector.THREADS_MAX_SCROLL_ROUNDS = 5
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.execute_script.side_effect = [
+            {"reachedEnd": False, "clicked": 0, "scrollY": 100, "height": 1_000},
+            {"reachedEnd": True, "clicked": 0, "scrollY": 200, "height": 1_200},
+            {"reachedEnd": True, "clicked": 0, "scrollY": 200, "height": 1_200},
+        ]
+        collector.driver = driver
+        first = {"code": "Comment1", "author": "ayu", "comment": "Komentar pertama"}
+        second = {"code": "Comment2", "author": "bima", "comment": "Komentar berikutnya"}
+        snapshots = [
+            [{"code": "Target123", "is_target": True}, first],
+            [{"code": "Target123", "is_target": True}, first, second],
+            [{"code": "Target123", "is_target": True}, second],
+            [{"code": "Target123", "is_target": True}, second],
+            [{"code": "Target123", "is_target": True}, second],
+            [{"code": "Target123", "is_target": True}, second],
+        ]
+
+        with (
+            patch.object(collector, "_threads_dom_rows", side_effect=snapshots),
+            patch("src.comment_browser.time.sleep"),
+        ):
+            rows = collector._load_conversation("Target123")
+
+        self.assertEqual([row["code"] for row in rows], ["Target123", "Comment1", "Comment2"])
+
     def test_x_dom_rows_are_converted_without_the_target_status(self):
         collector = CommentBrowserCollector("X")
         rows = [
@@ -121,6 +152,52 @@ class CommentBrowserTests(unittest.TestCase):
 
         self.assertEqual(result.status, FieldStatus.AVAILABLE)
         self.assertEqual(result.comments[0].comment, "Terbaca tanpa login")
+
+    def test_threads_collection_combines_initial_payload_with_scrolled_comments(self):
+        collector = CommentBrowserCollector("Threads")
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_url = "https://www.threads.com/@pemilik/post/Target123"
+        driver.page_source = "<html></html>"
+        collector.driver = driver
+        initial = PublicComment(
+            author="ayu",
+            comment="Komentar dari data awal",
+            source_url=driver.current_url,
+        )
+        duplicate = PublicComment(
+            author="ayu",
+            comment="Komentar dari data awal",
+            source_url=driver.current_url,
+        )
+        additional = PublicComment(
+            author="bima",
+            comment="Komentar yang muncul setelah scroll",
+            comment_type="reply",
+            source_url=driver.current_url,
+        )
+        collected_rows = [
+            {"code": "Target123", "is_target": True},
+            {"code": "Comment456", "author": "bima", "comment": additional.comment},
+        ]
+        connector = MagicMock()
+        connector._platform_comments.return_value = [initial]
+
+        with (
+            patch("src.comment_browser.get_platform_connector", return_value=connector),
+            patch.object(collector, "_wait_for_page"),
+            patch.object(collector, "_load_conversation", return_value=collected_rows) as loader,
+            patch.object(collector, "_dom_comments", return_value=[duplicate, additional]) as dom_comments,
+        ):
+            result = collector.collect(driver.current_url)
+
+        loader.assert_called_once_with("Target123")
+        dom_comments.assert_called_once_with(driver.current_url, collected_rows)
+        self.assertEqual(
+            [comment.comment for comment in result.comments],
+            ["Komentar dari data awal", "Komentar yang muncul setelah scroll"],
+        )
+        self.assertEqual(result.comments[1].comment_type, "reply")
 
     def test_login_check_opens_threads_domain_for_saved_profile(self):
         collector = CommentBrowserCollector("Threads")

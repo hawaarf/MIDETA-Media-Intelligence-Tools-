@@ -23,6 +23,7 @@ THREADS_ZERO_SHARE_HTML = """<html><head><meta property="og:description" content
 THREADS_TAKEN_AT_HTML = """<html><script>{"code":"PostingLain","taken_at":1788245420},{"code":"DcxnOUwk51O","text_post_app_info":{"direct_reply_count":0},"taken_at":1788331158}</script></html>"""
 THREADS_REPLIES_HTML = """<html><script type="application/json">{"thread_items":[{"post":{"pk":"root-1","code":"TargetThreads","caption":{"text":"Posting utama"},"user":{"username":"pemilik"},"taken_at":1788249600}},{"post":{"pk":"comment-1","code":"CommentThreads","caption":{"text":"Komentar langsung"},"user":{"username":"ayu"},"like_count":12,"taken_at":1788253200,"text_post_app_info":{"reply_to_post_id":"root-1","root_post_id":"root-1","direct_reply_count":1}}},{"post":{"pk":"reply-1","code":"ReplyThreads","caption":{"text":"Balasan komentar"},"user":{"username":"bima"},"like_count":3,"taken_at":1788256800,"text_post_app_info":{"reply_to_post_id":"comment-1","root_post_id":"root-1","direct_reply_count":0}}},{"post":{"pk":"other-1","code":"OtherThreads","caption":{"text":"Posting rekomendasi"},"user":{"username":"lain"},"like_count":999,"text_post_app_info":{"root_post_id":"other-root"}}}]}</script></html>"""
 X_REPLIES_HTML = """<html><script type="application/json">{"tweets":[{"rest_id":"100","legacy":{"full_text":"Posting utama","conversation_id_str":"100","favorite_count":9,"reply_count":2},"core":{"user_results":{"result":{"legacy":{"screen_name":"pemilik"}}}}},{"rest_id":"101","legacy":{"full_text":"Komentar langsung","conversation_id_str":"100","in_reply_to_status_id_str":"100","favorite_count":15,"reply_count":1,"created_at":"Thu Sep 03 03:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"ayu"}}}}},{"rest_id":"102","legacy":{"full_text":"Balasan komentar","conversation_id_str":"100","in_reply_to_status_id_str":"101","favorite_count":4,"reply_count":0,"created_at":"Thu Sep 03 04:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"bima"}}}}},{"rest_id":"999","legacy":{"full_text":"Tweet rekomendasi","conversation_id_str":"999","in_reply_to_status_id_str":"998","favorite_count":999},"core":{"user_results":{"result":{"legacy":{"screen_name":"lain"}}}}}]}</script></html>"""
+X_FLIGHT_HTML = """<html><head><meta property="article:author" content="https://x.com/jurnal_ekuitas"><meta property="og:description" content="Caption X"><meta property="article:published_time" content="2026-08-13T03:07:48.000Z"></head><script>rest_id:"999",counts:{__typename:"ApiCounts",bookmark_count:91,favorite_count:999,reply_count:88,retweet_count:77},views:{__typename:"ViewCountInfo",count:"9999"};rest_id:"2087737859063394648",core:{__typename:"UserCore",screen_name:"jurnal_ekuitas",name:"Stock Journal"},relationship_counts:{__typename:"UserRelationshipCounts",followers:2224,following:106},counts:{__typename:"ApiCounts",bookmark_count:64,favorite_count:629,reply_count:53,retweet_count:64,quote_count:15},views:{__typename:"ViewCountInfo",count:"142215"}</script></html>"""
 INSTAGRAM_REPOST_HTML = """<html><head><meta property="og:description" content="Caption Instagram"></head><script>{"code":"PostingLain","repost_count":91},{"code":"DcRepost123","reshare_count":7}</script></html>"""
 INSTAGRAM_VISIBLE_REPOST_HTML = """<html><head><meta property="og:description" content="7.6K likes, 144 comments - gnfi on August 30, 2026: &quot;Caption bersih saja&quot;. "><meta name="author" content="gnfi"></head><script>{"node":{"reshare_count_reduced":"70","shortcode":"DcqWqENG04A"}}</script></html>"""
 COMMENT_HTML = """<script type="application/ld+json">{"@type":"Article","comment":[{"@type":"Comment","text":"Komentar publik","author":{"name":"Ayu"},"upvoteCount":3,"comment":[{"@type":"Comment","text":"Balasan publik","author":{"name":"Bima"},"upvoteCount":1}]}]}</script>"""
@@ -246,6 +247,21 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.comments[0].likes, 15)
         self.assertNotIn("Tweet rekomendasi", [comment.comment for comment in result.comments])
 
+    @patch("src.connectors.base.fetch_public_html", return_value=(X_FLIGHT_HTML, "https://x.com/jurnal_ekuitas/status/2087737859063394648"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://x.com/jurnal_ekuitas/status/2087737859063394648")
+    def test_x_reads_target_flight_engagement_and_followers(self, _validate, _fetch):
+        url = "https://x.com/jurnal_ekuitas/status/2087737859063394648"
+        result = get_connector(url).enrich(url)
+        self.assertEqual(result.username.value, "jurnal_ekuitas")
+        self.assertEqual(result.followers.value, 2224)
+        self.assertEqual(result.views.value, 142215)
+        self.assertEqual(result.likes.value, 629)
+        self.assertEqual(result.comments.value, 53)
+        self.assertEqual(result.bookmarks.value, 64)
+        self.assertEqual(result.reposts.value, 79)
+        self.assertEqual(result.likes.status, FieldStatus.AVAILABLE)
+        self.assertEqual(result.comments.status, FieldStatus.AVAILABLE)
+
     @patch("src.connectors.base.fetch_public_html", return_value=(COMMENT_HTML, "https://example.com/post"))
     @patch("src.connectors.base.validate_public_url", return_value="https://example.com/post")
     def test_collects_public_jsonld_comments(self, _validate, _fetch):
@@ -318,7 +334,7 @@ class ConnectorTests(unittest.TestCase):
         result = get_connector("https://www.facebook.com/reel/123").enrich("https://www.facebook.com/reel/123")
         self.assertEqual(result.caption.value, "Caption Reel")
         self.assertEqual(result.likes.value, 93)
-        self.assertEqual(result.comments.value, 17)
+        self.assertEqual(result.comments.value, 21)
 
     @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_REEL_FEEDBACK_HTML, "https://www.facebook.com/reel/123"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/reel/123")
@@ -364,6 +380,52 @@ class ConnectorTests(unittest.TestCase):
     def test_facebook_reads_post_identifier_from_permalink_query(self):
         url = "https://www.facebook.com/permalink.php?story_fbid=pfbidABC&id=123"
         self.assertEqual(get_connector(url)._post_identifiers(url), ["pfbidABC"])
+
+    def test_facebook_reads_watch_video_identifier(self):
+        url = "https://www.facebook.com/watch/?v=1028955956414891"
+        self.assertEqual(get_connector(url)._post_identifiers(url), ["1028955956414891"])
+
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/watch/?v=1028955956414891")
+    def test_facebook_watch_reads_exact_target_engagement(self, _validate):
+        target = (
+            '<script>{"id":"1028955956414891","feedback":{"reaction_count":{"count":10},'
+            '"total_comment_count":1},"play_count":1321}</script>'
+        )
+        misleading_meta = (
+            '<meta property="og:image:alt" '
+            'content="1,3 rb tayangan · 99 suka · 6 komentar | Video | IDX Channel">'
+        )
+        html = misleading_meta + target
+        with patch(
+            "src.connectors.base.fetch_public_html",
+            return_value=(html, "https://www.facebook.com/watch/?v=1028955956414891"),
+        ):
+            result = get_connector("https://www.facebook.com/watch/?v=1028955956414891").enrich(
+                "https://www.facebook.com/watch/?v=1028955956414891"
+            )
+        self.assertEqual(result.likes.value, 10)
+        self.assertEqual(result.comments.value, 1)
+        self.assertEqual(result.views.value, 1321)
+
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/inilahnetwork/photos/x/1482198397285392/")
+    def test_facebook_photo_finds_distant_target_summary(self, _validate):
+        anchor = '<script>{"post_id":"1482198397285392"}</script>'
+        summary = (
+            '<script>{"id":"1482198397285392","feedback":{"reaction_count":{"count":85},'
+            '"comment_rendering_instance":{"comments":{"total_count":109}},'
+            '"share_count":{"count":2}}}</script>'
+        )
+        html = anchor + (" " * 9_000) + summary
+        with patch(
+            "src.connectors.base.fetch_public_html",
+            return_value=(html, "https://www.facebook.com/inilahnetwork/photos/x/1482198397285392/"),
+        ):
+            result = get_connector("https://www.facebook.com/inilahnetwork/photos/x/1482198397285392/").enrich(
+                "https://www.facebook.com/inilahnetwork/photos/x/1482198397285392/"
+            )
+        self.assertEqual(result.likes.value, 85)
+        self.assertEqual(result.comments.value, 109)
+        self.assertEqual(result.shares.value, 2)
 
     @patch("src.connectors.base.fetch_public_html", side_effect=[
         (FACEBOOK_REEL_ZERO_VIEW_HTML, "https://www.facebook.com/reel/3556314681183024"),

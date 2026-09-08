@@ -92,6 +92,8 @@ Fitur ini mengambil komentar dari sebuah posting. Setiap platform mempunyai pane
 
 Untuk Threads dan X, MIDETA memakai Chrome khusus karena komentarnya dimuat melalui JavaScript. Jika posting tidak terlihat, buka sesi platform, login, periksa login, lalu jalankan kembali prosesnya.
 
+Untuk posting Threads dengan banyak komentar, browser akan terus scroll dan membuka balasan yang tersedia sampai tidak ada komentar baru. Proses ini bisa lebih lama daripada posting dengan sedikit komentar.
+
 Hasil komentar berisi:
 
 - `index`: urutan ranking
@@ -268,6 +270,8 @@ Each panel has its own input, progress, results, and downloads. Up to three plat
 This feature collects comments from a post. Each platform has a separate panel so URLs and results do not get mixed.
 
 For Threads and X, MIDETA uses a dedicated Chrome window because comments are loaded with JavaScript. If the post is not visible, open the platform session, log in, check the login, and run the URL again.
+
+For Threads posts with many comments, the browser keeps scrolling and opens available replies until no new comments appear. This can take longer than a post with only a few comments.
 
 Comment results contain:
 

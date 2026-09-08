@@ -129,6 +129,15 @@ class BaseConnector(ABC):
         """Return platform-specific metric fallbacks from public meta tags."""
         return {}
 
+    def _merge_meta_metrics(
+        self,
+        stats: dict[str, Any],
+        meta_metrics: dict[str, int],
+    ) -> dict[str, Any]:
+        """Merge platform meta fallbacks into the collected metrics."""
+        stats.update(meta_metrics)
+        return stats
+
     def _platform_metrics(self, html: str, url: str) -> dict[str, int]:
         """Return platform-specific metrics tied to the requested post."""
         return {}
@@ -332,8 +341,7 @@ class BaseConnector(ABC):
         author = self._platform_author(html, soup, canonical_url or final_url, author)
         stats: dict[str, Any] = self._script_metrics(self._metric_source(html, canonical_url or final_url))
         stats.update(self._platform_metrics(html, canonical_url or final_url))
-        for metric, value in self._meta_metrics(soup).items():
-            stats[metric] = value
+        stats = self._merge_meta_metrics(stats, self._meta_metrics(soup))
         for item in self._json_objects(soup):
             for node in self._walk(item):
                 author_node = node.get("author")

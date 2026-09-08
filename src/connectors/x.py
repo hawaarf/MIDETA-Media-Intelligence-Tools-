@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -18,6 +19,118 @@ class XConnector(BaseConnector):
             if part.casefold() == "status" and parts[index + 1].isdigit():
                 return parts[index + 1]
         return None
+
+    @staticmethod
+    def _username_from_url(url: str) -> str | None:
+        parts = [part for part in urlparse(url).path.split("/") if part]
+        if len(parts) >= 3 and parts[1].casefold() == "status":
+            return parts[0].lstrip("@") or None
+        return None
+
+    @staticmethod
+    def _scalar(block: str, key: str) -> int | None:
+        match = re.search(
+            rf'(?:"{re.escape(key)}"|{re.escape(key)})\s*:\s*"?(\d+)"?',
+            block,
+            re.I,
+        )
+        return int(match.group(1)) if match else None
+
+    def _target_flight_window(self, html: str, url: str) -> str:
+        target_id = self._status_id(url)
+        if not target_id:
+            return ""
+        target = re.escape(target_id)
+        anchors = list(
+            re.finditer(
+                rf'(?:rest_id|id_str)\s*:\s*"{target}"|'
+                rf'"(?:rest_id|id_str)"\s*:\s*"{target}"',
+                html,
+                re.I,
+            )
+        )
+        if not anchors:
+            return ""
+        candidates = [
+            html[anchor.start():min(len(html), anchor.start() + 30_000)]
+            for anchor in anchors
+        ]
+        return max(
+            candidates,
+            key=lambda block: (
+                "ApiCounts" in block,
+                "ViewCountInfo" in block,
+                "UserRelationshipCounts" in block,
+            ),
+        )
+
+    def _platform_author(self, html, soup, url, current):
+        return self._username_from_url(url) or current
+
+    def _platform_followers(self, html, soup, url, author):
+        username = self._username_from_url(url)
+        if not username:
+            return None
+        screen_name = re.search(
+            rf'(?:"screen_name"|screen_name)\s*:\s*"{re.escape(username)}"',
+            html,
+            re.I,
+        )
+        if not screen_name:
+            return None
+        window = html[
+            max(0, screen_name.start() - 2_000):
+            min(len(html), screen_name.start() + 6_000)
+        ]
+        relationship = re.search(
+            r'(?:"__typename"|__typename)\s*:\s*"UserRelationshipCounts"(.{0,800})',
+            window,
+            re.I | re.S,
+        )
+        if relationship:
+            followers = self._scalar(relationship.group(1), "followers")
+            if followers is not None:
+                return followers
+        legacy = re.search(r'(?:"followers_count"|followers_count)\s*:\s*"?(\d+)"?', window, re.I)
+        return int(legacy.group(1)) if legacy else None
+
+    def _platform_metrics(self, html: str, url: str) -> dict[str, int]:
+        window = self._target_flight_window(html, url)
+        if not window:
+            return {}
+
+        metrics: dict[str, int] = {}
+        counts = re.search(
+            r'(?:"__typename"|__typename)\s*:\s*"ApiCounts"(.{0,1_200})',
+            window,
+            re.I | re.S,
+        )
+        count_source = counts.group(1) if counts else window[:12_000]
+        for source_key, output_key in {
+            "favorite_count": "likes",
+            "reply_count": "comments",
+            "bookmark_count": "bookmarks",
+        }.items():
+            value = self._scalar(count_source, source_key)
+            if value is not None:
+                metrics[output_key] = value
+
+        retweets = self._scalar(count_source, "retweet_count")
+        quotes = self._scalar(count_source, "quote_count")
+        if retweets is not None or quotes is not None:
+            # X shows reposts and quote posts as one number on the repost button.
+            metrics["reposts"] = (retweets or 0) + (quotes or 0)
+
+        views = re.search(
+            r'(?:"__typename"|__typename)\s*:\s*"ViewCountInfo"(.{0,500})',
+            window,
+            re.I | re.S,
+        )
+        if views:
+            value = self._scalar(views.group(1), "count")
+            if value is not None:
+                metrics["views"] = value
+        return metrics
 
     @staticmethod
     def _number(value, default: int = 0) -> int:
