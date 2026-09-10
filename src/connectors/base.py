@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC
-from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Iterable
 from urllib.parse import unquote, urlparse
 from bs4 import BeautifulSoup
+from src.dates import social_date_iso, social_datetime_iso
 from src.http_client import CollectionError, fetch_public_html
 from src.models import CommentCollection, DataField, FieldStatus, PublicComment, SocialResult
 from src.validators import validate_public_url
@@ -59,19 +59,24 @@ class BaseConnector(ABC):
                 continue
             except (json.JSONDecodeError, TypeError):
                 pass
-            # Some platform pages assign one JSON object to a JavaScript
-            # variable. raw_decode lets us read that object without executing
-            # the surrounding JavaScript.
-            for marker in ("{", "["):
-                offset = source.find(marker)
-                if offset < 0:
-                    continue
+            # Some pages assign JSON to JavaScript variables or place several
+            # JSON objects beside each other. Read every complete object without
+            # executing the surrounding JavaScript.
+            offset = 0
+            while offset < len(source):
+                object_start = source.find("{", offset)
+                array_start = source.find("[", offset)
+                starts = [position for position in (object_start, array_start) if position >= 0]
+                if not starts:
+                    break
+                start = min(starts)
                 try:
-                    value, _ = decoder.raw_decode(source[offset:])
+                    value, consumed = decoder.raw_decode(source[start:])
                 except json.JSONDecodeError:
+                    offset = start + 1
                     continue
                 yield value
-                break
+                offset = start + consumed
 
     @staticmethod
     def _walk(value: Any) -> Iterable[dict]:
@@ -82,6 +87,40 @@ class BaseConnector(ABC):
         elif isinstance(value, list):
             for child in value:
                 yield from BaseConnector._walk(child)
+
+    @classmethod
+    def _target_posted_at_from_json(
+        cls,
+        soup: BeautifulSoup,
+        identifier: str,
+        *,
+        identifier_keys: tuple[str, ...] = ("code", "shortcode", "media_code"),
+        timestamp_keys: tuple[str, ...] = (
+            "taken_at",
+            "publish_time",
+            "creation_time",
+            "created_time",
+            "datePublished",
+        ),
+    ) -> str | None:
+        """Read a date only from the embedded object for the requested post."""
+        wanted = identifier.casefold()
+        for payload in cls._embedded_json(soup):
+            for node in cls._walk(payload):
+                post = node.get("post") if isinstance(node.get("post"), dict) else node
+                matches = any(
+                    str(post.get(key) or "").casefold() == wanted
+                    for key in identifier_keys
+                )
+                if not matches:
+                    continue
+                for key in timestamp_keys:
+                    if key not in post:
+                        continue
+                    normalized = social_date_iso(post.get(key))
+                    if normalized:
+                        return normalized
+        return None
 
     @staticmethod
     def _comment_nodes(value: Any, nested: bool = False) -> Iterable[tuple[dict, str]]:
@@ -288,19 +327,15 @@ class BaseConnector(ABC):
     def _script_posted_at(html: str) -> str | None:
         iso_value = BaseConnector._script_text(html, "datePublished", "publishTime", "creationTime", "createTime", "created_at")
         if iso_value and not iso_value.isdigit():
-            return iso_value
+            return social_datetime_iso(iso_value) or iso_value
         for key in ("publish_time", "publishTime", "creation_time", "creationTime", "create_time", "createTime", "created_time", "createdTime"):
-            match = re.search(rf'"{re.escape(key)}"\s*:\s*"?(\d{{10,13}})"?', html, re.I)
+            match = re.search(rf'"{re.escape(key)}"\s*:\s*"?(\d{{10,19}})"?', html, re.I)
             if not match:
                 continue
-            timestamp = int(match.group(1))
-            if timestamp > 9_999_999_999:
-                timestamp //= 1000
-            try:
-                return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
-            except (OverflowError, OSError, ValueError):
-                continue
-        return iso_value
+            normalized = social_datetime_iso(match.group(1))
+            if normalized:
+                return normalized
+        return social_datetime_iso(iso_value) or iso_value
 
     def _author_from_url(self, url: str) -> str | None:
         if self.platform != "Facebook":
@@ -328,19 +363,21 @@ class BaseConnector(ABC):
             empty = DataField(value=None, status=status)
             return SocialResult(url=url, platform=self.platform, username=empty, caption=empty, posted_at=empty, followers=empty, likes=empty, comments=empty, shares=empty, views=empty, bookmarks=empty, reposts=empty, note=str(exc))
         soup = BeautifulSoup(html, "lxml")
+        canonical_node = soup.select_one('link[rel="canonical"]')
+        canonical_url = self._meta(soup, 'meta[property="og:url"]') or (str(canonical_node.get("href")).strip() if canonical_node and canonical_node.get("href") else None)
+        target_url = canonical_url or final_url
         author = self._meta(soup, 'meta[name="author"]', 'meta[property="article:author"]', 'meta[property="profile:username"]')
         caption = self._meta(soup, 'meta[property="og:description"]', 'meta[name="description"]')
         posted = self._meta(soup, 'meta[property="article:published_time"]', 'meta[name="date"]', 'meta[itemprop="datePublished"]')
         author = author or self._script_author(html) or self._author_from_url(final_url)
-        posted = posted or self._script_posted_at(html)
-        posted = self._platform_posted_at(html, soup, final_url, posted)
-        canonical_node = soup.select_one('link[rel="canonical"]')
-        canonical_url = self._meta(soup, 'meta[property="og:url"]') or (str(canonical_node.get("href")).strip() if canonical_node and canonical_node.get("href") else None)
+        posted = self._platform_posted_at(html, soup, target_url, posted)
+        if not posted:
+            posted = self._script_posted_at(self._metric_source(html, target_url))
         caption = self._full_caption(soup, caption)
-        caption = self._platform_caption(html, canonical_url or final_url, caption)
-        author = self._platform_author(html, soup, canonical_url or final_url, author)
-        stats: dict[str, Any] = self._script_metrics(self._metric_source(html, canonical_url or final_url))
-        stats.update(self._platform_metrics(html, canonical_url or final_url))
+        caption = self._platform_caption(html, target_url, caption)
+        author = self._platform_author(html, soup, target_url, author)
+        stats: dict[str, Any] = self._script_metrics(self._metric_source(html, target_url))
+        stats.update(self._platform_metrics(html, target_url))
         stats = self._merge_meta_metrics(stats, self._meta_metrics(soup))
         for item in self._json_objects(soup):
             for node in self._walk(item):
@@ -358,11 +395,11 @@ class BaseConnector(ABC):
                     for key, output in action_names.items():
                         if key in kind: stats[output] = count
         if include_platform_profile and (stats.get("followers") is None or self.prefer_profile_followers):
-            public_followers = self._platform_followers(html, soup, canonical_url or final_url, author)
+            public_followers = self._platform_followers(html, soup, target_url, author)
             if public_followers is not None:
                 stats["followers"] = public_followers
         if include_platform_profile and stats.get("views") is None:
-            public_views = self._platform_views(html, soup, canonical_url or final_url, author)
+            public_views = self._platform_views(html, soup, target_url, author)
             if public_views is not None:
                 stats["views"] = public_views
         unsupported = FieldStatus.NOT_SUPPORTED

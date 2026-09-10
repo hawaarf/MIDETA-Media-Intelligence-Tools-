@@ -151,3 +151,9 @@ class DatabaseAndExporterTests(unittest.TestCase):
 
         self.assertTrue(worksheet["A1"].font.bold)
         self.assertFalse(worksheet["A2"].font.bold)
+
+    def test_xlsx_removes_hidden_control_characters_from_platform_text(self):
+        payload = to_xlsx_bytes([{"Caption": "Bagian pertama\x0bBagian kedua"}])
+        workbook = load_workbook(io.BytesIO(payload))
+
+        self.assertEqual(workbook["MIDETA"]["A2"].value, "Bagian pertamaBagian kedua")

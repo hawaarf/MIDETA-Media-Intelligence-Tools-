@@ -19,3 +19,4 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 DATABASE_PATH = DATA_DIR / "mideta.db"
 ASSETS_DIR = ROOT_DIR / "assets"
+MIDETA_LOGO_PATH = ASSETS_DIR / "mideta-logo.png"

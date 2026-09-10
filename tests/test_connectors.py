@@ -21,6 +21,7 @@ THREADS_FRESH_VIEW_HTML = """<html><head><meta property="og:description" content
 THREADS_SHARE_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script type="application/json">{"items":[{"post":{"code":"PostingLain","text_post_app_info":{"reshare_count":99}}},{"post":{"code":"TargetShare","text_post_app_info":{"direct_reply_count":0,"reshare_count":2}}}]}</script></html>"""
 THREADS_ZERO_SHARE_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script type="application/json">{"post":{"code":"TargetZeroShare","text_post_app_info":{"reshare_count":null}}}</script></html>"""
 THREADS_TAKEN_AT_HTML = """<html><script>{"code":"PostingLain","taken_at":1788245420},{"code":"DcxnOUwk51O","text_post_app_info":{"direct_reply_count":0},"taken_at":1788331158}</script></html>"""
+THREADS_TARGET_DATE_HTML = """<html><head><meta property="article:published_time" content="2026-08-01T00:00:00Z"></head><script>{"code":"PostingLain","taken_at":1787600000},{"code":"TargetDate","taken_at":1788805800}</script></html>"""
 THREADS_REPLIES_HTML = """<html><script type="application/json">{"thread_items":[{"post":{"pk":"root-1","code":"TargetThreads","caption":{"text":"Posting utama"},"user":{"username":"pemilik"},"taken_at":1788249600}},{"post":{"pk":"comment-1","code":"CommentThreads","caption":{"text":"Komentar langsung"},"user":{"username":"ayu"},"like_count":12,"taken_at":1788253200,"text_post_app_info":{"reply_to_post_id":"root-1","root_post_id":"root-1","direct_reply_count":1}}},{"post":{"pk":"reply-1","code":"ReplyThreads","caption":{"text":"Balasan komentar"},"user":{"username":"bima"},"like_count":3,"taken_at":1788256800,"text_post_app_info":{"reply_to_post_id":"comment-1","root_post_id":"root-1","direct_reply_count":0}}},{"post":{"pk":"other-1","code":"OtherThreads","caption":{"text":"Posting rekomendasi"},"user":{"username":"lain"},"like_count":999,"text_post_app_info":{"root_post_id":"other-root"}}}]}</script></html>"""
 X_REPLIES_HTML = """<html><script type="application/json">{"tweets":[{"rest_id":"100","legacy":{"full_text":"Posting utama","conversation_id_str":"100","favorite_count":9,"reply_count":2},"core":{"user_results":{"result":{"legacy":{"screen_name":"pemilik"}}}}},{"rest_id":"101","legacy":{"full_text":"Komentar langsung","conversation_id_str":"100","in_reply_to_status_id_str":"100","favorite_count":15,"reply_count":1,"created_at":"Thu Sep 03 03:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"ayu"}}}}},{"rest_id":"102","legacy":{"full_text":"Balasan komentar","conversation_id_str":"100","in_reply_to_status_id_str":"101","favorite_count":4,"reply_count":0,"created_at":"Thu Sep 03 04:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"bima"}}}}},{"rest_id":"999","legacy":{"full_text":"Tweet rekomendasi","conversation_id_str":"999","in_reply_to_status_id_str":"998","favorite_count":999},"core":{"user_results":{"result":{"legacy":{"screen_name":"lain"}}}}}]}</script></html>"""
 X_FLIGHT_HTML = """<html><head><meta property="article:author" content="https://x.com/jurnal_ekuitas"><meta property="og:description" content="Caption X"><meta property="article:published_time" content="2026-08-13T03:07:48.000Z"></head><script>rest_id:"999",counts:{__typename:"ApiCounts",bookmark_count:91,favorite_count:999,reply_count:88,retweet_count:77},views:{__typename:"ViewCountInfo",count:"9999"};rest_id:"2087737859063394648",core:{__typename:"UserCore",screen_name:"jurnal_ekuitas",name:"Stock Journal"},relationship_counts:{__typename:"UserRelationshipCounts",followers:2224,following:106},counts:{__typename:"ApiCounts",bookmark_count:64,favorite_count:629,reply_count:53,retweet_count:64,quote_count:15},views:{__typename:"ViewCountInfo",count:"142215"}</script></html>"""
@@ -28,6 +29,9 @@ INSTAGRAM_REPOST_HTML = """<html><head><meta property="og:description" content="
 INSTAGRAM_VISIBLE_REPOST_HTML = """<html><head><meta property="og:description" content="7.6K likes, 144 comments - gnfi on August 30, 2026: &quot;Caption bersih saja&quot;. "><meta name="author" content="gnfi"></head><script>{"node":{"reshare_count_reduced":"70","shortcode":"DcqWqENG04A"}}</script></html>"""
 COMMENT_HTML = """<script type="application/ld+json">{"@type":"Article","comment":[{"@type":"Comment","text":"Komentar publik","author":{"name":"Ayu"},"upvoteCount":3,"comment":[{"@type":"Comment","text":"Balasan publik","author":{"name":"Bima"},"upvoteCount":1}]}]}</script>"""
 FACEBOOK_HTML = """<html><head><meta property="og:description" content="Caption tetap utuh"></head><body><script>{"owner":{"name":"Media Indonesia"},"publish_time":1788048000,"reaction_count":{"count":125},"comment_count":{"count":18},"share_count":7,"video_view_count":6400}</script></body></html>"""
+FACEBOOK_TARGET_DATE_HTML = """<html><script>{"post_id":"999","publish_time":1787600000},{"post_id":"123","publish_time":1788805800}</script></html>"""
+FACEBOOK_ESCAPED_TARGET_DATE_HTML = r'''<html><script>{"tracking":"{\"post_id\":\"123\",\"publish_time\":1788805800}"}</script></html>'''
+INSTAGRAM_TARGET_DATE_HTML = """<html><head><meta property="article:published_time" content="2026-08-01T00:00:00Z"><meta property="og:description" content="Caption"></head><script>{"code":"PostingLain","taken_at":1787600000},{"code":"TargetDate","taken_at":1788805800}</script></html>"""
 FACEBOOK_META_HTML = """<html><head><meta property="og:description" content="Caption tetap utuh"><meta property="og:image:alt" content="1,2 rb tayangan · 9 suka · 3 komentar · 2 kali dibagikan | Caption tetap utuh"></head></html>"""
 FACEBOOK_REEL_META_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akun/videos/judul/123"><meta property="og:description" content="Caption Reel"><meta property="og:image:alt" content="93 tanggapan · 17 komentar | Caption Reel | Akun"></head><script>{"id":"123","comment_rendering_instance":{"comments":{"total_count":21}}}</script></html>"""
 FACEBOOK_REEL_FEEDBACK_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akun/videos/judul/123"><link rel="alternate" title="Caption Reel lengkap. Paragraf kedua juga masuk. | Akun"><meta property="og:description" content="Caption Reel lengkap..."><meta property="og:image:alt" content="450 rb tayangan · 23 rb tanggapan | Caption Reel lengkap. Paragraf kedua juga masuk. | Akun"></head><script>{"feedback":{"total_comment_count":1468,"share_count_reduced":"1,3 rb"},"post_id":"456","tracking":"{\\"top_level_post_id\\":\\"123\\",\\"video_id\\":\\"123\\"}"}</script></html>"""
@@ -74,6 +78,13 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.followers.value, 0)
         self.assertEqual(result.views.value, 0)
         self.assertEqual(result.reposts.value, 0)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(INSTAGRAM_TARGET_DATE_HTML, "https://www.instagram.com/p/TargetDate/"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/TargetDate/")
+    def test_instagram_target_timestamp_beats_unrelated_page_date(self, _validate, _fetch):
+        url = "https://www.instagram.com/p/TargetDate/"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.posted_at.value, "2026-09-08")
 
     @patch("src.connectors.base.fetch_public_html", return_value=(INSTAGRAM_PROFILE_POST_HTML, "https://www.instagram.com/p/profiletest/"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/profiletest/")
@@ -216,6 +227,13 @@ class ConnectorTests(unittest.TestCase):
         result = get_connector(url).enrich(url)
         self.assertEqual(result.posted_at.value, "2026-09-02")
 
+    @patch("src.connectors.base.fetch_public_html", return_value=(THREADS_TARGET_DATE_HTML, "https://www.threads.com/@akun/post/TargetDate"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@akun/post/TargetDate")
+    def test_threads_target_timestamp_beats_unrelated_page_date(self, _validate, _fetch):
+        url = "https://www.threads.com/@akun/post/TargetDate"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.posted_at.value, "2026-09-08")
+
     @patch("src.connectors.base.fetch_public_html", return_value=("<meta property=\"og:description\" content=\"Caption Threads\">", "https://www.threads.com/@tanpaangka/post/1"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@tanpaangka/post/1")
     def test_threads_defaults_missing_followers_and_views_to_zero(self, _validate, _fetch):
@@ -289,6 +307,20 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.shares.value, 7)
         self.assertEqual(result.views.value, 6400)
         self.assertTrue(str(result.posted_at.value).startswith("2026"))
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_TARGET_DATE_HTML, "https://www.facebook.com/akun/posts/123"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/akun/posts/123")
+    def test_facebook_reads_date_from_requested_story_only(self, _validate, _fetch):
+        url = "https://www.facebook.com/akun/posts/123"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.posted_at.value, "2026-09-08")
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_ESCAPED_TARGET_DATE_HTML, "https://www.facebook.com/akun/posts/123"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/akun/posts/123")
+    def test_facebook_reads_date_from_escaped_target_story(self, _validate, _fetch):
+        url = "https://www.facebook.com/akun/posts/123"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.posted_at.value, "2026-09-08")
 
     @patch("src.connectors.base.fetch_public_html", return_value=("<meta property=\"og:description\" content=\"Caption\">", "https://www.facebook.com/akuratco/posts/123"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/akuratco/posts/123")

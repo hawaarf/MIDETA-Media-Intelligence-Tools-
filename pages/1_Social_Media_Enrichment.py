@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, parse_url_list, social_result_row
-from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS
+from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, get_platform_connector
 from src.database import add_history, create_social_job, get_latest_social_job, get_social_job, next_social_job_items, record_social_job_item, set_social_job_status
 from src.exporters import to_csv_bytes, to_xlsx_bytes
@@ -17,7 +17,7 @@ from src.models import FieldStatus, SocialResult
 from src.ui import apply_theme, page_intro, render_footer, render_github_profile, render_platform_guide, status_label
 
 
-st.set_page_config(page_title="Social Media Enrichment | MIDETA", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Social Media Enrichment | MIDETA", page_icon=str(MIDETA_LOGO_PATH), layout="wide")
 apply_theme()
 render_github_profile()
 page_intro(

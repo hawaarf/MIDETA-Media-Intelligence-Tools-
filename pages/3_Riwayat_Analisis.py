@@ -4,16 +4,17 @@ import pandas as pd
 import streamlit as st
 from src.database import delete_history, list_history
 from src.exporters import to_csv_bytes, to_xlsx_bytes
+from src.config import MIDETA_LOGO_PATH
 from src.ui import apply_theme, page_intro, render_footer, render_github_profile
 
-st.set_page_config(page_title="Riwayat Analisis | MIDETA", page_icon="🗂️", layout="wide")
+st.set_page_config(page_title="Riwayat Analisis | MIDETA", page_icon=str(MIDETA_LOGO_PATH), layout="wide")
 apply_theme()
 render_github_profile()
 page_intro("03", "Riwayat Analisis", "Temukan kembali dan kelola hasil yang tersimpan di perangkat Anda.")
 
 filters = st.columns([2, 1, 1, 1, 1])
 search = filters[0].text_input("Cari", placeholder="Cari URL atau isi hasil")
-feature_value = filters[1].selectbox("Fitur", ["Semua", "Social Media Enrichment", "Comment Scrapper"])
+feature_value = filters[1].selectbox("Fitur", ["Semua", "Social Media Enrichment", "Comment Scrapper", "Threads Tracker"])
 platform_value = filters[2].selectbox("Platform", ["Semua", "YouTube", "TikTok", "Facebook", "Instagram", "Threads", "X"])
 start = filters[3].date_input("Dari", value=date.today() - timedelta(days=30))
 end = filters[4].date_input("Sampai", value=date.today())

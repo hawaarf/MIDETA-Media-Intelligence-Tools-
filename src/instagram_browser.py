@@ -5,7 +5,6 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -18,6 +17,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from src.config import DATA_DIR
 from src.connectors.base import BaseConnector
 from src.connectors.instagram import InstagramConnector
+from src.dates import social_datetime_iso
 from src.models import DataField, FieldStatus, SocialResult
 
 
@@ -318,7 +318,7 @@ class InstagramBrowserCollector:
             taken_at = item.get("taken_at")
             try:
                 if taken_at is not None:
-                    posted_at = datetime.fromtimestamp(int(taken_at), tz=timezone.utc).isoformat()
+                    posted_at = social_datetime_iso(taken_at)
             except (TypeError, ValueError, OverflowError, OSError):
                 posted_at = None
             media_type = item.get("media_type")
@@ -606,7 +606,7 @@ class InstagramBrowserCollector:
             metadata.username = api_metrics.username
         if api_metrics.caption:
             metadata.caption = api_metrics.caption
-        if api_metrics.posted_at and not metadata.posted_at:
+        if api_metrics.posted_at:
             metadata.posted_at = api_metrics.posted_at
         if api_metrics.likes is not None:
             metadata.likes = api_metrics.likes

@@ -5,6 +5,7 @@ from urllib.parse import unquote, urlparse
 from bs4 import BeautifulSoup
 
 from src.connectors.base import BaseConnector
+from src.dates import social_date_iso
 from src.models import PublicComment
 
 
@@ -190,29 +191,21 @@ class ThreadsConnector(BaseConnector):
     def _platform_posted_at(self, html: str, soup, url: str, current: str | None) -> str | None:
         shortcode = self._post_shortcode(url)
         if shortcode:
-            code_matches = list(re.finditer(r'"code"\s*:\s*"([^"]+)"', html, re.I))
-            timestamps = [
-                (match.start(), int(match.group(1)))
-                for match in re.finditer(r'"taken_at"\s*:\s*"?(\d{10,13})"?', html, re.I)
-            ]
-            candidates = []
-            for position, timestamp in timestamps:
-                if not code_matches:
-                    break
-                closest = min(code_matches, key=lambda code: (abs(code.start() - position), code.start() > position))
-                distance = abs(closest.start() - position)
-                if closest.group(1).casefold() == shortcode.casefold() and distance <= 40_000:
-                    candidates.append((distance, timestamp))
-            if candidates:
-                timestamp = min(candidates, key=lambda item: item[0])[1]
-                if timestamp > 9_999_999_999:
-                    timestamp //= 1000
-                try:
-                    return datetime.fromtimestamp(timestamp, tz=timezone.utc).date().isoformat()
-                except (OverflowError, OSError, ValueError):
-                    pass
+            exact_date = self._target_posted_at_from_json(
+                soup,
+                shortcode,
+                identifier_keys=("code", "shortcode"),
+                timestamp_keys=("taken_at", "publish_time", "creation_time"),
+            )
+            if exact_date:
+                return exact_date
         if current:
             return current
+        time_node = soup.select_one("time[datetime]")
+        if time_node and time_node.get("datetime"):
+            exact_date = social_date_iso(time_node.get("datetime"))
+            if exact_date:
+                return exact_date
         match = re.search(r"\b(\d{2}/\d{2}/\d{2})\b", html)
         if not match:
             return None

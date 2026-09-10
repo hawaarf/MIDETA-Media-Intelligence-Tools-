@@ -107,6 +107,11 @@ class InstagramConnector(BaseConnector):
         return caption or current
 
     def _platform_posted_at(self, html: str, soup, url: str, current: str | None) -> str | None:
+        shortcode = self._post_shortcode(url)
+        if shortcode:
+            exact_date = self._target_posted_at_from_json(soup, shortcode)
+            if exact_date:
+                return exact_date
         if current:
             return current
         descriptions = (

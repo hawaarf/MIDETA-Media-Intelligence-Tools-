@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from bs4 import BeautifulSoup
 
 from src.connectors.base import BaseConnector
+from src.dates import social_date_iso
 
 
 class FacebookConnector(BaseConnector):
@@ -96,6 +97,47 @@ class FacebookConnector(BaseConnector):
             (position, html[max(0, position - radius):min(len(html), position + radius)])
             for position in self._target_feedback_positions(html, url)
         ]
+
+    def _platform_posted_at(self, html: str, soup, url: str, current: str | None) -> str | None:
+        """Use only a timestamp attached to the requested Facebook story."""
+        identifiers = self._post_identifiers(url)
+        timestamp_keys = (
+            "publish_time",
+            "publishTime",
+            "creation_time",
+            "creationTime",
+            "created_time",
+            "createdTime",
+        )
+        for identifier in identifiers:
+            exact_date = self._target_posted_at_from_json(
+                soup,
+                identifier,
+                identifier_keys=("id", "post_id", "video_id", "top_level_post_id"),
+                timestamp_keys=timestamp_keys,
+            )
+            if exact_date:
+                return exact_date
+
+        anchors = self._target_feedback_positions(html, url)
+        if anchors:
+            candidates: list[tuple[int, int, str]] = []
+            for key_priority, key in enumerate(timestamp_keys):
+                patterns = (
+                    rf'"{re.escape(key)}"\s*:\s*"?(\d{{10,19}})"?',
+                    rf'\\"{re.escape(key)}\\"\s*:\s*(?:\\")?(\d{{10,19}})(?:\\")?',
+                )
+                for pattern in patterns:
+                    for match in re.finditer(pattern, html, re.I):
+                        distance = min(abs(match.start() - anchor) for anchor in anchors)
+                        if distance > 12_000:
+                            continue
+                        normalized = social_date_iso(match.group(1))
+                        if normalized:
+                            candidates.append((distance, key_priority, normalized))
+            if candidates:
+                return min(candidates, key=lambda item: (item[0], item[1]))[2]
+        return current
 
     def _target_owner(self, html: str, url: str) -> tuple[str | None, str | None]:
         anchors = self._target_anchor_positions(html, url)

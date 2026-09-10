@@ -1,8 +1,10 @@
 """Reusable Streamlit presentation helpers."""
 from __future__ import annotations
+import base64
 import html
+from functools import lru_cache
 import streamlit as st
-from src.config import ASSETS_DIR, GITHUB_AVATAR_URL, GITHUB_PROFILE_URL
+from src.config import ASSETS_DIR, GITHUB_AVATAR_URL, GITHUB_PROFILE_URL, MIDETA_LOGO_PATH
 from src.models import DataField
 
 
@@ -145,9 +147,20 @@ COMMENT_GUIDES = {
     },
 }
 
+@lru_cache(maxsize=1)
+def _logo_data_uri() -> str:
+    encoded = base64.b64encode(MIDETA_LOGO_PATH.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 def apply_theme() -> None:
     css = (ASSETS_DIR / "styles.css").read_text(encoding="utf-8")
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    st.logo(
+        str(MIDETA_LOGO_PATH),
+        size="large",
+        icon_image=str(MIDETA_LOGO_PATH),
+    )
 
 def render_github_profile() -> None:
     st.markdown(
@@ -163,8 +176,16 @@ def render_github_profile() -> None:
     )
 
 def render_brand_header() -> None:
-    brand, home, features, about, dashboard = st.columns([4.5, 1, 1, 1, 1.7], vertical_alignment="center")
-    brand.markdown('<div class="wordmark"><span>◉</span>MIDETA<small>MEDIA INTELLIGENCE TOOLS</small></div>', unsafe_allow_html=True)
+    brand, home, features, about, dashboard = st.columns([4.3, 1, 1, 1, 1.8], vertical_alignment="center")
+    brand.markdown(
+        f"""
+        <div class="brand-lockup">
+          <span class="brand-mark"><img src="{_logo_data_uri()}" alt="Logo MIDETA" /></span>
+          <span class="brand-name"><strong>MIDETA</strong><small>MEDIA INTELLIGENCE TOOLS</small></span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     home.link_button("Beranda", "#top", width="stretch")
     features.link_button("Fitur", "#features", width="stretch")
     about.link_button("Tentang", "#about", width="stretch")
@@ -172,7 +193,19 @@ def render_brand_header() -> None:
     st.markdown('<div class="header-rule"></div>', unsafe_allow_html=True)
 
 def page_intro(number: str, title: str, description: str) -> None:
-    st.markdown(f'<div class="kicker">MIDETA / {html.escape(number)}</div><h1 class="page-title">{html.escape(title)}</h1><p class="page-copy">{html.escape(description)}</p>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <section class="page-intro">
+          <span class="page-mark"><img src="{_logo_data_uri()}" alt="" /></span>
+          <div>
+            <div class="kicker">MIDETA / {html.escape(number)}</div>
+            <h1 class="page-title">{html.escape(title)}</h1>
+            <p class="page-copy">{html.escape(description)}</p>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
 
 def render_platform_guide(feature: str, platform: str) -> None:
     guides = ENRICHMENT_GUIDES if feature == "enrichment" else COMMENT_GUIDES
@@ -206,6 +239,7 @@ def render_footer() -> None:
     st.markdown(
         """
         <div class="site-footer">
+          <p><b>MIDETA</b><span>Media Intelligence Tools</span></p>
           <p>Developed by Hawarisma Rafanidya Singgih</p>
         </div>
         """,

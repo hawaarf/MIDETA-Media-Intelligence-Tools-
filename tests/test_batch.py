@@ -80,6 +80,9 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(format_posting_date("2026-09-01"), "01-Sep-2026")
         self.assertEqual(format_posting_date("Tanggal tidak diketahui"), "Tanggal tidak diketahui")
 
+    def test_posting_date_converts_utc_to_jakarta_before_formatting(self):
+        self.assertEqual(format_posting_date("2026-09-07T18:30:00+00:00"), "08-Sep-2026")
+
     def test_compact_export_formats_date_and_keeps_zero_counts(self):
         result = get_connector("https://www.instagram.com/p/demo").mock_enrichment("https://www.instagram.com/p/demo")
         result.posted_at.value = "2026-08-25T10:00:00+07:00"

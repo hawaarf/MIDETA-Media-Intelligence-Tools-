@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime
 import re
 
+from src.dates import parse_social_datetime
 from src.models import SocialResult
 
-SOCIAL_BATCH_VERSION = 27
+SOCIAL_BATCH_VERSION = 28
 COMMENT_BATCH_VERSION = 4
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -13,19 +14,10 @@ MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "O
 
 def format_posting_date(value) -> str:
     """Format a posting date consistently for tables and downloads."""
-    if isinstance(value, datetime):
-        parsed = value.date()
-    elif isinstance(value, date):
-        parsed = value
-    else:
-        text = str(value).strip()
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00")).date()
-        except ValueError:
-            try:
-                parsed = date.fromisoformat(text)
-            except ValueError:
-                return text
+    parsed_datetime = parse_social_datetime(value)
+    if parsed_datetime is None:
+        return str(value).strip()
+    parsed = parsed_datetime.date()
     return f"{parsed.day:02d}-{MONTH_NAMES[parsed.month - 1]}-{parsed.year:04d}"
 
 

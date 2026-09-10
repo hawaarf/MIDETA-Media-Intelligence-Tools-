@@ -8,7 +8,7 @@ import streamlit as st
 
 from src.batch import COMMENT_BATCH_VERSION, compact_comment_export_rows, parse_url_list, rank_comment_rows
 from src.comment_browser import CommentBrowserCollector, CommentBrowserError
-from src.config import MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS
+from src.config import MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, get_platform_connector
 from src.database import add_history
 from src.exporters import to_csv_bytes, to_xlsx_bytes
@@ -16,7 +16,7 @@ from src.models import FieldStatus
 from src.ui import apply_theme, page_intro, render_footer, render_github_profile, render_platform_guide, status_label
 
 
-st.set_page_config(page_title="Comment Scrapper | MIDETA", page_icon="💬", layout="wide")
+st.set_page_config(page_title="Comment Scrapper | MIDETA", page_icon=str(MIDETA_LOGO_PATH), layout="wide")
 apply_theme()
 render_github_profile()
 page_intro(
