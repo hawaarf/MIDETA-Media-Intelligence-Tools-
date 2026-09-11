@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from bs4 import BeautifulSoup
 
 from src.connectors.base import BaseConnector
-from src.dates import social_date_iso
+from src.dates import relative_social_date_iso, social_date_iso
 
 
 class FacebookConnector(BaseConnector):
@@ -137,6 +137,42 @@ class FacebookConnector(BaseConnector):
                             candidates.append((distance, key_priority, normalized))
             if candidates:
                 return min(candidates, key=lambda item: (item[0], item[1]))[2]
+
+        target_nodes = []
+        for identifier in identifiers:
+            for anchor in soup.select("a[href]"):
+                href = unquote(str(anchor.get("href") or ""))
+                if identifier.casefold() in href.casefold():
+                    target_nodes.extend(anchor.select("time, abbr"))
+                    target_nodes.append(anchor)
+        target_nodes.extend(
+            soup.select(
+                '[role="main"] [role="article"] time, '
+                '[role="main"] [role="article"] abbr, '
+                '[role="article"] time, [role="article"] abbr, '
+                'time[datetime], abbr[data-utime]'
+            )
+        )
+        seen_nodes: set[int] = set()
+        for node in target_nodes:
+            if id(node) in seen_nodes:
+                continue
+            seen_nodes.add(id(node))
+            for value in (
+                node.get_text(" ", strip=True),
+                node.get("aria-label"),
+                node.get("data-tooltip-content"),
+                node.get("title"),
+            ):
+                if value in (None, ""):
+                    continue
+                relative_date = relative_social_date_iso(value)
+                if relative_date:
+                    return relative_date
+            for value in (node.get("datetime"), node.get("data-utime"), node.get("title")):
+                exact_date = social_date_iso(value)
+                if exact_date:
+                    return exact_date
         return current
 
     def _target_owner(self, html: str, url: str) -> tuple[str | None, str | None]:

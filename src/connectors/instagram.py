@@ -4,6 +4,7 @@ from urllib.parse import unquote, urlparse
 from bs4 import BeautifulSoup
 
 from src.connectors.base import BaseConnector
+from src.dates import relative_social_date_iso, social_date_iso
 
 
 class InstagramConnector(BaseConnector):
@@ -112,6 +113,32 @@ class InstagramConnector(BaseConnector):
             exact_date = self._target_posted_at_from_json(soup, shortcode)
             if exact_date:
                 return exact_date
+            target_nodes = []
+            for anchor in soup.select("a[href]"):
+                href = unquote(str(anchor.get("href") or ""))
+                if shortcode.casefold() in href.casefold():
+                    target_nodes.extend(anchor.select("time"))
+                    target_nodes.append(anchor)
+            target_nodes.extend(soup.select("article header time, article time, main time"))
+            seen_nodes: set[int] = set()
+            for node in target_nodes:
+                if id(node) in seen_nodes:
+                    continue
+                seen_nodes.add(id(node))
+                for value in (
+                    node.get_text(" ", strip=True),
+                    node.get("aria-label"),
+                    node.get("title"),
+                ):
+                    if value in (None, ""):
+                        continue
+                    relative_date = relative_social_date_iso(value)
+                    if relative_date:
+                        return relative_date
+                for value in (node.get("datetime"), node.get("data-utime"), node.get("title")):
+                    exact_date = social_date_iso(value)
+                    if exact_date:
+                        return exact_date
         if current:
             return current
         descriptions = (

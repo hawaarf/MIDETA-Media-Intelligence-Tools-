@@ -32,6 +32,8 @@ FACEBOOK_HTML = """<html><head><meta property="og:description" content="Caption 
 FACEBOOK_TARGET_DATE_HTML = """<html><script>{"post_id":"999","publish_time":1787600000},{"post_id":"123","publish_time":1788805800}</script></html>"""
 FACEBOOK_ESCAPED_TARGET_DATE_HTML = r'''<html><script>{"tracking":"{\"post_id\":\"123\",\"publish_time\":1788805800}"}</script></html>'''
 INSTAGRAM_TARGET_DATE_HTML = """<html><head><meta property="article:published_time" content="2026-08-01T00:00:00Z"><meta property="og:description" content="Caption"></head><script>{"code":"PostingLain","taken_at":1787600000},{"code":"TargetDate","taken_at":1788805800}</script></html>"""
+INSTAGRAM_RELATIVE_DATE_HTML = """<html><head><meta property="article:published_time" content="2026-09-08T00:00:00Z"><meta property="og:description" content="Caption"></head><article><header><a href="/p/RelativeDate/"><time datetime="2026-09-08T15:00:00Z">2d ago</time></a></header></article></html>"""
+FACEBOOK_RELATIVE_DATE_HTML = """<html><head><meta property="article:published_time" content="2026-09-08T00:00:00Z"></head><main role="main"><div role="article"><a href="/akun/posts/123"><abbr data-utime="1789090200" aria-label="2 hr">2 hr</abbr></a></div></main></html>"""
 FACEBOOK_META_HTML = """<html><head><meta property="og:description" content="Caption tetap utuh"><meta property="og:image:alt" content="1,2 rb tayangan · 9 suka · 3 komentar · 2 kali dibagikan | Caption tetap utuh"></head></html>"""
 FACEBOOK_REEL_META_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akun/videos/judul/123"><meta property="og:description" content="Caption Reel"><meta property="og:image:alt" content="93 tanggapan · 17 komentar | Caption Reel | Akun"></head><script>{"id":"123","comment_rendering_instance":{"comments":{"total_count":21}}}</script></html>"""
 FACEBOOK_REEL_FEEDBACK_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akun/videos/judul/123"><link rel="alternate" title="Caption Reel lengkap. Paragraf kedua juga masuk. | Akun"><meta property="og:description" content="Caption Reel lengkap..."><meta property="og:image:alt" content="450 rb tayangan · 23 rb tanggapan | Caption Reel lengkap. Paragraf kedua juga masuk. | Akun"></head><script>{"feedback":{"total_comment_count":1468,"share_count_reduced":"1,3 rb"},"post_id":"456","tracking":"{\\"top_level_post_id\\":\\"123\\",\\"video_id\\":\\"123\\"}"}</script></html>"""
@@ -85,6 +87,15 @@ class ConnectorTests(unittest.TestCase):
         url = "https://www.instagram.com/p/TargetDate/"
         result = get_connector(url).enrich(url, include_platform_profile=False)
         self.assertEqual(result.posted_at.value, "2026-09-08")
+
+    @patch("src.connectors.instagram.relative_social_date_iso", return_value="2026-09-09")
+    @patch("src.connectors.base.fetch_public_html", return_value=(INSTAGRAM_RELATIVE_DATE_HTML, "https://www.instagram.com/p/RelativeDate/"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/RelativeDate/")
+    def test_instagram_prefers_target_relative_label_over_stale_page_date(self, _validate, _fetch, relative_date):
+        url = "https://www.instagram.com/p/RelativeDate/"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.posted_at.value, "2026-09-09")
+        relative_date.assert_any_call("2d ago")
 
     @patch("src.connectors.base.fetch_public_html", return_value=(INSTAGRAM_PROFILE_POST_HTML, "https://www.instagram.com/p/profiletest/"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/profiletest/")
@@ -321,6 +332,15 @@ class ConnectorTests(unittest.TestCase):
         url = "https://www.facebook.com/akun/posts/123"
         result = get_connector(url).enrich(url, include_platform_profile=False)
         self.assertEqual(result.posted_at.value, "2026-09-08")
+
+    @patch("src.connectors.facebook.relative_social_date_iso", return_value="2026-09-11")
+    @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_RELATIVE_DATE_HTML, "https://www.facebook.com/akun/posts/123"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/akun/posts/123")
+    def test_facebook_uses_hour_label_from_target_story(self, _validate, _fetch, relative_date):
+        url = "https://www.facebook.com/akun/posts/123"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.posted_at.value, "2026-09-11")
+        relative_date.assert_any_call("2 hr")
 
     @patch("src.connectors.base.fetch_public_html", return_value=("<meta property=\"og:description\" content=\"Caption\">", "https://www.facebook.com/akuratco/posts/123"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/akuratco/posts/123")
