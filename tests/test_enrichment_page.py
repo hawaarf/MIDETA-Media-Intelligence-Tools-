@@ -55,6 +55,18 @@ class EnrichmentPageTests(unittest.TestCase):
         )
         self.assertIn("Mulai Tiga Proses", [widget.label for widget in app.button])
 
+    def test_enrichment_all_accepts_one_mixed_url_list(self):
+        with (
+            patch("src.database.get_social_job", return_value=None),
+            patch("src.database.get_latest_social_job", return_value=None),
+        ):
+            app = self._app()
+            app.get("button_group")[0].set_value("Enrichment All").run(timeout=10)
+
+        self.assertFalse(app.exception)
+        self.assertEqual([widget.label for widget in app.text_area], ["Semua URL media sosial"])
+        self.assertIn("Mulai Enrichment All", [widget.label for widget in app.button])
+
 
 if __name__ == "__main__":
     unittest.main()

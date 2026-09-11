@@ -19,7 +19,9 @@ Platform yang didukung: YouTube, TikTok, Facebook, Instagram, Threads, dan X.
 
 ### Social Media Enrichment
 
-Tempel satu URL per baris, pilih platform, lalu mulai proses. Satu antrean dapat berisi sampai 1.000 URL.
+Untuk satu platform, tempel satu URL per baris lalu mulai proses. Satu antrean dapat berisi sampai 1.000 URL.
+
+Kalau URL-nya berasal dari beberapa platform, pilih **Enrichment All**. Tempel semua URL dalam satu kotak tanpa memilah Facebook, Instagram, YouTube, TikTok, Threads, atau X. MIDETA mengenali platform secara otomatis, menjalankan antreannya dengan pembaca yang sesuai, lalu menampilkan satu tabel dan satu file hasil gabungan. Satu proses Enrichment All dapat berisi sampai 1.000 URL total.
 
 MIDETA juga bisa membaca URL yang tercampur dengan tanggal atau teks hasil salin dari spreadsheet. Contohnya:
 
@@ -55,7 +57,7 @@ Password hanya diketik di Instagram. MIDETA tidak membaca atau menyimpannya.
 
 #### Menjalankan beberapa platform
 
-Gunakan **Satu platform**, **Split Screen**, atau **Triple Screen**. Setiap panel punya input, antrean, progres, hasil, dan tombol unduh sendiri. Maksimal tiga platform dapat dijalankan dalam satu tampilan tanpa mencampur hasil antarplatform.
+Gunakan **Satu platform**, **Split Screen**, atau **Triple Screen** jika ingin mengatur setiap platform secara terpisah. Setiap panel punya input, antrean, progres, hasil, dan tombol unduh sendiri. Maksimal tiga platform dapat dijalankan dalam satu tampilan tanpa mencampur hasil antarplatform. Gunakan **Enrichment All** jika ingin memasukkan URL campuran dan mengunduh satu hasil gabungan.
 
 ### Comment Scrapper
 
@@ -67,9 +69,9 @@ Pilih platform dan masukkan URL posting yang ingin diperiksa. Hasil komentar ber
 - isi komentar;
 - jumlah likes dan reply.
 
-Threads dan X memakai Chrome khusus MIDETA karena percakapannya dimuat saat halaman dibuka. Login biasanya cukup satu kali dan sesinya akan dipakai kembali sampai kedaluwarsa atau logout.
+Facebook, Threads, dan X memakai Chrome khusus MIDETA karena komentarnya baru dimuat saat halaman dibuka. Sebelum pengambilan pertama, klik **Buka Sesi**, login di Chrome MIDETA, lalu klik **Periksa Login**. Sesi akan dipakai kembali sampai kedaluwarsa atau logout.
 
-Posting dengan ratusan komentar memang membutuhkan waktu lebih lama. MIDETA akan scroll halaman dan membuka reply yang tersedia sampai tidak menemukan komentar baru lagi. Platform tetap dapat menyembunyikan atau membatasi sebagian komentar.
+MIDETA dapat mengambil maksimal 2.000 komentar dari setiap URL. Progress bar menampilkan jumlah yang sudah ditemukan selama halaman di-scroll dan reply dibuka. Platform tetap dapat menyembunyikan atau membatasi sebagian komentar.
 
 Comment Scrapper juga mendukung Split Screen dan Triple Screen, dengan hasil terpisah untuk setiap platform.
 
@@ -135,7 +137,7 @@ app.py                     halaman utama
 pages/                     halaman fitur Streamlit
 src/connectors/            pembaca data tiap platform
 src/instagram_browser.py   enrichment Instagram dengan login
-src/comment_browser.py     pengambilan komentar Threads dan X
+src/comment_browser.py     pengambilan komentar Facebook, Threads, dan X
 src/threads_tracker.py     pencarian keyword dan ranking Threads
 src/batch.py               antrean dan pemulihan proses
 src/database.py            penyimpanan riwayat lokal
@@ -162,7 +164,9 @@ Supported platforms: YouTube, TikTok, Facebook, Instagram, Threads, and X.
 
 ### Social Media Enrichment
 
-Paste one URL per line, choose a platform, and start the run. A queue can contain up to 1,000 URLs.
+For a single platform, paste one URL per line and start the run. A queue can contain up to 1,000 URLs.
+
+For a mixed list, choose **Enrichment All**. Paste Facebook, Instagram, YouTube, TikTok, Threads, and X URLs into the same box. MIDETA detects each platform, sends every URL to the right collector, and returns one combined table and download. One Enrichment All run can contain up to 1,000 URLs in total.
 
 URLs copied together with spreadsheet text also work. For example:
 
@@ -198,7 +202,7 @@ Your password is entered only on Instagram. MIDETA does not read or store it.
 
 #### Running multiple platforms
 
-Choose **Satu platform**, **Split Screen**, or **Triple Screen**. Every panel has its own input, queue, progress, results, and download buttons. Up to three platforms can run in one view without mixing their results.
+Choose **Satu platform**, **Split Screen**, or **Triple Screen** when you want to manage each platform separately. Every panel has its own input, queue, progress, results, and download buttons. Up to three platforms can run in one view without mixing their results. Choose **Enrichment All** for a mixed URL list and one combined download.
 
 ### Comment Scrapper
 
@@ -210,9 +214,9 @@ Choose a platform and paste the post URLs. Comment results include:
 - comment text;
 - like and reply counts.
 
-Threads and X use dedicated MIDETA Chrome profiles because their conversations load inside the page. You normally need to log in only once; the saved session is reused until it expires or you log out.
+Facebook, Threads, and X use dedicated MIDETA Chrome profiles because their comments load inside the page. Before the first run, click **Buka Sesi**, log in through MIDETA Chrome, then click **Periksa Login**. The saved session is reused until it expires or you log out.
 
-Posts with hundreds of comments take longer. MIDETA keeps scrolling and opens available replies until no new comments are found. The platform may still hide or limit part of a conversation.
+MIDETA can collect up to 2,000 comments from each URL. The progress bar shows how many have been found while the page is scrolled and replies are opened. The platform may still hide or limit part of a conversation.
 
 Comment Scrapper also supports Split Screen and Triple Screen, with separate results for every platform.
 
@@ -278,7 +282,7 @@ app.py                     home page
 pages/                     Streamlit feature pages
 src/connectors/            platform data readers
 src/instagram_browser.py   logged-in Instagram enrichment
-src/comment_browser.py     Threads and X comment collection
+src/comment_browser.py     Facebook, Threads, and X comment collection
 src/threads_tracker.py     Threads keyword search and ranking
 src/batch.py               queues and resume support
 src/database.py            local history storage

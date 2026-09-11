@@ -23,6 +23,7 @@ class SocialDateTests(unittest.TestCase):
     def test_indonesian_relative_labels(self):
         self.assertEqual(relative_social_date_iso("2 hari lalu", now=self.now), "2026-09-09")
         self.assertEqual(relative_social_date_iso("kemarin", now=self.now), "2026-09-10")
+        self.assertEqual(relative_social_date_iso("seminggu yang lalu", now=self.now), "2026-09-04")
 
 
 if __name__ == "__main__":

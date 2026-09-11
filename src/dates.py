@@ -95,6 +95,11 @@ def parse_relative_social_datetime(value, *, now: datetime | None = None) -> dat
     if re.search(r"\b(?:yesterday|kemarin)\b", text_value):
         return reference - timedelta(days=1)
 
+    singular_indonesian = re.search(r"\bse(detik|menit|jam|hari|minggu)(?:\s+(?:yang\s+)?lalu)?\b", text_value)
+    if singular_indonesian:
+        unit = _RELATIVE_UNITS[singular_indonesian.group(1)]
+        return reference - timedelta(**{unit: 1})
+
     units = "|".join(sorted((re.escape(unit) for unit in _RELATIVE_UNITS), key=len, reverse=True))
     match = re.search(rf"(?<![\w.])(\d+)\s*({units})(?![\w.])(?:\s+(?:ago|lalu))?", text_value)
     if not match:

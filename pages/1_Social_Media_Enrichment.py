@@ -6,10 +6,12 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from bs4 import BeautifulSoup
 
 from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, parse_url_list, social_result_row
 from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
-from src.connectors import PLATFORM_OPTIONS, get_platform_connector
+from src.connectors import PLATFORM_OPTIONS, detect_platform, get_platform_connector
+from src.connectors.instagram import InstagramConnector
 from src.database import add_history, create_social_job, get_latest_social_job, get_social_job, next_social_job_items, record_social_job_item, set_social_job_status
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, InstagramLoginRequired, build_instagram_browser_result
@@ -26,8 +28,8 @@ page_intro(
     "Masukkan beberapa tautan YouTube, TikTok, Facebook, Instagram, Threads, atau X untuk melihat metadata publiknya.",
 )
 st.info(
-    "Tulis satu URL pada setiap baris. MIDETA dapat menerima sampai 1.000 URL per platform dan menyimpannya bertahap. "
-    f"Split atau Triple Screen menjalankan maksimal {MAX_PARALLEL_PLATFORMS} platform secara paralel dengan antrean terpisah."
+    "Tulis satu URL pada setiap baris. MIDETA dapat menerima sampai 1.000 URL dan menyimpannya bertahap. "
+    f"Enrichment All mengenali platform secara otomatis, sedangkan Split atau Triple Screen menjalankan maksimal {MAX_PARALLEL_PLATFORMS} platform secara paralel."
 )
 
 PLATFORM_ICONS = {
@@ -59,6 +61,20 @@ def job_chunk_size(job: dict[str, Any]) -> int:
     if job.get("enrichment_mode") == "advanced":
         return ENRICHMENT_BROWSER_CHUNK_SIZE
     return ENRICHMENT_CHUNK_SIZE
+
+
+def recover_instagram_followers(username: str | None) -> int | None:
+    """Fallback for a profile response that was temporarily empty."""
+    clean_username = InstagramBrowserCollector._username(username)
+    if not clean_username:
+        return None
+    connector = InstagramConnector()
+    return connector._platform_followers(
+        "",
+        BeautifulSoup("", "lxml"),
+        f"https://www.instagram.com/{clean_username}/",
+        clean_username,
+    )
 
 
 def render_instagram_controls(slot: str) -> str:
@@ -131,7 +147,20 @@ def validate_job_request(request: dict[str, Any]) -> str | None:
     return None
 
 
-def create_requested_jobs(requests: list[dict[str, Any]]) -> None:
+def group_detected_urls(urls: list[str]) -> tuple[dict[str, list[str]], list[dict[str, str]]]:
+    grouped: dict[str, list[str]] = {}
+    unsupported: list[dict[str, str]] = []
+    for url in urls:
+        try:
+            platform = detect_platform(url)
+        except ValueError as exc:
+            unsupported.append({"URL": url, "Alasan": str(exc)})
+            continue
+        grouped.setdefault(platform, []).append(url)
+    return grouped, unsupported
+
+
+def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | None:
     errors = [error for request in requests if (error := validate_job_request(request))]
     if not errors and any(request["platform"] == "Instagram" and not request["mock_mode"] for request in requests):
         try:
@@ -142,7 +171,8 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> None:
     if errors:
         for error in errors:
             st.error(error)
-        return
+        return None
+    created_jobs: dict[str, int] = {}
     for request in requests:
         platform = request["platform"]
         job_id = create_social_job(
@@ -154,6 +184,8 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> None:
             enrichment_mode=request["enrichment_mode"],
         )
         st.session_state[f"social_job_{platform}"] = job_id
+        created_jobs[platform] = job_id
+    return created_jobs
 
 
 def load_current_job(platform: str) -> dict[str, Any] | None:
@@ -255,6 +287,118 @@ def render_job_results(job: dict[str, Any] | None, platform: str) -> None:
     )
 
 
+def load_all_jobs() -> list[dict[str, Any]]:
+    job_ids = st.session_state.get("social_all_jobs", {})
+    if not isinstance(job_ids, dict):
+        st.session_state.pop("social_all_jobs", None)
+        return []
+    current_ids: dict[str, int] = {}
+    jobs: list[dict[str, Any]] = []
+    stale = False
+    for platform in PLATFORM_OPTIONS:
+        job_id = job_ids.get(platform)
+        if not job_id:
+            continue
+        job = get_social_job(job_id)
+        if not job:
+            continue
+        if job.get("schema_version") != SOCIAL_BATCH_VERSION:
+            stale = True
+            continue
+        current_ids[platform] = job_id
+        jobs.append(job)
+    if current_ids != job_ids:
+        if current_ids:
+            st.session_state["social_all_jobs"] = current_ids
+        else:
+            st.session_state.pop("social_all_jobs", None)
+    if stale:
+        st.info("Parser MIDETA baru saja diperbarui. Mulai Enrichment All baru agar hasil memakai pembacaan terbaru.")
+    return jobs
+
+
+def available_result_fields(result: SocialResult):
+    return (
+        result.username,
+        result.caption,
+        result.posted_at,
+        result.followers,
+        result.likes,
+        result.comments,
+        result.shares,
+        result.views,
+        result.bookmarks,
+        result.reposts,
+    )
+
+
+def render_all_job_results(jobs: list[dict[str, Any]]) -> None:
+    results = [
+        SocialResult.model_validate(item)
+        for job in jobs
+        for item in job.get("results", [])
+    ]
+    if not results:
+        if jobs and all(job["status"] == "completed" for job in jobs):
+            st.warning("Proses selesai, tetapi belum ada URL yang menghasilkan metadata.")
+        return
+
+    input_order = {
+        url: position
+        for position, url in enumerate(st.session_state.get("social_all_order", []))
+    }
+    results.sort(key=lambda result: input_order.get(result.url, len(input_order)))
+    if any(result.is_mock for result in results):
+        st.warning("DATA CONTOH AKTIF. Informasi di bawah bukan data dari tautan.")
+
+    successful = sum(
+        any(field.status == FieldStatus.AVAILABLE for field in available_result_fields(result))
+        for result in results
+    )
+    error_count = sum(len(job.get("errors", [])) for job in jobs)
+    browser_issue_count = sum(len(job.get("browser_issues", [])) for job in jobs)
+    metric_cols = st.columns(3)
+    metric_cols[0].metric("Diproses", len(results) + error_count)
+    metric_cols[1].metric("Berhasil", successful)
+    metric_cols[2].metric("Periksa", len(results) - successful + error_count + browser_issue_count)
+
+    detail_rows = [social_result_row(result) for result in results]
+    for row in detail_rows:
+        for key in list(row):
+            if key.startswith("Status "):
+                row[key] = status_label(row[key])
+    export_rows = [compact_social_export_row(result) for result in results]
+    st.dataframe(pd.DataFrame(export_rows).astype(str), width="stretch", hide_index=True)
+    with st.expander("Lihat status setiap data"):
+        detail_frame = pd.DataFrame(detail_rows)
+        status_columns = ["Platform", "URL"] + [
+            column for column in detail_frame.columns if column.startswith("Status ")
+        ] + ["Catatan"]
+        st.dataframe(
+            detail_frame.reindex(columns=status_columns).fillna("Tidak tersedia"),
+            width="stretch",
+            hide_index=True,
+        )
+    job_key = "_".join(str(job["id"]) for job in jobs)
+    csv_col, xlsx_col = st.columns(2)
+    csv_col.download_button(
+        "Unduh CSV Gabungan",
+        to_csv_bytes(export_rows),
+        "mideta_enrichment_all.csv",
+        "text/csv",
+        key=f"download_csv_all_{job_key}",
+        width="stretch",
+    )
+    xlsx_col.download_button(
+        "Unduh XLSX Gabungan",
+        to_xlsx_bytes(export_rows, "Enrichment All"),
+        "mideta_enrichment_all.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"download_xlsx_all_{job_key}",
+        width="stretch",
+    )
+
+
 def render_job_issues(job: dict[str, Any] | None) -> None:
     if not job:
         return
@@ -278,6 +422,24 @@ def render_job_panel(platform: str, slot: str) -> tuple[dict[str, Any] | None, A
     return job, activity
 
 
+def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, Any], Any]]:
+    panels: list[tuple[dict[str, Any], Any]] = []
+    if not jobs:
+        return panels
+    st.markdown("#### Status per platform")
+    for job in jobs:
+        platform = job["platform"]
+        with st.container(border=True):
+            st.markdown(f"**{PLATFORM_ICONS[platform]}** · {job['processed']:,}/{job['total']:,} URL")
+            if platform == "Instagram":
+                st.caption(f"Mode Instagram: {job['enrichment_mode'].title()} enrichment.")
+            render_job_controls(job, f"all_{platform.lower()}")
+            activity = st.empty()
+            render_job_issues(job)
+        panels.append((job, activity))
+    return panels
+
+
 def collect_one_item(job: dict[str, Any], item: dict[str, Any], active_browser: InstagramBrowserCollector | None) -> dict[str, Any]:
     url = item["url"]
     position = item["position"]
@@ -293,6 +455,14 @@ def collect_one_item(job: dict[str, Any], item: dict[str, Any], active_browser: 
                     None,
                     mode=job["enrichment_mode"],
                 )
+                if job["enrichment_mode"] == "advanced" and metrics.followers is None:
+                    metrics.followers = recover_instagram_followers(metrics.username)
+                if job["enrichment_mode"] == "advanced" and metrics.followers is None:
+                    browser_issue = {
+                        "URL": url,
+                        "Platform": "Instagram",
+                        "Alasan": "Followers belum berhasil dibaca dari profil. Jalankan ulang URL ini saat pembatasan Instagram sudah reda.",
+                    }
                 result = build_instagram_browser_result(
                     url,
                     metrics,
@@ -458,16 +628,77 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
 
 layout_mode = st.segmented_control(
     "Tampilan proses",
-    ("Satu platform", "Split Screen", "Triple Screen"),
+    ("Satu platform", "Split Screen", "Triple Screen", "Enrichment All"),
     default="Satu platform",
-    help="Split Screen menjalankan dua platform dan Triple Screen menjalankan tiga platform berbeda secara paralel.",
+    help="Enrichment All menerima URL campuran dan mengenali platform otomatis. Split dan Triple Screen memisahkan proses dalam beberapa panel.",
     key="social_enrichment_layout",
     width="stretch",
 )
 
 job_panels: list[tuple[dict[str, Any] | None, Any]] = []
 
-if layout_mode in {"Split Screen", "Triple Screen"}:
+if layout_mode == "Enrichment All":
+    st.caption(
+        "Tempel URL YouTube, TikTok, Facebook, Instagram, Threads, dan X dalam satu kotak. "
+        "MIDETA akan mengenali platformnya, membuat antrean yang aman di belakang layar, lalu menggabungkan hasil sesuai urutan input."
+    )
+    with st.expander("Pengaturan Instagram jika daftar berisi URL Instagram"):
+        instagram_mode = render_instagram_controls("all")
+
+    with st.form("enrichment_form_all"):
+        all_url_text = st.text_area(
+            "Semua URL media sosial",
+            height=230,
+            placeholder="\n".join(PLACEHOLDERS.values()),
+            key="social_urls_all",
+        )
+        all_mock_mode = st.checkbox(
+            "Gunakan data contoh",
+            help="Menampilkan contoh untuk semua platform yang terdeteksi tanpa mengambil data dari tautan.",
+            key="social_mock_all",
+        )
+        all_submitted = st.form_submit_button("Mulai Enrichment All", type="primary", width="stretch")
+
+    if all_submitted:
+        all_urls = parse_url_list(all_url_text)
+        if not all_urls:
+            st.error("Masukkan setidaknya satu URL posting.")
+        elif len(all_urls) > MAX_ENRICHMENT_URLS:
+            excess = len(all_urls) - MAX_ENRICHMENT_URLS
+            st.error(f"Enrichment All maksimal {MAX_ENRICHMENT_URLS:,} URL. Kurangi {excess:,} URL lalu coba lagi.")
+        else:
+            grouped_urls, unsupported_urls = group_detected_urls(all_urls)
+            st.session_state["social_all_unsupported"] = unsupported_urls
+            if not grouped_urls:
+                st.session_state.pop("social_all_jobs", None)
+                st.session_state.pop("social_all_order", None)
+                st.error("Tidak ada URL dari platform yang didukung.")
+            else:
+                all_requests = [
+                    {
+                        "platform": platform,
+                        "url_text": "\n".join(grouped_urls[platform]),
+                        "mock_mode": all_mock_mode,
+                        "enrichment_mode": instagram_mode if platform == "Instagram" else "standard",
+                    }
+                    for platform in PLATFORM_OPTIONS
+                    if platform in grouped_urls
+                ]
+                created_jobs = create_requested_jobs(all_requests)
+                if created_jobs:
+                    st.session_state["social_all_jobs"] = created_jobs
+                    st.session_state["social_all_order"] = all_urls
+
+    if unsupported_urls := st.session_state.get("social_all_unsupported", []):
+        with st.expander(f"{len(unsupported_urls)} URL tidak dikenali", expanded=True):
+            st.dataframe(pd.DataFrame(unsupported_urls), width="stretch", hide_index=True)
+
+    all_jobs = load_all_jobs()
+    job_panels.extend(render_all_job_panels(all_jobs))
+    if all_jobs:
+        st.markdown("#### Hasil gabungan")
+        render_all_job_results(all_jobs)
+elif layout_mode in {"Split Screen", "Triple Screen"}:
     panel_count = 2 if layout_mode == "Split Screen" else MAX_PARALLEL_PLATFORMS
     panel_word = "dua" if panel_count == 2 else "tiga"
     st.caption(

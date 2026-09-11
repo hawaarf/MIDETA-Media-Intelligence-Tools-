@@ -76,6 +76,26 @@ class InstagramBrowserTests(unittest.TestCase):
             1_123_456,
         )
 
+    def test_reads_followers_from_matching_profile_page_payload(self):
+        source = '''<html><head><script type="application/json">{"profiles":[{"username":"other_account","follower_count":999999},{"username":"bdg.info","follower_count":24400}]}</script></head></html>'''
+        self.assertEqual(
+            InstagramBrowserCollector._profile_page_followers(source, "bdg.info"),
+            24_400,
+        )
+
+    def test_profile_page_followers_ignore_a_different_account(self):
+        source = '''<html><head><script type="application/json">{"username":"recommended","follower_count":999999}</script></head></html>'''
+        self.assertIsNone(
+            InstagramBrowserCollector._profile_page_followers(source, "target_account")
+        )
+
+    def test_reads_rounded_followers_from_matching_profile_description(self):
+        source = '''<html><head><meta property="og:description" content="24.4K Followers, 78 Following, 355 Posts - See Instagram photos and videos from Vonix Media (@vonixmedia.id)"></head></html>'''
+        self.assertEqual(
+            InstagramBrowserCollector._profile_page_followers(source, "vonixmedia.id"),
+            24_400,
+        )
+
     def test_browser_metrics_replace_public_fallbacks(self):
         result = get_connector("https://www.instagram.com/p/demo/").mock_enrichment(
             "https://www.instagram.com/p/demo/"

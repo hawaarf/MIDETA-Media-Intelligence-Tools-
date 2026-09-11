@@ -410,6 +410,43 @@ class InstagramBrowserCollector:
             return None
         return cls._mapping_count(user, "follower_count", "followers_count", "edge_followed_by")
 
+    @classmethod
+    def _profile_page_followers(cls, source: str, username: str) -> int | None:
+        """Read followers only from the requested profile's page payload."""
+        exact = cls._profile_info_followers(source)
+        if exact is not None:
+            return exact
+        wanted = username.casefold()
+        soup = BeautifulSoup(source, "lxml")
+        for payload in BaseConnector._embedded_json(soup):
+            for node in BaseConnector._walk(payload):
+                candidates = [node]
+                if isinstance(node.get("user"), dict):
+                    candidates.append(node["user"])
+                for candidate in candidates:
+                    candidate_username = cls._username(candidate.get("username"))
+                    if not candidate_username or candidate_username.casefold() != wanted:
+                        continue
+                    followers = cls._mapping_count(
+                        candidate,
+                        "follower_count",
+                        "followers_count",
+                        "edge_followed_by",
+                    )
+                    if followers is not None:
+                        return followers
+        descriptions = (
+            BaseConnector._meta(soup, 'meta[property="og:description"]'),
+            BaseConnector._meta(soup, 'meta[name="description"]'),
+        )
+        for description in descriptions:
+            if not description or wanted not in description.casefold():
+                continue
+            followers = cls._labeled_count(description, "follower", "followers")
+            if followers is not None:
+                return followers
+        return None
+
     @staticmethod
     def _target_metric_from_exact_media(source: str, *keys: str) -> int | None:
         for key in keys:
@@ -665,10 +702,34 @@ class InstagramBrowserCollector:
         driver.get(f"https://www.instagram.com/{username}/{profile_path}")
         self._wait_for_page()
         body = self._body_text()
+        profile_source = driver.page_source
         exact_followers = self._authenticated_profile_followers(username)
         followers = exact_followers
         if followers is None:
-            followers = self._labeled_count(body, "follower", "followers") or cached_followers
+            followers = self._profile_page_followers(profile_source, username)
+        if followers is None:
+            followers = self._labeled_count(body, "follower", "followers")
+        if followers is None:
+            public_source = InstagramConnector()._public_profile_html(
+                f"https://www.instagram.com/{username}/"
+            )
+            if public_source:
+                followers = self._profile_page_followers(public_source, username)
+                if followers is None:
+                    public_soup = BeautifulSoup(public_source, "lxml")
+                    public_text = " ".join(
+                        filter(
+                            None,
+                            (
+                                public_soup.get_text(" ", strip=True),
+                                BaseConnector._meta(public_soup, 'meta[property="og:description"]'),
+                                BaseConnector._meta(public_soup, 'meta[name="description"]'),
+                            ),
+                        )
+                    )
+                    followers = self._labeled_count(public_text, "follower", "followers")
+        if followers is None:
+            followers = cached_followers
         if followers is not None:
             self._followers_cache[cache_key] = (time.monotonic(), followers)
         views = None

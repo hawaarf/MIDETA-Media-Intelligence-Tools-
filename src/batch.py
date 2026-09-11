@@ -6,8 +6,8 @@ import re
 from src.dates import parse_social_datetime
 from src.models import SocialResult
 
-SOCIAL_BATCH_VERSION = 29
-COMMENT_BATCH_VERSION = 4
+SOCIAL_BATCH_VERSION = 30
+COMMENT_BATCH_VERSION = 8
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -65,6 +65,27 @@ def parse_url_list(value: str) -> list[str]:
                 seen.add(url)
                 urls.append(url)
     return urls
+
+
+def group_social_urls(urls: list[str]) -> tuple[dict[str, list[str]], list[dict[str, str]]]:
+    """Group mixed social URLs by their detected platform.
+
+    Detection uses the same connector registry as enrichment, so aliases such as
+    ``youtu.be``, ``fb.watch``, ``twitter.com``, and ``threads.com`` follow the
+    same rules as the platform-specific input.
+    """
+    from src.connectors import detect_platform
+
+    grouped: dict[str, list[str]] = {}
+    unsupported: list[dict[str, str]] = []
+    for url in urls:
+        try:
+            platform = detect_platform(url)
+        except ValueError as exc:
+            unsupported.append({"URL": url, "Alasan": str(exc)})
+            continue
+        grouped.setdefault(platform, []).append(url)
+    return grouped, unsupported
 
 
 def is_current_social_batch(batch: dict) -> bool:

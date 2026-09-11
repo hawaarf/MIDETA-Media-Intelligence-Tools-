@@ -1,5 +1,5 @@
 import unittest
-from src.batch import SOCIAL_BATCH_VERSION, compact_comment_export_rows, compact_social_export_row, format_comment_date, format_posting_date, is_current_social_batch, parse_url_list, rank_comment_rows, social_result_row
+from src.batch import SOCIAL_BATCH_VERSION, compact_comment_export_rows, compact_social_export_row, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, parse_url_list, rank_comment_rows, social_result_row
 from src.connectors import get_connector
 
 class BatchTests(unittest.TestCase):
@@ -24,6 +24,24 @@ class BatchTests(unittest.TestCase):
     def test_parse_url_list_ignores_rows_without_urls(self):
         value = "Aug 30, 2026\ncaption tanpa tautan\nhttps://www.threads.com/@akun/post/ABC."
         self.assertEqual(parse_url_list(value), ["https://www.threads.com/@akun/post/ABC"])
+
+    def test_group_social_urls_detects_mixed_platforms_and_reports_unknown_urls(self):
+        grouped, unsupported = group_social_urls(
+            [
+                "https://youtu.be/video",
+                "https://www.facebook.com/reel/123",
+                "https://www.instagram.com/p/ABC/",
+                "https://www.threads.com/@akun/post/DEF",
+                "https://twitter.com/akun/status/456",
+                "https://example.com/post/789",
+            ]
+        )
+        self.assertEqual(grouped["YouTube"], ["https://youtu.be/video"])
+        self.assertEqual(grouped["Facebook"], ["https://www.facebook.com/reel/123"])
+        self.assertEqual(grouped["Instagram"], ["https://www.instagram.com/p/ABC/"])
+        self.assertEqual(grouped["Threads"], ["https://www.threads.com/@akun/post/DEF"])
+        self.assertEqual(grouped["X"], ["https://twitter.com/akun/status/456"])
+        self.assertEqual(unsupported[0]["URL"], "https://example.com/post/789")
 
     def test_stale_social_batch_is_rejected_after_parser_update(self):
         self.assertFalse(is_current_social_batch({"results": []}))

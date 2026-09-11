@@ -98,14 +98,18 @@ COMMENT_GUIDES = {
         "note": "Komentar yang hanya dimuat di aplikasi, dibatasi wilayah, atau berada di balik login mungkin tidak tersedia.",
     },
     "Facebook": {
-        "summary": "Gunakan post, Reel, atau video publik yang komentarnya bisa dibuka tanpa akses khusus.",
-        "steps": [
-            ("Salin URL posting", "Pastikan posting dapat dibuka secara publik dan komentar tidak dimatikan."),
-            ("Tempel tautan", "Masukkan satu URL Facebook per baris."),
-            ("Ambil komentar", "MIDETA membaca parent/reply yang tersedia sebagai data terstruktur publik."),
-            ("Review & ekspor", "Periksa status setiap URL, ranking engagement, lalu unduh hasil."),
+        "summary": "MIDETA memakai Chrome Facebook agar komentar yang dimuat setelah halaman dibuka ikut terbaca.",
+        "modes": [
+            ("Sesi tersimpan", "Klik ‘Buka Sesi Facebook’, login satu kali, lalu ‘Periksa Login’."),
+            ("Muat percakapan", "MIDETA memilih semua komentar bila tersedia, membuka komentar lanjutan dan reply, lalu menyimpan hasil yang terlihat."),
         ],
-        "note": "Komentar grup tertutup, posting privat, atau dialog komentar yang mewajibkan login tidak dapat diambil.",
+        "steps": [
+            ("Buka sesi", "Login di Chrome khusus MIDETA agar posting dan komentarnya dapat ditampilkan."),
+            ("Periksa login", "Kembali ke MIDETA lalu pastikan sesi Facebook sudah terdeteksi."),
+            ("Tempel tautan", "Masukkan satu URL Facebook per baris."),
+            ("Ambil & periksa", "Tunggu pemuatan komentar selesai, lalu review parent/reply dan unduh hasil."),
+        ],
+        "note": "MIDETA hanya dapat mengambil komentar yang ditampilkan Facebook kepada akun yang sedang login. Komentar tersembunyi, terfilter, atau posting tanpa izin tetap tidak dapat dibaca.",
     },
     "Instagram": {
         "summary": "Comment Scrapper Instagram memakai data publik dan tidak memerlukan mode browser enrichment.",

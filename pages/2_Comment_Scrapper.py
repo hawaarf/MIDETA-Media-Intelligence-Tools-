@@ -1,14 +1,17 @@
 """MIDETA public comment scrapper batch page."""
 from concurrent.futures import ThreadPoolExecutor
+import importlib
+import inspect
 from queue import Queue
 from typing import Any
 
 import pandas as pd
 import streamlit as st
+import src.comment_browser as comment_browser_module
 
 from src.batch import COMMENT_BATCH_VERSION, compact_comment_export_rows, parse_url_list, rank_comment_rows
-from src.comment_browser import CommentBrowserCollector, CommentBrowserError
-from src.config import MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
+from src.comment_browser import CommentBrowserCollector
+from src.config import MAX_COMMENTS_PER_URL, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, get_platform_connector
 from src.database import add_history
 from src.exporters import to_csv_bytes, to_xlsx_bytes
@@ -26,7 +29,8 @@ page_intro(
 )
 st.warning(
     "Tulis satu URL pada setiap baris. MIDETA hanya mengambil komentar yang dapat ditampilkan oleh platform. "
-    f"Split atau Triple Screen dapat menjalankan maksimal {MAX_PARALLEL_PLATFORMS} platform dengan proses dan hasil terpisah."
+    f"Maksimal {MAX_COMMENTS_PER_URL:,} komentar diambil dari setiap URL. Split atau Triple Screen dapat menjalankan "
+    f"maksimal {MAX_PARALLEL_PLATFORMS} platform dengan proses dan hasil terpisah."
 )
 
 PLATFORM_ICONS = {
@@ -52,6 +56,25 @@ def comment_browser(platform: str) -> CommentBrowserCollector:
     return CommentBrowserCollector(platform)
 
 
+def current_comment_browser(platform: str) -> CommentBrowserCollector:
+    """Upgrade a cached browser object after a Streamlit hot reload."""
+    browser = comment_browser(platform)
+    if (
+        getattr(browser, "RUNTIME_VERSION", 0) >= 4
+        and "max_comments" in inspect.signature(browser.collect).parameters
+    ):
+        return browser
+    refreshed_module = importlib.reload(comment_browser_module)
+    try:
+        browser.__class__ = refreshed_module.CommentBrowserCollector
+        return browser
+    except TypeError:
+        # A different runtime may reject class reassignment. Recreate the
+        # collector while keeping the persisted Chrome profile/login intact.
+        browser.close()
+        return refreshed_module.CommentBrowserCollector(platform)
+
+
 def render_browser_controls(platform: str, slot: str) -> None:
     st.info(f"Mode browser {platform} aktif otomatis karena komentar dimuat dari percakapan di Chrome MIDETA.")
     st.caption(
@@ -61,22 +84,22 @@ def render_browser_controls(platform: str, slot: str) -> None:
     open_col, check_col, close_col = st.columns(3)
     if open_col.button(f"Buka Sesi {platform}", key=f"open_comment_{slot}_{platform}", width="stretch"):
         try:
-            if comment_browser(platform).open_login():
+            if current_comment_browser(platform).open_login():
                 st.success(f"Sesi {platform} tersimpan masih aktif; tidak perlu login lagi.")
             else:
                 st.info("Selesaikan login satu kali di Chrome MIDETA, lalu tekan Periksa Login.")
-        except CommentBrowserError as exc:
+        except RuntimeError as exc:
             st.error(str(exc))
     if check_col.button("Periksa Login", key=f"check_comment_{slot}_{platform}", width="stretch"):
         try:
-            if comment_browser(platform).is_logged_in():
+            if current_comment_browser(platform).is_logged_in():
                 st.success("Login tersimpan. Scraping berikutnya akan memakai sesi ini otomatis.")
             else:
                 st.warning("Login belum terdeteksi. Komentar publik tetap akan dicoba; login mungkin diperlukan untuk hasil lengkap.")
-        except CommentBrowserError as exc:
+        except RuntimeError as exc:
             st.error(str(exc))
     if close_col.button("Tutup Chrome", key=f"close_comment_{slot}_{platform}", width="stretch"):
-        comment_browser(platform).close()
+        current_comment_browser(platform).close()
         st.info(f"Chrome MIDETA untuk {platform} sudah ditutup.")
 
 
@@ -89,7 +112,7 @@ def render_platform_setup(platform: str, slot: str, compact: bool = False) -> No
     else:
         st.caption(f"Bagian ini khusus untuk komentar {platform}.")
         render_platform_guide("comments", platform)
-    if platform in {"Threads", "X"}:
+    if platform in {"Facebook", "Threads", "X"}:
         render_browser_controls(platform, slot)
 
 
@@ -116,13 +139,17 @@ def collect_comment_url(
     url: str,
     active_browser: CommentBrowserCollector | None,
     include_preview: bool,
+    progress_callback=None,
 ) -> dict[str, Any]:
     platform = request["platform"]
     try:
         connector = get_platform_connector(url, platform)
         preview = None
+        expected_comments = None
         if include_preview:
             preview_result = connector.mock_enrichment(url) if request["mock_mode"] else connector.enrich(url)
+            if isinstance(preview_result.comments.value, int) and preview_result.comments.value > 0:
+                expected_comments = min(preview_result.comments.value, MAX_COMMENTS_PER_URL)
             preview = {
                 "Platform": preview_result.platform,
                 "URL": preview_result.url,
@@ -132,9 +159,25 @@ def collect_comment_url(
         if request["mock_mode"]:
             collection = connector.mock_comments(url)
         elif active_browser is not None:
-            collection = active_browser.collect(url)
+            browser_progress = None
+            if progress_callback is not None:
+                browser_progress = lambda count, limit: progress_callback(
+                    count,
+                    expected_comments or limit,
+                )
+            collection = active_browser.collect(
+                url,
+                max_comments=MAX_COMMENTS_PER_URL,
+                progress_callback=browser_progress,
+            )
         else:
             collection = connector.collect_comments(url)
+        collection.comments = collection.comments[:MAX_COMMENTS_PER_URL]
+        if progress_callback is not None:
+            progress_callback(
+                len(collection.comments),
+                expected_comments or MAX_COMMENTS_PER_URL,
+            )
         return {"kind": "completed", "collection": collection, "preview": preview}
     except Exception as exc:
         return {
@@ -152,11 +195,21 @@ def collect_comment_platform(task: dict[str, Any], output: Queue) -> None:
     platform = task["request"]["platform"]
     try:
         for index, url in enumerate(task["request"]["urls"]):
+            output.put((platform, {
+                "kind": "progress",
+                "count": 0,
+                "limit": MAX_COMMENTS_PER_URL,
+            }))
             outcome = collect_comment_url(
                 task["request"],
                 url,
                 task["active_browser"],
                 include_preview=index == 0,
+                progress_callback=lambda count, limit: output.put((platform, {
+                    "kind": "progress",
+                    "count": count,
+                    "limit": limit,
+                })),
             )
             output.put((platform, outcome))
     finally:
@@ -227,11 +280,11 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
             "total": len(request["urls"]),
         }
         active_browser = None
-        if platform in {"Threads", "X"} and not request["mock_mode"]:
+        if platform in {"Facebook", "Threads", "X"} and not request["mock_mode"]:
             try:
-                active_browser = comment_browser(platform)
+                active_browser = current_comment_browser(platform)
                 active_browser.start()
-            except CommentBrowserError as exc:
+            except RuntimeError as exc:
                 states[platform]["issues"].append(
                     {
                         "URL": request["urls"][0],
@@ -260,6 +313,19 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
                     completed_workers += 1
                     continue
                 state = states[platform]
+                if outcome["kind"] == "progress":
+                    limit = max(int(outcome.get("limit") or MAX_COMMENTS_PER_URL), 1)
+                    count = max(int(outcome.get("count") or 0), 0)
+                    current_fraction = min(count / limit, 0.95)
+                    percentage = int((state["processed"] + current_fraction) / state["total"] * 100)
+                    progress_targets[platform].progress(
+                        percentage,
+                        text=(
+                            f"{platform}: URL {state['processed'] + 1:,} dari {state['total']:,} · "
+                            f"{count:,} komentar ditemukan (maks. {MAX_COMMENTS_PER_URL:,})"
+                        ),
+                    )
+                    continue
                 store_collection(state, outcome)
                 state["processed"] += 1
                 percentage = int(state["processed"] / state["total"] * 100)
