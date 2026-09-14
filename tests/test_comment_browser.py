@@ -184,6 +184,20 @@ class CommentBrowserTests(unittest.TestCase):
         self.assertEqual(result.url, permalink)
         self.assertEqual(result.comments[0].comment, "Komentar Reel")
 
+    def test_facebook_reel_opener_supports_komentari_control(self):
+        collector = CommentBrowserCollector("Facebook")
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.execute_script.side_effect = [True, False]
+        collector.driver = driver
+
+        with patch("src.comment_browser.time.sleep"):
+            collector._prepare_facebook_comments()
+
+        opener_script = driver.execute_script.call_args_list[0].args[0]
+        self.assertIn("komentari", opener_script.casefold())
+        self.assertIn("aria-label", opener_script)
+
     def test_threads_loader_keeps_rows_collected_before_dom_virtualization(self):
         collector = CommentBrowserCollector("Threads")
         collector.END_STABLE_ROUNDS = 2

@@ -9,7 +9,8 @@ INSTAGRAM_DATE_HTML = """<html><head><meta property="og:description" content="69
 INSTAGRAM_PROFILE_POST_HTML = """<html><head><meta property="og:description" content="10 likes, 2 comments - profilcontoh on August 25, 2026: &quot;Caption publik&quot;"><meta name="author" content="profilcontoh"></head></html>"""
 INSTAGRAM_PROFILE_HTML = """<html><head><meta property="og:description" content="136K Followers, 1,558 Following, 1,349 Posts - Profil Contoh (@profilcontoh)"></head></html>"""
 INSTAGRAM_DECIMAL_PROFILE_HTML = """<html><head><meta property="og:description" content="24.4K Followers, 78 Following, 355 Posts - Vonix Media (@vonixmedia.id)"></head></html>"""
-INSTAGRAM_ROUNDED_META_PROFILE_HTML = """<html><head><meta property="og:description" content="2M Followers, 429 Following, 64K Posts - Liputan6.com (@liputan6)"></head><body><span>2.4M</span> followers<script>{"follower_count":2441350}</script></body></html>"""
+INSTAGRAM_ROUNDED_META_PROFILE_HTML = """<html><head><meta property="og:description" content="2M Followers, 429 Following, 64K Posts - Liputan6.com (@liputan6)"></head><body><header><a href="/liputan6/">liputan6</a><span>2.4M followers</span></header><script>{"follower_count":2441350}</script></body></html>"""
+INSTAGRAM_UNRELATED_FOLLOWER_HTML = """<html><head><meta property="og:description" content="24.4K Followers, 78 Following, 355 Posts - Target Account (@target.account)"></head><body><aside><span>9,789 followers</span></aside><script>{"username":"recommended_account","follower_count":9789}</script></body></html>"""
 INSTAGRAM_REEL_POST_HTML = """<html><head><meta property="og:url" content="https://www.instagram.com/lambe_ojol/p/DcS9N_5TZkQ/"><meta property="og:description" content="11 likes, 0 comments - lambe_ojol on August 12, 2026: &quot;Caption Reel&quot;"><meta name="author" content="lambe_ojol"></head></html>"""
 INSTAGRAM_REELS_GRID_HTML = """<html><script>{"node":{"play_count":17235,"code":"Dccw99-zaZF"}},{"node":{"play_count":412,"code":"DcS9N_5TZkQ"}},{"node":{"play_count":374,"code":"DcQpZWsz9-G"}}</script></html>"""
 TIKTOK_STATS_HTML = """<html><head><meta property="og:description" content="Caption TikTok"></head><script>{"author":{"uniqueId":"akun"},"authorStats":{"followerCount":1250},"stats":{"playCount":6400},"createTime":1788048000}</script></html>"""
@@ -17,6 +18,13 @@ THREADS_POST_HTML = """<html><head><meta property="og:description" content="Capt
 THREADS_PROFILE_HTML = """<html><head><meta property="og:description" content="88.7K Followers • 68 Threads. See the latest conversations with @jkt.feed."></head><script>{"follower_count":88725}</script></html>"""
 THREADS_COMMENT_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script>{"text_post_app_info":{"direct_reply_count":44},"code":"PostingLain"},{"text_post_app_info":{"direct_reply_count":8},"code":"DcgoGvoAQxG"}</script></html>"""
 THREADS_TWO_COMMENTS_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script>{"view_counts":225,"text_post_app_info":{"direct_reply_count":2},"code":"DciTeqClGKc"}</script></html>"""
+THREADS_DISTANT_COMMENT_COUNT_HTML = (
+    '<html><head><meta property="og:description" content="Caption Threads"></head><script>'
+    '{"post":{"code":"Dc_V5QwD7Vu","padding":"'
+    + ("x" * 40_100)
+    + '","text_post_app_info":{"direct_reply_count":2}}}'
+    '</script></html>'
+)
 THREADS_FRESH_VIEW_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><body><header>172 views</header><script>{"code":"PostingLain","view_counts":9999},{"code":"Dc2d5IKmiGU","view_counts":170},{"code":"Dc2d5IKmiGU","view_count":172}</script></body></html>"""
 THREADS_SHARE_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script type="application/json">{"items":[{"post":{"code":"PostingLain","text_post_app_info":{"reshare_count":99}}},{"post":{"code":"TargetShare","text_post_app_info":{"direct_reply_count":0,"reshare_count":2}}}]}</script></html>"""
 THREADS_ZERO_SHARE_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script type="application/json">{"post":{"code":"TargetZeroShare","text_post_app_info":{"reshare_count":null}}}</script></html>"""
@@ -162,6 +170,17 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.followers.value, 2_400_000)
 
     @patch("src.connectors.base.fetch_public_html", side_effect=[
+        ("""<html><head><meta name="author" content="target.account"><meta property="og:description" content="Caption"></head></html>""", "https://www.instagram.com/p/TargetPost/"),
+        (INSTAGRAM_UNRELATED_FOLLOWER_HTML, "https://www.instagram.com/target.account/"),
+        ("<html></html>", "https://www.instagram.com/target.account/reels/"),
+    ])
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/TargetPost/")
+    def test_instagram_ignores_followers_from_a_recommended_account(self, _validate, _fetch):
+        url = "https://www.instagram.com/p/TargetPost/"
+        result = get_connector(url).enrich(url)
+        self.assertEqual(result.followers.value, 24_400)
+
+    @patch("src.connectors.base.fetch_public_html", side_effect=[
         (INSTAGRAM_REEL_POST_HTML, "https://www.instagram.com/p/DcS9N_5TZkQ/"),
         (INSTAGRAM_PROFILE_HTML, "https://www.instagram.com/lambe_ojol/"),
         (INSTAGRAM_REELS_GRID_HTML, "https://www.instagram.com/lambe_ojol/reels/"),
@@ -209,6 +228,13 @@ class ConnectorTests(unittest.TestCase):
         result = get_connector(url).enrich(url)
         self.assertEqual(result.comments.value, 2)
         self.assertEqual(result.views.value, 225)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(THREADS_DISTANT_COMMENT_COUNT_HTML, "https://www.threads.com/@jkt.feed/post/Dc_V5QwD7Vu"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@jkt.feed/post/Dc_V5QwD7Vu")
+    def test_threads_reads_comment_count_from_target_object_when_fields_are_far_apart(self, _validate, _fetch):
+        url = "https://www.threads.com/@jkt.feed/post/Dc_V5QwD7Vu"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.comments.value, 2)
 
     @patch("src.connectors.base.fetch_public_html", return_value=(THREADS_FRESH_VIEW_HTML, "https://www.threads.com/@soloinfo/post/Dc2d5IKmiGU"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@soloinfo/post/Dc2d5IKmiGU")
@@ -428,6 +454,33 @@ class ConnectorTests(unittest.TestCase):
         url = "https://www.facebook.com/share/v/1CwhpsZEDD/"
         result = get_connector(url).enrich(url)
         self.assertEqual(result.likes.value, 1200)
+
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/share/r/1eNm3XX76L/")
+    def test_facebook_share_reel_keeps_caption_and_target_engagement_after_redirect(self, _validate):
+        caption = (
+            "Pejalan kaki merasa kesal dengan pemotor ojek online yang naik melintasi "
+            "trotoar demi menghindari kemacetan."
+        )
+        html = (
+            '<meta property="og:url" content="https://www.facebook.com/oby.dmeqs/videos/judul/1086182027460560/">'
+            f'<meta property="og:description" content="{caption}">'
+            f'<meta property="og:image:alt" content="38 tanggapan · 22 kali dibagikan | {caption} | Obay Dmeqs">'
+            '<script>{"feedback":{"subscription_target_id":"1086182027460560",'
+            '"reaction_count":{"count":38},"total_comment_count":52,'
+            '"share_count":{"count":22}}}</script>'
+        )
+        final_url = (
+            "https://www.facebook.com/reel/1086182027460560"
+            "?share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2Fr%2F1eNm3XX76L%2F"
+        )
+        with patch("src.connectors.base.fetch_public_html", return_value=(html, final_url)):
+            result = get_connector("https://www.facebook.com/share/r/1eNm3XX76L/").enrich(
+                "https://www.facebook.com/share/r/1eNm3XX76L/"
+            )
+        self.assertEqual(result.caption.value, caption)
+        self.assertEqual(result.likes.value, 38)
+        self.assertEqual(result.comments.value, 52)
+        self.assertEqual(result.shares.value, 22)
 
     def test_facebook_reads_post_identifier_from_permalink_query(self):
         url = "https://www.facebook.com/permalink.php?story_fbid=pfbidABC&id=123"

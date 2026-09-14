@@ -60,7 +60,7 @@ def current_comment_browser(platform: str) -> CommentBrowserCollector:
     """Upgrade a cached browser object after a Streamlit hot reload."""
     browser = comment_browser(platform)
     if (
-        getattr(browser, "RUNTIME_VERSION", 0) >= 4
+        getattr(browser, "RUNTIME_VERSION", 0) >= 5
         and "max_comments" in inspect.signature(browser.collect).parameters
     ):
         return browser

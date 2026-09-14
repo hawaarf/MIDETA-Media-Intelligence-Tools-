@@ -27,7 +27,7 @@ class CommentBrowserLoginRequired(CommentBrowserError):
 
 
 class CommentBrowserCollector:
-    RUNTIME_VERSION = 4
+    RUNTIME_VERSION = 5
     THREADS_MAX_SCROLL_ROUNDS = 240
     FACEBOOK_MAX_SCROLL_ROUNDS = 240
     X_MAX_SCROLL_ROUNDS = 240
@@ -512,18 +512,22 @@ class CommentBrowserCollector:
                   ) || node.querySelector('a[href*="comment_id="]')
                 );
                 if (commentArticle) return false;
-                const controls = Array.from(document.querySelectorAll('button, [role="button"], a'));
+                const controls = Array.from(document.querySelectorAll(
+                  'button, [role="button"], a, [aria-label]'
+                ));
                 const commentButton = controls.find(node => {
-                  const text = `${node.getAttribute('aria-label') || ''} ${node.innerText || ''}`
-                    .replace(/\s+/g, ' ').trim();
+                  const label = (node.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+                  const text = `${label} ${node.innerText || ''}`.replace(/\s+/g, ' ').trim();
                   const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
                   return visible && (
                     /\b\d[\d.,]*\s*(?:comments?|komentar)\b/i.test(text) ||
-                    /^(?:comments?|komentar)$/i.test(text)
+                    /^(?:comments?|comment|komentar|komentari)$/i.test(label) ||
+                    /^(?:comments?|comment|komentar|komentari)\b/i.test(text)
                   ) && !/(most relevant|paling relevan|top comments|komentar teratas)/i.test(text);
                 });
                 if (!commentButton) return false;
-                commentButton.click();
+                const clickable = commentButton.closest('button, [role="button"], a') || commentButton;
+                clickable.click();
                 return true;
                 """
             )

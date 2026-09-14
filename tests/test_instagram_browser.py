@@ -72,8 +72,14 @@ class InstagramBrowserTests(unittest.TestCase):
     def test_reads_exact_followers_from_authenticated_profile_info(self):
         source = '''{"data":{"user":{"username":"idx_channel","follower_count":1123456,"edge_followed_by":{"count":999}}}}'''
         self.assertEqual(
-            InstagramBrowserCollector._profile_info_followers(source),
+            InstagramBrowserCollector._profile_info_followers(source, "idx_channel"),
             1_123_456,
+        )
+
+    def test_authenticated_profile_followers_reject_a_different_username(self):
+        source = '''{"data":{"user":{"username":"recommended_account","follower_count":9789}}}'''
+        self.assertIsNone(
+            InstagramBrowserCollector._profile_info_followers(source, "target_account")
         )
 
     def test_reads_followers_from_matching_profile_page_payload(self):
@@ -156,7 +162,7 @@ class InstagramBrowserTests(unittest.TestCase):
             find_views=False,
         )
 
-    def test_browser_result_keeps_original_url_and_does_not_invent_photo_views(self):
+    def test_browser_result_keeps_original_url_and_uses_zero_for_missing_views(self):
         url = "https://www.instagram.com/p/Db9aVzLkx0i/"
         result = build_instagram_browser_result(
             url,
@@ -174,7 +180,8 @@ class InstagramBrowserTests(unittest.TestCase):
         self.assertEqual(result.likes.value, 958)
         self.assertEqual(result.comments.value, 21)
         self.assertEqual(result.reposts.value, 12)
-        self.assertIsNone(result.views.value)
+        self.assertEqual(result.views.value, 0)
+        self.assertEqual(result.views.status, "Available")
 
     def test_fast_mode_does_not_open_profile_or_return_profile_metrics(self):
         collector = InstagramBrowserCollector()
@@ -218,7 +225,8 @@ class InstagramBrowserTests(unittest.TestCase):
         )
 
         self.assertIsNone(updated.followers.value)
-        self.assertIsNone(updated.views.value)
+        self.assertEqual(updated.views.value, 0)
+        self.assertEqual(updated.views.status, "Available")
         self.assertEqual(updated.likes.value, 9)
         self.assertEqual(updated.comments.value, 2)
         self.assertEqual(updated.shares.value, 1)

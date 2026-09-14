@@ -67,6 +67,8 @@ def apply_instagram_browser_metrics(
         result.followers = DataField(value=metrics.followers, status=FieldStatus.AVAILABLE)
     if metrics.views is not None:
         result.views = DataField(value=metrics.views, status=FieldStatus.AVAILABLE)
+    elif result.views.value is None:
+        result.views = DataField(value=0, status=FieldStatus.AVAILABLE)
     if metrics.likes is not None:
         result.likes = DataField(value=metrics.likes, status=FieldStatus.AVAILABLE)
     if metrics.comments is not None:
@@ -80,7 +82,7 @@ def apply_instagram_browser_metrics(
         if mode == "fast"
         else (
             "Instagram diperiksa dengan Advanced enrichment melalui posting dan profil di browser MIDETA yang sudah login; "
-            "Views hanya diisi ketika tersedia untuk video/Reels."
+            "Views ditampilkan 0 ketika angkanya tidak tersedia."
         )
     )
     result.note = f"{result.note} {browser_note}".strip() if result.note else browser_note
@@ -399,7 +401,11 @@ class InstagramBrowserCollector:
         return None
 
     @classmethod
-    def _profile_info_followers(cls, source: str) -> int | None:
+    def _profile_info_followers(
+        cls,
+        source: str,
+        username: str | None = None,
+    ) -> int | None:
         try:
             payload = json.loads(source)
         except (json.JSONDecodeError, TypeError):
@@ -408,12 +414,16 @@ class InstagramBrowserCollector:
         user = data.get("user") if isinstance(data, dict) else None
         if not isinstance(user, dict):
             return None
+        if username:
+            response_username = cls._username(user.get("username"))
+            if not response_username or response_username.casefold() != username.casefold():
+                return None
         return cls._mapping_count(user, "follower_count", "followers_count", "edge_followed_by")
 
     @classmethod
     def _profile_page_followers(cls, source: str, username: str) -> int | None:
         """Read followers only from the requested profile's page payload."""
-        exact = cls._profile_info_followers(source)
+        exact = cls._profile_info_followers(source, username)
         if exact is not None:
             return exact
         wanted = username.casefold()
@@ -440,7 +450,11 @@ class InstagramBrowserCollector:
             BaseConnector._meta(soup, 'meta[name="description"]'),
         )
         for description in descriptions:
-            if not description or wanted not in description.casefold():
+            if not description or not re.search(
+                rf"(?<![A-Za-z0-9._])@?{re.escape(username)}(?![A-Za-z0-9._])",
+                description,
+                re.I,
+            ):
                 continue
             followers = cls._labeled_count(description, "follower", "followers")
             if followers is not None:
@@ -625,7 +639,7 @@ class InstagramBrowserCollector:
             return None
         if not isinstance(response, dict) or int(response.get("status") or 0) != 200:
             return None
-        return self._profile_info_followers(str(response.get("text") or ""))
+        return self._profile_info_followers(str(response.get("text") or ""), username)
 
     def _post_metrics(self, url: str, shortcode: str) -> InstagramBrowserMetrics:
         driver = self.start()
@@ -701,33 +715,17 @@ class InstagramBrowserCollector:
         profile_path = "reels/" if find_views else ""
         driver.get(f"https://www.instagram.com/{username}/{profile_path}")
         self._wait_for_page()
-        body = self._body_text()
         profile_source = driver.page_source
         exact_followers = self._authenticated_profile_followers(username)
         followers = exact_followers
         if followers is None:
             followers = self._profile_page_followers(profile_source, username)
         if followers is None:
-            followers = self._labeled_count(body, "follower", "followers")
-        if followers is None:
             public_source = InstagramConnector()._public_profile_html(
                 f"https://www.instagram.com/{username}/"
             )
             if public_source:
                 followers = self._profile_page_followers(public_source, username)
-                if followers is None:
-                    public_soup = BeautifulSoup(public_source, "lxml")
-                    public_text = " ".join(
-                        filter(
-                            None,
-                            (
-                                public_soup.get_text(" ", strip=True),
-                                BaseConnector._meta(public_soup, 'meta[property="og:description"]'),
-                                BaseConnector._meta(public_soup, 'meta[name="description"]'),
-                            ),
-                        )
-                    )
-                    followers = self._labeled_count(public_text, "follower", "followers")
         if followers is None:
             followers = cached_followers
         if followers is not None:

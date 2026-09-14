@@ -141,6 +141,63 @@ class ThreadsConnector(BaseConnector):
         return counts
 
     @classmethod
+    def _target_reply_counts(cls, html: str, shortcode: str) -> list[int]:
+        """Return comment counts from the exact requested Threads post."""
+        keys = {
+            "direct_reply_count",
+            "reply_count",
+            "replies_count",
+            "comment_count",
+            "comments_count",
+            "number_of_replies",
+        }
+        counts: list[int] = []
+        soup = BeautifulSoup(html, "lxml")
+        for payload in cls._embedded_json(soup):
+            for node in cls._walk(payload):
+                post = node.get("post") if isinstance(node.get("post"), dict) else node
+                code = post.get("code") or post.get("shortcode")
+                if str(code or "").casefold() != shortcode.casefold():
+                    continue
+                sources = [post]
+                app_info = post.get("text_post_app_info")
+                if isinstance(app_info, dict):
+                    sources.append(app_info)
+                for source in sources:
+                    for key in keys:
+                        if key not in source:
+                            continue
+                        count = cls._metric_number(source[key])
+                        if count is not None:
+                            counts.append(count)
+
+        if counts:
+            return counts
+
+        code_matches = list(
+            re.finditer(r'"(?:code|shortcode)"\s*:\s*"([^"\\]+)"', html, re.I)
+        )
+        metric_pattern = (
+            r'"(?:direct_reply_count|repl(?:y|ies)_count|comments?_count|number_of_replies)"'
+            r'\s*:\s*"?(\d+)"?'
+        )
+        for metric in re.finditer(metric_pattern, html, re.I):
+            if not code_matches:
+                break
+            closest = min(
+                code_matches,
+                key=lambda code: (abs(code.start() - metric.start()), code.start() > metric.start()),
+            )
+            if closest.group(1).casefold() != shortcode.casefold():
+                continue
+            if abs(closest.start() - metric.start()) > 40_000:
+                continue
+            count = cls._metric_number(metric.group(1))
+            if count is not None:
+                counts.append(count)
+        return counts
+
+    @classmethod
     def _visible_view_count(cls, html: str) -> int | None:
         soup = BeautifulSoup(html, "lxml")
         for node in soup.select("script, style, noscript"):
@@ -163,21 +220,9 @@ class ThreadsConnector(BaseConnector):
             if view_counts:
                 metrics["views"] = max(view_counts)
 
-            code_matches = list(re.finditer(r'"code"\s*:\s*"([^"]+)"', html, re.I))
-            reply_counts = [
-                (reply.start(), int(reply.group(1)))
-                for reply in re.finditer(r'"direct_reply_count"\s*:\s*"?(\d+)"?', html, re.I)
-            ]
-            candidates = []
-            for position, count in reply_counts:
-                if not code_matches:
-                    break
-                closest = min(code_matches, key=lambda code: (abs(code.start() - position), code.start() > position))
-                distance = abs(closest.start() - position)
-                if closest.group(1).casefold() == shortcode.casefold() and distance <= 40_000:
-                    candidates.append((distance, count))
-            if candidates:
-                metrics["comments"] = min(candidates, key=lambda item: item[0])[1]
+            reply_counts = self._target_reply_counts(html, shortcode)
+            if reply_counts:
+                metrics["comments"] = max(reply_counts)
 
             share_counts = self._target_share_counts(html, shortcode)
             if share_counts:

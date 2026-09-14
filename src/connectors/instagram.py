@@ -163,20 +163,76 @@ class InstagramConnector(BaseConnector):
         if not profile_html:
             return None
         profile_soup = BeautifulSoup(profile_html, "lxml")
-        visible_text = profile_soup.get_text(" ", strip=True)
-        visible_match = re.search(
+        wanted = username.casefold()
+
+        for payload in self._embedded_json(profile_soup):
+            for node in self._walk(payload):
+                candidates = [node]
+                if isinstance(node.get("user"), dict):
+                    candidates.append(node["user"])
+                for candidate in candidates:
+                    candidate_username = str(candidate.get("username") or "").strip().lstrip("@")
+                    if candidate_username.casefold() != wanted:
+                        continue
+                    for key in ("follower_count", "followers_count", "edge_followed_by"):
+                        value = candidate.get(key)
+                        if isinstance(value, dict):
+                            value = value.get("count", value.get("total_count"))
+                        if isinstance(value, bool) or value is None:
+                            continue
+                        count = self._human_count(str(value))
+                        if count is not None:
+                            return count
+
+        description = self._meta(
+            profile_soup,
+            'meta[property="og:description"]',
+            'meta[name="description"]',
+        )
+        if not description or not re.search(
+            rf"(?<![A-Za-z0-9._])@?{re.escape(username)}(?![A-Za-z0-9._])",
+            description,
+            re.I,
+        ):
+            return None
+        meta_match = re.search(
             r"(\d[\d.,]*\s*(?:k|m|b)?)\s+followers\b",
-            visible_text,
+            description,
             re.I,
         )
-        if visible_match:
-            visible_count = self._human_count(visible_match.group(1))
-            if visible_count is not None:
-                return visible_count
-        exact_match = re.search(r'"follower_count"\s*:\s*"?(\d+)"?', profile_html, re.I)
-        if exact_match:
-            return int(exact_match.group(1))
-        return self._profile_count_by_label(profile_html, profile_soup, "followers?")
+        meta_count = self._human_count(meta_match.group(1)) if meta_match else None
+        if meta_count is None:
+            return None
+
+        label_pattern = re.compile(
+            r"(\d[\d.,]*\s*(?:k|m|b)?)\s+followers\b",
+            re.I,
+        )
+        username_pattern = re.compile(
+            rf"(?<![A-Za-z0-9._])@?{re.escape(username)}(?![A-Za-z0-9._])",
+            re.I,
+        )
+        for text_node in profile_soup.find_all(string=label_pattern):
+            match = label_pattern.search(str(text_node))
+            if not match:
+                continue
+            scope = text_node.parent
+            for _ in range(6):
+                if scope is None or scope.name in {"body", "html"}:
+                    break
+                scope_text = scope.get_text(" ", strip=True)
+                target_link = any(
+                    [part for part in urlparse(str(link.get("href") or "")).path.split("/") if part]
+                    == [username]
+                    for link in scope.select("a[href]")
+                )
+                if target_link or username_pattern.search(scope_text):
+                    visible_count = self._human_count(match.group(1))
+                    if visible_count is not None:
+                        return visible_count
+                    break
+                scope = scope.parent
+        return meta_count
 
     def _platform_views(self, html: str, soup, url: str, author: str | None) -> int | None:
         username = (author or "").strip().lstrip("@")
