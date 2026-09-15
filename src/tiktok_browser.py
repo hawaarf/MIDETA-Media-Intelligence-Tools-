@@ -312,7 +312,14 @@ class TikTokBrowserCollector:
         dom_metrics = self._post_dom_metrics()
         metrics = self._merge(source_metrics, dom_metrics)
         if not metrics.caption:
-            metrics.caption = TikTokConnector()._platform_caption(driver.page_source, url, None)
+            source = driver.page_source
+            soup = BeautifulSoup(source, "lxml")
+            description = BaseConnector._meta(
+                soup,
+                'meta[property="og:description"]',
+                'meta[name="description"]',
+            )
+            metrics.caption = TikTokConnector()._platform_caption(source, url, description)
         return metrics
 
     def _profile_video_views_from_dom(self, video_id: str) -> int | None:

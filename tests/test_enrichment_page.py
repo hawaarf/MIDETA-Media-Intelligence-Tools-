@@ -67,6 +67,20 @@ class EnrichmentPageTests(unittest.TestCase):
         self.assertEqual([widget.label for widget in app.text_area], ["Semua URL media sosial"])
         self.assertIn("Mulai Enrichment All", [widget.label for widget in app.button])
 
+    def test_tiktok_enrichment_shows_login_controls(self):
+        with (
+            patch("src.database.get_social_job", return_value=None),
+            patch("src.database.get_latest_social_job", return_value=None),
+        ):
+            app = self._app()
+            app.get("button_group")[1].set_value("TikTok").run(timeout=10)
+
+        self.assertFalse(app.exception)
+        button_labels = [widget.label for widget in app.button]
+        self.assertIn("Buka Chrome TikTok", button_labels)
+        self.assertIn("Periksa Login", button_labels)
+        self.assertIn("Mulai Advanced Enrichment", button_labels)
+
 
 if __name__ == "__main__":
     unittest.main()
