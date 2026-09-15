@@ -16,6 +16,7 @@ from src.database import add_history, create_social_job, get_latest_social_job, 
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, InstagramLoginRequired, build_instagram_browser_result
 from src.models import FieldStatus, SocialResult
+from src.tiktok_browser import TikTokBrowserCollector, TikTokBrowserError, TikTokLoginRequired, build_tiktok_browser_result
 from src.ui import apply_theme, page_intro, render_footer, render_github_profile, render_platform_guide, status_label
 
 
@@ -53,6 +54,11 @@ PLACEHOLDERS = {
 @st.cache_resource(show_spinner=False)
 def instagram_browser() -> InstagramBrowserCollector:
     return InstagramBrowserCollector()
+
+
+@st.cache_resource(show_spinner=False)
+def tiktok_browser() -> TikTokBrowserCollector:
+    return TikTokBrowserCollector()
 
 
 def job_chunk_size(job: dict[str, Any]) -> int:
@@ -122,6 +128,36 @@ def render_instagram_controls(slot: str) -> str:
     return enrichment_mode
 
 
+def render_tiktok_controls(slot: str) -> str:
+    st.caption(
+        "TikTok enrichment memakai Chrome khusus MIDETA yang sudah login. Caption dan engagement dibaca dari video target, "
+        "sedangkan Followers dibaca dari profil author yang sama."
+    )
+    st.caption(
+        f"Karena setiap URL membuka video dan profil, proses berjalan teliti dalam kelompok {ENRICHMENT_BROWSER_CHUNK_SIZE} URL per tahap. "
+        "Password tetap diketik langsung di TikTok dan tidak dibaca MIDETA."
+    )
+    login_col, check_col, close_col = st.columns(3)
+    if login_col.button("Buka Chrome TikTok", key=f"open_tiktok_{slot}", width="stretch"):
+        try:
+            tiktok_browser().open_login()
+            st.info("Selesaikan login TikTok di jendela Chrome yang terbuka, lalu tekan Periksa Login.")
+        except TikTokBrowserError as exc:
+            st.error(str(exc))
+    if check_col.button("Periksa Login", key=f"check_tiktok_{slot}", width="stretch"):
+        try:
+            if tiktok_browser().is_logged_in():
+                st.success("TikTok sudah login dan siap digunakan untuk enrichment.")
+            else:
+                st.warning("Login TikTok belum terdeteksi. Selesaikan login di Chrome MIDETA.")
+        except TikTokBrowserError as exc:
+            st.error(str(exc))
+    if close_col.button("Tutup Chrome TikTok", key=f"close_tiktok_{slot}", width="stretch"):
+        tiktok_browser().close()
+        st.info("Chrome TikTok MIDETA sudah ditutup.")
+    return "advanced"
+
+
 def render_platform_setup(platform: str, slot: str, compact: bool = False) -> str:
     if compact:
         st.subheader(PLATFORM_ICONS[platform])
@@ -133,6 +169,8 @@ def render_platform_setup(platform: str, slot: str, compact: bool = False) -> st
         render_platform_guide("enrichment", platform)
     if platform == "Instagram":
         return render_instagram_controls(slot)
+    if platform == "TikTok":
+        return render_tiktok_controls(slot)
     return "standard"
 
 
@@ -162,11 +200,18 @@ def group_detected_urls(urls: list[str]) -> tuple[dict[str, list[str]], list[dic
 
 def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | None:
     errors = [error for request in requests if (error := validate_job_request(request))]
-    if not errors and any(request["platform"] == "Instagram" and not request["mock_mode"] for request in requests):
+    requests_are_valid = not errors
+    if requests_are_valid and any(request["platform"] == "Instagram" and not request["mock_mode"] for request in requests):
         try:
             if not instagram_browser().is_logged_in():
                 errors.append("Instagram belum login. Buka Chrome Instagram dan selesaikan login sebelum memulai batch.")
         except InstagramBrowserError as exc:
+            errors.append(str(exc))
+    if requests_are_valid and any(request["platform"] == "TikTok" and not request["mock_mode"] for request in requests):
+        try:
+            if not tiktok_browser().is_logged_in():
+                errors.append("TikTok belum login. Buka Chrome TikTok dan selesaikan login sebelum memulai batch.")
+        except TikTokBrowserError as exc:
             errors.append(str(exc))
     if errors:
         for error in errors:
@@ -180,7 +225,7 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | No
             request["urls"],
             SOCIAL_BATCH_VERSION,
             mock_mode=request["mock_mode"],
-            browser_mode=platform == "Instagram",
+            browser_mode=platform in {"Instagram", "TikTok"},
             enrichment_mode=request["enrichment_mode"],
         )
         st.session_state[f"social_job_{platform}"] = job_id
@@ -412,7 +457,7 @@ def render_job_issues(job: dict[str, Any] | None) -> None:
 
 def render_job_panel(platform: str, slot: str) -> tuple[dict[str, Any] | None, Any]:
     job = load_current_job(platform)
-    if job and job["platform"] == "Instagram":
+    if job and job["platform"] in {"Instagram", "TikTok"}:
         st.caption(f"Antrean aktif menggunakan **{job['enrichment_mode'].title()} enrichment**.")
     if job:
         render_job_controls(job, slot)
@@ -431,8 +476,8 @@ def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, An
         platform = job["platform"]
         with st.container(border=True):
             st.markdown(f"**{PLATFORM_ICONS[platform]}** · {job['processed']:,}/{job['total']:,} URL")
-            if platform == "Instagram":
-                st.caption(f"Mode Instagram: {job['enrichment_mode'].title()} enrichment.")
+            if platform in {"Instagram", "TikTok"}:
+                st.caption(f"Mode {platform}: {job['enrichment_mode'].title()} enrichment dengan login.")
             render_job_controls(job, f"all_{platform.lower()}")
             activity = st.empty()
             render_job_issues(job)
@@ -440,7 +485,11 @@ def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, An
     return panels
 
 
-def collect_one_item(job: dict[str, Any], item: dict[str, Any], active_browser: InstagramBrowserCollector | None) -> dict[str, Any]:
+def collect_one_item(
+    job: dict[str, Any],
+    item: dict[str, Any],
+    active_browser: InstagramBrowserCollector | TikTokBrowserCollector | None,
+) -> dict[str, Any]:
     url = item["url"]
     position = item["position"]
     try:
@@ -448,7 +497,7 @@ def collect_one_item(job: dict[str, Any], item: dict[str, Any], active_browser: 
         if job["mock_mode"]:
             result = connector.mock_enrichment(url)
         browser_issue = None
-        if active_browser is not None and not job["mock_mode"]:
+        if active_browser is not None and not job["mock_mode"] and job["platform"] == "Instagram":
             try:
                 metrics = active_browser.collect(
                     url,
@@ -471,6 +520,32 @@ def collect_one_item(job: dict[str, Any], item: dict[str, Any], active_browser: 
             except InstagramLoginRequired as exc:
                 return {"kind": "login_required", "reason": str(exc), "position": position, "url": url}
             except InstagramBrowserError as exc:
+                return {
+                    "kind": "failed",
+                    "position": position,
+                    "url": url,
+                    "error": {"URL": url, "Platform": job["platform"], "Alasan": str(exc)},
+                }
+        elif active_browser is not None and not job["mock_mode"] and job["platform"] == "TikTok":
+            try:
+                metrics = active_browser.collect(url, None)
+                missing = []
+                if not metrics.caption:
+                    missing.append("Caption")
+                if metrics.views is None:
+                    missing.append("Views")
+                if metrics.followers is None:
+                    missing.append("Followers")
+                if missing:
+                    browser_issue = {
+                        "URL": url,
+                        "Platform": "TikTok",
+                        "Alasan": f"{', '.join(missing)} belum berhasil dibaca dari video atau profil target. Coba jalankan ulang setelah halaman TikTok normal.",
+                    }
+                result = build_tiktok_browser_result(url, metrics)
+            except TikTokLoginRequired as exc:
+                return {"kind": "login_required", "reason": str(exc), "position": position, "url": url}
+            except TikTokBrowserError as exc:
                 return {
                     "kind": "failed",
                     "position": position,
@@ -535,7 +610,7 @@ def persist_outcome(job: dict[str, Any], outcome: dict[str, Any], activity: Any)
         return False
     if outcome["kind"] == "login_required":
         set_social_job_status(job["id"], "paused")
-        activity.error("Sesi Instagram berakhir. Login kembali, lalu lanjutkan proses.")
+        activity.error(f"Sesi {job['platform']} berakhir. Login kembali, lalu lanjutkan proses.")
         return False
     if outcome["kind"] == "failed":
         record_social_job_item(
@@ -571,15 +646,15 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
             continue
         seen_jobs.add(job["id"])
         active_browser = None
-        if job["platform"] == "Instagram" and not job["mock_mode"]:
+        if job["platform"] in {"Instagram", "TikTok"} and not job["mock_mode"]:
             try:
-                active_browser = instagram_browser()
+                active_browser = instagram_browser() if job["platform"] == "Instagram" else tiktok_browser()
                 if not active_browser.is_logged_in():
                     set_social_job_status(job["id"], "paused")
-                    activity.error("Sesi Instagram berakhir. Login kembali, lalu lanjutkan proses.")
+                    activity.error(f"Sesi {job['platform']} berakhir. Login kembali, lalu lanjutkan proses.")
                     state_changed = True
                     continue
-            except InstagramBrowserError as exc:
+            except (InstagramBrowserError, TikTokBrowserError) as exc:
                 set_social_job_status(job["id"], "paused")
                 activity.error(str(exc))
                 state_changed = True
@@ -644,6 +719,8 @@ if layout_mode == "Enrichment All":
     )
     with st.expander("Pengaturan Instagram jika daftar berisi URL Instagram"):
         instagram_mode = render_instagram_controls("all")
+    with st.expander("Login TikTok jika daftar berisi URL TikTok"):
+        tiktok_mode = render_tiktok_controls("all")
 
     with st.form("enrichment_form_all"):
         all_url_text = st.text_area(
@@ -679,7 +756,13 @@ if layout_mode == "Enrichment All":
                         "platform": platform,
                         "url_text": "\n".join(grouped_urls[platform]),
                         "mock_mode": all_mock_mode,
-                        "enrichment_mode": instagram_mode if platform == "Instagram" else "standard",
+                        "enrichment_mode": (
+                            instagram_mode
+                            if platform == "Instagram"
+                            else tiktok_mode
+                            if platform == "TikTok"
+                            else "standard"
+                        ),
                     }
                     for platform in PLATFORM_OPTIONS
                     if platform in grouped_urls

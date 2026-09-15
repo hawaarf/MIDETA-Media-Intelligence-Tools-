@@ -20,14 +20,15 @@ ENRICHMENT_GUIDES = {
         "note": "Video privat, dibatasi usia, atau dibatasi wilayah dapat menghasilkan data yang tidak lengkap.",
     },
     "TikTok": {
-        "summary": "Untuk video publik dengan format tiktok.com/@akun/video/…. Tidak perlu login.",
+        "summary": "Untuk video dengan format tiktok.com/@akun/video/…. Enrichment memakai sesi TikTok yang sudah login.",
         "steps": [
             ("Salin URL video", "Gunakan tautan video, bukan hanya halaman profil akun."),
+            ("Siapkan sesi", "Buka Chrome TikTok dari MIDETA, login, lalu tekan Periksa Login."),
             ("Tempel tautan", "Masukkan satu atau beberapa URL TikTok, satu URL per baris."),
-            ("Jalankan proses", "MIDETA membaca author, followers, views, caption, tanggal, dan engagement publik."),
+            ("Jalankan proses", "MIDETA membuka video target untuk caption, views, dan engagement, lalu profil author untuk followers."),
             ("Review & ekspor", "Periksa nilai 0 atau status tidak tersedia sebelum mengunduh hasil."),
         ],
-        "note": "Akun privat atau halaman yang meminta verifikasi/login tidak dapat dibaca otomatis.",
+        "note": "Password diketik langsung di TikTok dan tidak dibaca MIDETA. Akun privat, verifikasi, atau pembatasan sementara tetap dapat membuat data tidak lengkap.",
     },
     "Facebook": {
         "summary": "Mendukung post, Reel, video, share link, dan permalink grup yang dapat diakses publik.",

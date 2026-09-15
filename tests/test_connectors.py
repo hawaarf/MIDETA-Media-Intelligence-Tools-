@@ -14,6 +14,7 @@ INSTAGRAM_UNRELATED_FOLLOWER_HTML = """<html><head><meta property="og:descriptio
 INSTAGRAM_REEL_POST_HTML = """<html><head><meta property="og:url" content="https://www.instagram.com/lambe_ojol/p/DcS9N_5TZkQ/"><meta property="og:description" content="11 likes, 0 comments - lambe_ojol on August 12, 2026: &quot;Caption Reel&quot;"><meta name="author" content="lambe_ojol"></head></html>"""
 INSTAGRAM_REELS_GRID_HTML = """<html><script>{"node":{"play_count":17235,"code":"Dccw99-zaZF"}},{"node":{"play_count":412,"code":"DcS9N_5TZkQ"}},{"node":{"play_count":374,"code":"DcQpZWsz9-G"}}</script></html>"""
 TIKTOK_STATS_HTML = """<html><head><meta property="og:description" content="Caption TikTok"></head><script>{"author":{"uniqueId":"akun"},"authorStats":{"followerCount":1250},"stats":{"playCount":6400},"createTime":1788048000}</script></html>"""
+TIKTOK_TARGET_CAPTION_HTML = r"""<html><head><title>(5) program apresiasi singkat | TikTok</title></head><body><script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">{"__DEFAULT_SCOPE__":{"webapp.video-detail":{"itemInfo":{"itemStruct":{"id":"7684605378314669319","desc":"program apresiasi mitra gojek yang memberangkatkan umroh mitranya, kini di tanah suci terlihat beberapa orang tetap setia memakai jaket hijau nya.\n\n#gojek #apresiasimitra #umroh #tanahsuci #mekkahmadinah\n\ncr. realitaojol_","stats":{"diggCount":17,"commentCount":1,"shareCount":1,"playCount":629}}}}},"recommendation":{"id":"999999","desc":"Caption rekomendasi yang salah"}}}</script></body></html>"""
 THREADS_POST_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><body><span>08/14/26</span><script>{"username":"jkt.feed","view_counts":4494,"text_post_app_info":{"direct_reply_count":0},"code":"DcBid9oEqtV"}</script></body></html>"""
 THREADS_PROFILE_HTML = """<html><head><meta property="og:description" content="88.7K Followers • 68 Threads. See the latest conversations with @jkt.feed."></head><script>{"follower_count":88725}</script></html>"""
 THREADS_COMMENT_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script>{"text_post_app_info":{"direct_reply_count":44},"code":"PostingLain"},{"text_post_app_info":{"direct_reply_count":8},"code":"DcgoGvoAQxG"}</script></html>"""
@@ -199,6 +200,23 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.followers.value, 1250)
         self.assertEqual(result.views.value, 6400)
         self.assertTrue(str(result.posted_at.value).startswith("2026"))
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(TIKTOK_TARGET_CAPTION_HTML, "https://www.tiktok.com/@ojol.spill/video/7684605378314669319"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.tiktok.com/@ojol.spill/video/7684605378314669319")
+    def test_tiktok_reads_full_caption_from_the_target_video(self, _validate, _fetch):
+        url = "https://www.tiktok.com/@ojol.spill/video/7684605378314669319"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertTrue(result.caption.value.startswith("program apresiasi mitra gojek"))
+        self.assertIn("#mekkahmadinah", result.caption.value)
+        self.assertIn("cr. realitaojol_", result.caption.value)
+        self.assertNotIn("Caption rekomendasi", result.caption.value)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=("<html><head><title>(5) Caption lengkap dari judul halaman | TikTok</title></head></html>", "https://www.tiktok.com/@akun/video/123"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.tiktok.com/@akun/video/123")
+    def test_tiktok_uses_the_page_title_when_description_is_missing(self, _validate, _fetch):
+        url = "https://www.tiktok.com/@akun/video/123"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.caption.value, "Caption lengkap dari judul halaman")
 
     @patch("src.connectors.base.fetch_public_html", side_effect=[
         (THREADS_POST_HTML, "https://www.threads.com/@jkt.feed/post/DcBid9oEqtV"),

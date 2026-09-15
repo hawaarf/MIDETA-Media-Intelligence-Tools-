@@ -6,7 +6,7 @@ import re
 from src.dates import parse_social_datetime
 from src.models import SocialResult
 
-SOCIAL_BATCH_VERSION = 33
+SOCIAL_BATCH_VERSION = 35
 COMMENT_BATCH_VERSION = 9
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
