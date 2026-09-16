@@ -77,7 +77,7 @@ def create_social_job(
     path: Path = DATABASE_PATH,
 ) -> int:
     """Create a durable enrichment queue and return its ID."""
-    if enrichment_mode not in {"standard", "fast", "advanced"}:
+    if enrichment_mode not in {"standard", "fast", "advanced", "free"}:
         raise ValueError("Mode enrichment tidak dikenal.")
     now = datetime.now().isoformat(timespec="seconds")
     with connect(path) as connection:

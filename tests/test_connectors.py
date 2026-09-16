@@ -31,6 +31,7 @@ THREADS_SHARE_HTML = """<html><head><meta property="og:description" content="Cap
 THREADS_ZERO_SHARE_HTML = """<html><head><meta property="og:description" content="Caption Threads"></head><script type="application/json">{"post":{"code":"TargetZeroShare","text_post_app_info":{"reshare_count":null}}}</script></html>"""
 THREADS_TAKEN_AT_HTML = """<html><script>{"code":"PostingLain","taken_at":1788245420},{"code":"DcxnOUwk51O","text_post_app_info":{"direct_reply_count":0},"taken_at":1788331158}</script></html>"""
 THREADS_TARGET_DATE_HTML = """<html><head><meta property="article:published_time" content="2026-08-01T00:00:00Z"></head><script>{"code":"PostingLain","taken_at":1787600000},{"code":"TargetDate","taken_at":1788805800}</script></html>"""
+THREADS_STRICT_TARGET_HTML = """<html><head><meta property="og:description" content="Caption rekomendasi yang salah"></head><script type="application/json">{"items":[{"post":{"pk":"other","code":"PostingLain","caption":{"text":"Posting rekomendasi"},"user":{"username":"akun.lain"},"taken_at":1787600000,"view_count":99999,"like_count":999,"text_post_app_info":{"direct_reply_count":88,"reshare_count":77,"repost_count":66}}},{"post":{"pk":"target","code":"TargetStrict","caption":{"text":"Caption target"},"user":{"username":"akun.target"},"taken_at":1788805800,"view_count":846,"like_count":5,"text_post_app_info":{"direct_reply_count":2,"reshare_count":1,"repost_count":0}}}]}</script><script type="application/ld+json">{"@type":"SocialMediaPosting","interactionStatistic":[{"interactionType":"LikeAction","userInteractionCount":777},{"interactionType":"ViewAction","userInteractionCount":88888}]}</script></html>"""
 THREADS_REPLIES_HTML = """<html><script type="application/json">{"thread_items":[{"post":{"pk":"root-1","code":"TargetThreads","caption":{"text":"Posting utama"},"user":{"username":"pemilik"},"taken_at":1788249600}},{"post":{"pk":"comment-1","code":"CommentThreads","caption":{"text":"Komentar langsung"},"user":{"username":"ayu"},"like_count":12,"taken_at":1788253200,"text_post_app_info":{"reply_to_post_id":"root-1","root_post_id":"root-1","direct_reply_count":1}}},{"post":{"pk":"reply-1","code":"ReplyThreads","caption":{"text":"Balasan komentar"},"user":{"username":"bima"},"like_count":3,"taken_at":1788256800,"text_post_app_info":{"reply_to_post_id":"comment-1","root_post_id":"root-1","direct_reply_count":0}}},{"post":{"pk":"other-1","code":"OtherThreads","caption":{"text":"Posting rekomendasi"},"user":{"username":"lain"},"like_count":999,"text_post_app_info":{"root_post_id":"other-root"}}}]}</script></html>"""
 X_REPLIES_HTML = """<html><script type="application/json">{"tweets":[{"rest_id":"100","legacy":{"full_text":"Posting utama","conversation_id_str":"100","favorite_count":9,"reply_count":2},"core":{"user_results":{"result":{"legacy":{"screen_name":"pemilik"}}}}},{"rest_id":"101","legacy":{"full_text":"Komentar langsung","conversation_id_str":"100","in_reply_to_status_id_str":"100","favorite_count":15,"reply_count":1,"created_at":"Thu Sep 03 03:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"ayu"}}}}},{"rest_id":"102","legacy":{"full_text":"Balasan komentar","conversation_id_str":"100","in_reply_to_status_id_str":"101","favorite_count":4,"reply_count":0,"created_at":"Thu Sep 03 04:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"bima"}}}}},{"rest_id":"999","legacy":{"full_text":"Tweet rekomendasi","conversation_id_str":"999","in_reply_to_status_id_str":"998","favorite_count":999},"core":{"user_results":{"result":{"legacy":{"screen_name":"lain"}}}}}]}</script></html>"""
 X_FLIGHT_HTML = """<html><head><meta property="article:author" content="https://x.com/jurnal_ekuitas"><meta property="og:description" content="Caption X"><meta property="article:published_time" content="2026-08-13T03:07:48.000Z"></head><script>rest_id:"999",counts:{__typename:"ApiCounts",bookmark_count:91,favorite_count:999,reply_count:88,retweet_count:77},views:{__typename:"ViewCountInfo",count:"9999"};rest_id:"2087737859063394648",core:{__typename:"UserCore",screen_name:"jurnal_ekuitas",name:"Stock Journal"},relationship_counts:{__typename:"UserRelationshipCounts",followers:2224,following:106},counts:{__typename:"ApiCounts",bookmark_count:64,favorite_count:629,reply_count:53,retweet_count:64,quote_count:15},views:{__typename:"ViewCountInfo",count:"142215"}</script></html>"""
@@ -289,13 +290,58 @@ class ConnectorTests(unittest.TestCase):
         result = get_connector(url).enrich(url, include_platform_profile=False)
         self.assertEqual(result.posted_at.value, "2026-09-08")
 
-    @patch("src.connectors.base.fetch_public_html", return_value=("<meta property=\"og:description\" content=\"Caption Threads\">", "https://www.threads.com/@tanpaangka/post/1"))
+    @patch("src.connectors.base.fetch_public_html", return_value=("<meta property=\"og:description\" content=\"Caption rekomendasi\"><script>{\"post\":{\"code\":\"PostingLain\",\"caption\":{\"text\":\"Bukan target\"},\"user\":{\"username\":\"akun.lain\"},\"like_count\":999}}</script>", "https://www.threads.com/@tanpaangka/post/1"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@tanpaangka/post/1")
-    def test_threads_defaults_missing_followers_and_views_to_zero(self, _validate, _fetch):
+    def test_threads_marks_every_field_unavailable_when_target_post_is_missing(self, _validate, _fetch):
         url = "https://www.threads.com/@tanpaangka/post/1"
         result = get_connector(url).enrich(url)
-        self.assertEqual(result.followers.value, 0)
-        self.assertEqual(result.views.value, 0)
+        fields = (
+            result.username,
+            result.caption,
+            result.posted_at,
+            result.followers,
+            result.likes,
+            result.comments,
+            result.shares,
+            result.views,
+            result.bookmarks,
+            result.reposts,
+        )
+        self.assertTrue(all(field.value is None for field in fields))
+        self.assertTrue(all(field.status == FieldStatus.NOT_PUBLIC for field in fields))
+        self.assertIn("tidak ditemukan", result.note)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(THREADS_STRICT_TARGET_HTML, "https://www.threads.com/@akun.target/post/TargetStrict"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@akun.target/post/TargetStrict")
+    def test_threads_uses_only_the_exact_target_post(self, _validate, _fetch):
+        url = "https://www.threads.com/@akun.target/post/TargetStrict"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.username.value, "akun.target")
+        self.assertEqual(result.caption.value, "Caption target")
+        self.assertEqual(result.posted_at.value, "2026-09-08")
+        self.assertEqual(result.views.value, 846)
+        self.assertEqual(result.likes.value, 5)
+        self.assertEqual(result.comments.value, 2)
+        self.assertEqual(result.shares.value, 1)
+        self.assertEqual(result.reposts.value, 0)
+
+    @patch(
+        "src.connectors.base.fetch_public_html",
+        return_value=(
+            THREADS_STRICT_TARGET_HTML.replace("TargetStrict", "SharedTarget"),
+            "https://www.threads.com/@akun.target/post/SharedTarget",
+        ),
+    )
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/share/RrTdJihUN/")
+    def test_threads_share_url_uses_its_redirected_post(self, _validate, _fetch):
+        url = "https://www.threads.com/share/RrTdJihUN/"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.url, "https://www.threads.com/@akun.target/post/SharedTarget")
+        self.assertEqual(result.username.value, "akun.target")
+        self.assertEqual(result.caption.value, "Caption target")
+        self.assertEqual(result.likes.value, 5)
+        self.assertEqual(result.comments.value, 2)
+        self.assertEqual(result.views.value, 846)
 
     @patch("src.connectors.base.fetch_public_html", return_value=(THREADS_REPLIES_HTML, "https://www.threads.com/@pemilik/post/TargetThreads"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.threads.com/@pemilik/post/TargetThreads")

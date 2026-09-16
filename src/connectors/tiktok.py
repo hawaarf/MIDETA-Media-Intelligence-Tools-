@@ -17,7 +17,7 @@ class TikTokConnector(BaseConnector):
     def _video_id(url: str) -> str | None:
         parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
         for index, part in enumerate(parts[:-1]):
-            if part.casefold() == "video" and parts[index + 1].isdigit():
+            if part.casefold() in {"video", "photo"} and parts[index + 1].isdigit():
                 return parts[index + 1]
         return None
 

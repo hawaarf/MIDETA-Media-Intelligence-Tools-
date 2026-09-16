@@ -1,5 +1,7 @@
 import unittest
-from unittest.mock import Mock
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import Mock, patch
 
 from src.tiktok_browser import (
     TikTokBrowserCollector,
@@ -32,6 +34,45 @@ TARGET_SOURCE = r'''<html><script type="application/json">{
 
 
 class TikTokBrowserTests(unittest.TestCase):
+    def test_chrome_is_launched_without_automation_driver(self):
+        collector = TikTokBrowserCollector()
+        command = collector._chrome_command("/Applications/Google Chrome", 48123)
+
+        self.assertIn("--remote-debugging-port=48123", command)
+        self.assertTrue(any(argument.startswith("--user-data-dir=") for argument in command))
+        self.assertFalse(any("enable-automation" in argument for argument in command))
+        self.assertFalse(any("AutomationControlled" in argument for argument in command))
+        self.assertFalse(any("chromedriver" in argument.casefold() for argument in command))
+        self.assertEqual(command[-1], "https://www.tiktok.com/login")
+
+    def test_detects_tiktok_http_403_page(self):
+        self.assertTrue(
+            TikTokBrowserCollector._page_is_access_denied(
+                "",
+                "www.tiktok.com",
+                "Access to www.tiktok.com was denied. HTTP ERROR 403",
+            )
+        )
+        self.assertFalse(
+            TikTokBrowserCollector._page_is_access_denied(
+                "<html>video page</html>",
+                "TikTok",
+                "Caption video",
+            )
+        )
+
+    @patch("src.tiktok_browser.subprocess.run")
+    def test_finds_legacy_chrome_only_for_the_exact_profile(self, run):
+        with TemporaryDirectory() as folder:
+            profile = Path(folder)
+            profile.joinpath("SingletonLock").symlink_to("Mac.local-4321")
+            run.return_value = Mock(
+                returncode=0,
+                stdout=f"/Applications/Google Chrome --user-data-dir={profile.resolve()} --profile-directory=Default",
+            )
+
+            self.assertEqual(TikTokBrowserCollector(profile_dir=profile)._legacy_profile_pid(), 4321)
+
     def test_reads_caption_and_metrics_only_from_target_video(self):
         metrics = TikTokBrowserCollector._video_metrics_from_source(
             TARGET_SOURCE,

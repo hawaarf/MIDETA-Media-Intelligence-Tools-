@@ -22,6 +22,7 @@ class BaseConnector(ABC):
     platform = "Unknown"
     supports_public_comments = False
     prefer_profile_followers = False
+    use_generic_json_ld = True
 
     @staticmethod
     def _field(value: Any, missing: FieldStatus = FieldStatus.NOT_PUBLIC) -> DataField:
@@ -163,6 +164,15 @@ class BaseConnector(ABC):
     def _metric_source(self, html: str, url: str) -> str:
         """Return the part of a platform response that belongs to the requested post."""
         return html
+
+    def _target_is_available(self, html: str, soup: BeautifulSoup, url: str) -> bool:
+        """Confirm that the fetched page still contains the requested post.
+
+        Most platforms can safely use the fetched page as-is. Connectors whose
+        pages mix the requested post with recommendations can override this
+        check and reject a generic or missing-post response.
+        """
+        return True
 
     def _meta_metrics(self, soup: BeautifulSoup) -> dict[str, int]:
         """Return platform-specific metric fallbacks from public meta tags."""
@@ -366,6 +376,25 @@ class BaseConnector(ABC):
         canonical_node = soup.select_one('link[rel="canonical"]')
         canonical_url = self._meta(soup, 'meta[property="og:url"]') or (str(canonical_node.get("href")).strip() if canonical_node and canonical_node.get("href") else None)
         target_url = canonical_url or final_url
+        # Short share URLs are resolved by the fetcher. Validate the canonical
+        # destination so platform connectors can read the actual post ID.
+        if not self._target_is_available(html, soup, target_url):
+            empty = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+            return SocialResult(
+                url=final_url,
+                platform=self.platform,
+                username=empty,
+                caption=empty,
+                posted_at=empty,
+                followers=empty,
+                likes=empty,
+                comments=empty,
+                shares=empty,
+                views=empty,
+                bookmarks=empty,
+                reposts=empty,
+                note=f"Posting {self.platform} tidak ditemukan atau tidak tersedia secara publik.",
+            )
         author = self._meta(soup, 'meta[name="author"]', 'meta[property="article:author"]', 'meta[property="profile:username"]')
         caption = self._meta(soup, 'meta[property="og:description"]', 'meta[name="description"]')
         posted = self._meta(soup, 'meta[property="article:published_time"]', 'meta[name="date"]', 'meta[itemprop="datePublished"]')
@@ -379,21 +408,22 @@ class BaseConnector(ABC):
         stats: dict[str, Any] = self._script_metrics(self._metric_source(html, target_url))
         stats.update(self._platform_metrics(html, target_url))
         stats = self._merge_meta_metrics(stats, self._meta_metrics(soup))
-        for item in self._json_objects(soup):
-            for node in self._walk(item):
-                author_node = node.get("author")
-                if not author and isinstance(author_node, dict):
-                    author = author_node.get("name")
-                posted = posted or node.get("datePublished")
-                caption = caption or node.get("caption") or node.get("articleBody")
-                interaction = node.get("interactionStatistic")
-                if isinstance(interaction, dict): interaction = [interaction]
-                for metric in interaction or []:
-                    kind = str(metric.get("interactionType", "")).lower()
-                    count = metric.get("userInteractionCount")
-                    action_names = {"like": "likes", "comment": "comments", "share": "shares", "view": "views", "follow": "followers", "save": "bookmarks", "bookmark": "bookmarks", "repost": "reposts"}
-                    for key, output in action_names.items():
-                        if key in kind: stats[output] = count
+        if self.use_generic_json_ld:
+            for item in self._json_objects(soup):
+                for node in self._walk(item):
+                    author_node = node.get("author")
+                    if not author and isinstance(author_node, dict):
+                        author = author_node.get("name")
+                    posted = posted or node.get("datePublished")
+                    caption = caption or node.get("caption") or node.get("articleBody")
+                    interaction = node.get("interactionStatistic")
+                    if isinstance(interaction, dict): interaction = [interaction]
+                    for metric in interaction or []:
+                        kind = str(metric.get("interactionType", "")).lower()
+                        count = metric.get("userInteractionCount")
+                        action_names = {"like": "likes", "comment": "comments", "share": "shares", "view": "views", "follow": "followers", "save": "bookmarks", "bookmark": "bookmarks", "repost": "reposts"}
+                        for key, output in action_names.items():
+                            if key in kind: stats[output] = count
         if include_platform_profile and (stats.get("followers") is None or self.prefer_profile_followers):
             public_followers = self._platform_followers(html, soup, target_url, author)
             if public_followers is not None:
@@ -403,7 +433,7 @@ class BaseConnector(ABC):
             if public_views is not None:
                 stats["views"] = public_views
         unsupported = FieldStatus.NOT_SUPPORTED
-        zero_default_platforms = {"Facebook", "Instagram", "TikTok", "Threads"}
+        zero_default_platforms = {"Facebook", "Instagram", "TikTok"}
         followers = stats.get("followers")
         views = stats.get("views")
         reposts = stats.get("reposts")

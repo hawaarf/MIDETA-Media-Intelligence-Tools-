@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import datetime, timezone
 from urllib.parse import unquote, urlparse
@@ -12,6 +13,7 @@ from src.models import PublicComment
 class ThreadsConnector(BaseConnector):
     platform = "Threads"
     supports_public_comments = True
+    use_generic_json_ld = False
 
     @staticmethod
     def _post_shortcode(url: str) -> str | None:
@@ -21,6 +23,93 @@ class ThreadsConnector(BaseConnector):
                 return parts[index + 1]
         return None
 
+    @classmethod
+    def _target_post(cls, html: str, shortcode: str) -> dict | None:
+        """Return the richest embedded object for exactly one Threads post."""
+        wanted = shortcode.casefold()
+        best_post: dict | None = None
+        best_score = -1
+        soup = BeautifulSoup(html, "lxml")
+        for payload in cls._embedded_json(soup):
+            for node in cls._walk(payload):
+                post = node.get("post") if isinstance(node.get("post"), dict) else node
+                if not isinstance(post, dict):
+                    continue
+                code = post.get("code") or post.get("shortcode")
+                if str(code or "").casefold() != wanted:
+                    continue
+
+                app_info = post.get("text_post_app_info")
+                user = post.get("user")
+                caption = post.get("caption")
+                score = 0
+                if isinstance(user, dict):
+                    score += 100
+                if isinstance(caption, dict) or isinstance(caption, str) or post.get("text"):
+                    score += 80
+                if isinstance(app_info, dict):
+                    score += 40
+                if post.get("pk") or post.get("id"):
+                    score += 20
+                if post.get("taken_at") or post.get("created_at"):
+                    score += 20
+                if "like_count" in post or "view_count" in post or "view_counts" in post:
+                    score += 10
+                if post.get("username"):
+                    score += 10
+                if score > best_score:
+                    best_post = post
+                    best_score = score
+        return best_post if best_score > 0 else None
+
+    @staticmethod
+    def _post_caption(post: dict) -> str | None:
+        caption = post.get("caption")
+        if isinstance(caption, dict):
+            caption = caption.get("text")
+        app_info = post.get("text_post_app_info")
+        if not caption and isinstance(app_info, dict):
+            caption = app_info.get("text")
+        return str(caption).strip() if caption not in (None, "") else None
+
+    @staticmethod
+    def _post_author(post: dict) -> str | None:
+        user = post.get("user")
+        if isinstance(user, dict):
+            value = user.get("username") or user.get("name") or user.get("full_name")
+            if value:
+                return str(value).strip()
+        value = post.get("username")
+        return str(value).strip() if value else None
+
+    def _target_is_available(self, html: str, soup, url: str) -> bool:
+        shortcode = self._post_shortcode(url)
+        return bool(shortcode and self._target_post(html, shortcode))
+
+    def _metric_source(self, html: str, url: str) -> str:
+        shortcode = self._post_shortcode(url)
+        if not shortcode:
+            return ""
+        post = self._target_post(html, shortcode)
+        return json.dumps(post, ensure_ascii=False) if post else ""
+
+    def _platform_author(self, html: str, soup, url: str, current: str | None) -> str | None:
+        shortcode = self._post_shortcode(url)
+        post = self._target_post(html, shortcode) if shortcode else None
+        if post:
+            author = self._post_author(post)
+            if author:
+                return author
+        parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
+        if parts and parts[0].startswith("@"):
+            return parts[0].lstrip("@")
+        return None
+
+    def _platform_caption(self, html: str, url: str, current: str | None) -> str | None:
+        shortcode = self._post_shortcode(url)
+        post = self._target_post(html, shortcode) if shortcode else None
+        return self._post_caption(post) if post and self._post_caption(post) else current
+
     def _profile_count_by_label(self, profile_html: str, profile_soup, *labels: str) -> int | None:
         match = re.search(r'"follower_count"\s*:\s*"?(\d+)"?', profile_html, re.I)
         if match:
@@ -28,8 +117,9 @@ class ThreadsConnector(BaseConnector):
         return super()._profile_count_by_label(profile_html, profile_soup, *labels)
 
     def _platform_followers(self, html: str, soup, url: str, author: str | None) -> int | None:
-        parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
-        username = parts[0].lstrip("@") if parts and parts[0].startswith("@") else (author or "").lstrip("@")
+        shortcode = self._post_shortcode(url)
+        post = self._target_post(html, shortcode) if shortcode else None
+        username = self._post_author(post) if post else None
         if not username:
             return None
         return self._followers_from_profile(f"https://www.threads.com/@{username}")
@@ -70,24 +160,6 @@ class ThreadsConnector(BaseConnector):
                         if count is not None:
                             counts.append(count)
 
-        code_matches = list(
-            re.finditer(r'"(?:code|shortcode)"\s*:\s*"([^"\\]+)"', html, re.I)
-        )
-        metric_pattern = r'"(?:view_counts?|views_count|play_count|video_view_count)"\s*:\s*"?([\d.,]+\s*(?:k|m|b)?)"?'
-        for metric in re.finditer(metric_pattern, html, re.I):
-            if not code_matches:
-                break
-            closest = min(
-                code_matches,
-                key=lambda code: (abs(code.start() - metric.start()), code.start() > metric.start()),
-            )
-            if closest.group(1).casefold() != shortcode.casefold():
-                continue
-            if abs(closest.start() - metric.start()) > 40_000:
-                continue
-            count = cls._metric_number(metric.group(1))
-            if count is not None:
-                counts.append(count)
         return counts
 
     @classmethod
@@ -115,29 +187,6 @@ class ThreadsConnector(BaseConnector):
                         # count. Treat that explicit field as zero.
                         counts.append(0 if count is None else count)
 
-        # Parsed objects are safer than proximity matching because a compact
-        # response can place the next post code close to the previous metric.
-        if counts:
-            return counts
-
-        code_matches = list(
-            re.finditer(r'"(?:code|shortcode)"\s*:\s*"([^"\\]+)"', html, re.I)
-        )
-        metric_pattern = r'"(?:reshare_count|shares?_count)"\s*:\s*"?([\d.,]+\s*(?:k|m|b)?)"?'
-        for metric in re.finditer(metric_pattern, html, re.I):
-            if not code_matches:
-                break
-            closest = min(
-                code_matches,
-                key=lambda code: (abs(code.start() - metric.start()), code.start() > metric.start()),
-            )
-            if closest.group(1).casefold() != shortcode.casefold():
-                continue
-            if abs(closest.start() - metric.start()) > 40_000:
-                continue
-            count = cls._metric_number(metric.group(1))
-            if count is not None:
-                counts.append(count)
         return counts
 
     @classmethod
@@ -171,30 +220,6 @@ class ThreadsConnector(BaseConnector):
                         if count is not None:
                             counts.append(count)
 
-        if counts:
-            return counts
-
-        code_matches = list(
-            re.finditer(r'"(?:code|shortcode)"\s*:\s*"([^"\\]+)"', html, re.I)
-        )
-        metric_pattern = (
-            r'"(?:direct_reply_count|repl(?:y|ies)_count|comments?_count|number_of_replies)"'
-            r'\s*:\s*"?(\d+)"?'
-        )
-        for metric in re.finditer(metric_pattern, html, re.I):
-            if not code_matches:
-                break
-            closest = min(
-                code_matches,
-                key=lambda code: (abs(code.start() - metric.start()), code.start() > metric.start()),
-            )
-            if closest.group(1).casefold() != shortcode.casefold():
-                continue
-            if abs(closest.start() - metric.start()) > 40_000:
-                continue
-            count = cls._metric_number(metric.group(1))
-            if count is not None:
-                counts.append(count)
         return counts
 
     @classmethod
@@ -213,12 +238,25 @@ class ThreadsConnector(BaseConnector):
         metrics: dict[str, int] = {}
         shortcode = self._post_shortcode(url)
         if shortcode:
+            post = self._target_post(html, shortcode)
+            if not post:
+                return metrics
+            if "like_count" in post or "likeCount" in post:
+                like_count = self._metric_number(post.get("like_count", post.get("likeCount")))
+                if like_count is not None:
+                    metrics["likes"] = like_count
+            app_info = post.get("text_post_app_info")
+            if isinstance(app_info, dict):
+                repost_count = self._metric_number(app_info.get("repost_count"))
+                if "repost_count" in app_info and repost_count is not None:
+                    metrics["reposts"] = repost_count
             view_counts = self._target_view_counts(html, shortcode)
-            visible_views = self._visible_view_count(html)
-            if visible_views is not None:
-                view_counts.append(visible_views)
             if view_counts:
                 metrics["views"] = max(view_counts)
+            else:
+                visible_views = self._visible_view_count(html)
+                if visible_views is not None:
+                    metrics["views"] = visible_views
 
             reply_counts = self._target_reply_counts(html, shortcode)
             if reply_counts:
@@ -236,6 +274,9 @@ class ThreadsConnector(BaseConnector):
     def _platform_posted_at(self, html: str, soup, url: str, current: str | None) -> str | None:
         shortcode = self._post_shortcode(url)
         if shortcode:
+            post = self._target_post(html, shortcode)
+            if not post:
+                return None
             exact_date = self._target_posted_at_from_json(
                 soup,
                 shortcode,

@@ -10,6 +10,7 @@ secrets.toml
 data/*.db
 data/*.db-*
 data/browser_profiles/
+data/private/
 *.sqlite
 *.sqlite3
 *.tmp
