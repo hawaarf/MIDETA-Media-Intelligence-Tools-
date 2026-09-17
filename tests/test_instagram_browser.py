@@ -214,6 +214,30 @@ class InstagramBrowserTests(unittest.TestCase):
         self.assertEqual(metrics.reposts, 1)
         collector._profile_metrics.assert_not_called()
 
+    def test_share_url_is_resolved_by_logged_in_browser_before_parsing(self):
+        collector = InstagramBrowserCollector()
+        collector.is_logged_in = Mock(return_value=True)
+        driver = Mock()
+        driver.current_url = "https://www.instagram.com/reel/POST123/"
+        collector.start = Mock(return_value=driver)
+        collector._wait_for_page = Mock()
+        collector._post_metrics = Mock(
+            return_value=InstagramBrowserMetrics(username="akun", caption="Caption")
+        )
+
+        metrics = collector.collect(
+            "https://www.instagram.com/share/reel/SHORT123/",
+            None,
+            mode="fast",
+        )
+
+        self.assertEqual(metrics.username, "akun")
+        driver.get.assert_called_once_with("https://www.instagram.com/share/reel/SHORT123/")
+        collector._post_metrics.assert_called_once_with(
+            "https://www.instagram.com/reel/POST123/",
+            "POST123",
+        )
+
     def test_fast_metrics_hide_public_profile_fallbacks(self):
         result = get_connector("https://www.instagram.com/p/demo/").mock_enrichment(
             "https://www.instagram.com/p/demo/"

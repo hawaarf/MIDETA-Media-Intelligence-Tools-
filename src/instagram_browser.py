@@ -128,8 +128,10 @@ class InstagramBrowserCollector:
     @staticmethod
     def _shortcode(url: str) -> str | None:
         parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
+        if parts and parts[0].casefold() == "share":
+            return None
         for index, part in enumerate(parts[:-1]):
-            if part.casefold() in {"p", "reel", "reels"}:
+            if part.casefold() in {"p", "reel", "reels", "tv"}:
                 return parts[index + 1]
         return None
 
@@ -789,7 +791,16 @@ class InstagramBrowserCollector:
             )
         shortcode = self._shortcode(url)
         if not shortcode:
-            raise InstagramBrowserError("Shortcode posting Instagram tidak dapat dibaca dari URL.")
+            driver = self.start()
+            driver.get(url)
+            self._wait_for_page()
+            if not self.is_logged_in():
+                raise InstagramLoginRequired("Login Instagram berakhir saat membuka URL pendek.")
+            resolved_url = str(driver.current_url or "").strip()
+            shortcode = self._shortcode(resolved_url)
+            if not shortcode:
+                raise InstagramBrowserError("URL pendek Instagram belum mengarah ke posting yang dapat dibaca.")
+            url = resolved_url
         post_metrics = self._post_metrics(url, shortcode)
         username = post_metrics.username or self._username(author)
         if not username:

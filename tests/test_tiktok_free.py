@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 from src.tiktok_browser import TikTokBrowserMetrics
-from src.tiktok_free import TikTokFreeCollector
+from src.tiktok_free import TikTokFreeCollector, TikTokFreeError
 
 
 URL = "https://www.tiktok.com/@ojol.spill/video/7684605378314669319"
@@ -54,7 +54,17 @@ class TikTokFreeTests(unittest.TestCase):
         collector._oembed_metrics = Mock(return_value=TikTokBrowserMetrics(source="free"))
         collector.token = Mock(return_value="apify_api_example_token")
         collector._apify_metrics = Mock(
-            return_value=TikTokBrowserMetrics(views=321, followers=654, source="free")
+            return_value=TikTokBrowserMetrics(
+                caption="Caption",
+                posted_at="2026-09-16T10:00:00+00:00",
+                views=321,
+                followers=654,
+                likes=12,
+                comments=3,
+                shares=2,
+                bookmarks=1,
+                source="free",
+            )
         )
 
         metrics = collector.collect(SHORT_URL)
@@ -79,23 +89,35 @@ class TikTokFreeTests(unittest.TestCase):
             collector.delete_token()
             self.assertFalse(path.exists())
 
-    @patch("src.tiktok_free.requests.get")
-    def test_without_token_returns_official_caption_and_author(self, get):
-        response = Mock()
-        response.json.return_value = {
-            "title": "program apresiasi mitra gojek #gojek",
-            "author_name": "Ojol Spill",
-            "author_unique_id": "ojol.spill",
-        }
-        response.raise_for_status.return_value = None
-        get.return_value = response
+    def test_without_token_uses_public_post_fallback(self):
         with TemporaryDirectory() as folder:
-            metrics = TikTokFreeCollector(token_path=Path(folder) / "missing").collect(URL)
+            collector = TikTokFreeCollector(token_path=Path(folder) / "missing")
+            collector._oembed_metrics = Mock(
+                return_value=TikTokBrowserMetrics(
+                    username="ojol.spill",
+                    caption="program apresiasi mitra gojek #gojek",
+                    source="free",
+                )
+            )
+            collector._public_fallback_metrics = Mock(
+                return_value=TikTokBrowserMetrics(
+                    username="ojol.spill",
+                    views=629,
+                    likes=17,
+                    comments=1,
+                    shares=1,
+                    bookmarks=0,
+                    source="free",
+                )
+            )
+            collector._public_profile_followers = Mock(return_value=48_200)
+
+            metrics = collector.collect(URL)
 
         self.assertEqual(metrics.username, "ojol.spill")
         self.assertEqual(metrics.caption, "program apresiasi mitra gojek #gojek")
-        self.assertIsNone(metrics.views)
-        self.assertIn("Token Apify belum disimpan", metrics.warning)
+        self.assertEqual(metrics.views, 629)
+        self.assertEqual(metrics.followers, 48_200)
 
     def test_apify_item_is_matched_to_the_target_video(self):
         item = {
@@ -136,6 +158,68 @@ class TikTokFreeTests(unittest.TestCase):
         self.assertIsNone(metrics.username)
         self.assertIsNone(metrics.followers)
         self.assertIsNone(metrics.views)
+
+    def test_public_fallback_item_is_matched_and_parsed(self):
+        metrics = TikTokFreeCollector._metrics_from_public_item(
+            {
+                "id": "7674512043470359826",
+                "title": "Hampura rada aya ambekan",
+                "create_time": 1786861587,
+                "play_count": 304_945,
+                "digg_count": 20_021,
+                "comment_count": 599,
+                "share_count": 474,
+                "collect_count": 463,
+                "author": {"unique_id": "balataknabandung32"},
+            },
+            "7674512043470359826",
+        )
+
+        self.assertEqual(metrics.username, "balataknabandung32")
+        self.assertEqual(metrics.caption, "Hampura rada aya ambekan")
+        self.assertEqual(metrics.views, 304_945)
+        self.assertEqual(metrics.likes, 20_021)
+        self.assertEqual(metrics.comments, 599)
+        self.assertEqual(metrics.shares, 474)
+        self.assertEqual(metrics.bookmarks, 463)
+        self.assertIsNotNone(metrics.posted_at)
+
+    def test_public_fallback_item_for_another_post_is_ignored(self):
+        metrics = TikTokFreeCollector._metrics_from_public_item(
+            {
+                "id": "9999999999999999999",
+                "play_count": 8_000_000,
+                "author": {"unique_id": "akun.lain"},
+            },
+            "7674512043470359826",
+        )
+
+        self.assertFalse(TikTokFreeCollector._has_data(metrics))
+
+    @patch("src.tiktok_free.time.sleep")
+    @patch("src.tiktok_free.requests.get")
+    def test_public_fallback_retries_the_free_rate_limit(self, get, sleep):
+        limited = Mock()
+        limited.raise_for_status.return_value = None
+        limited.json.return_value = {"code": -1, "msg": "Free Api Limit: 1 request/second."}
+        success = Mock()
+        success.raise_for_status.return_value = None
+        success.json.return_value = {
+            "code": 0,
+            "data": {
+                "id": "7684605378314669319",
+                "play_count": 629,
+                "author": {"unique_id": "ojol.spill"},
+            },
+        }
+        get.side_effect = [limited, success]
+        TikTokFreeCollector._last_fallback_request = 0.0
+
+        metrics = TikTokFreeCollector()._public_fallback_metrics(URL)
+
+        self.assertEqual(metrics.views, 629)
+        self.assertEqual(get.call_count, 2)
+        self.assertGreaterEqual(sleep.call_count, 1)
 
     @patch("src.tiktok_free.requests.post")
     def test_apify_token_is_sent_in_header_and_result_is_parsed(self, post):
@@ -179,6 +263,9 @@ class TikTokFreeTests(unittest.TestCase):
                     source="free",
                 )
             )
+            collector._public_fallback_metrics = Mock(
+                return_value=TikTokBrowserMetrics(source="free")
+            )
 
             metrics = collector.collect(URL)
 
@@ -186,6 +273,35 @@ class TikTokFreeTests(unittest.TestCase):
         self.assertEqual(metrics.followers, 48_200)
         self.assertEqual(metrics.views, 629)
         self.assertEqual(metrics.source, "free")
+
+    def test_apify_failure_uses_public_fallback_instead_of_empty_row(self):
+        collector = TikTokFreeCollector()
+        collector._resolve_post_url = Mock(return_value=URL)
+        collector._oembed_metrics = Mock(return_value=TikTokBrowserMetrics(source="free"))
+        collector.token = Mock(return_value="apify_api_example_token")
+        collector._apify_metrics = Mock(
+            side_effect=TikTokFreeError("Posting ditandai sensitif oleh provider utama.")
+        )
+        collector._public_fallback_metrics = Mock(
+            return_value=TikTokBrowserMetrics(
+                username="ojol.spill",
+                caption="Caption lengkap",
+                posted_at="2026-09-13T03:45:41+00:00",
+                views=629,
+                likes=17,
+                comments=1,
+                shares=1,
+                bookmarks=0,
+                source="free",
+            )
+        )
+        collector._public_profile_followers = Mock(return_value=None)
+
+        metrics = collector.collect(URL)
+
+        self.assertEqual(metrics.caption, "Caption lengkap")
+        self.assertEqual(metrics.views, 629)
+        collector._public_fallback_metrics.assert_called_once_with(URL)
 
 
 if __name__ == "__main__":

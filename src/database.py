@@ -157,14 +157,27 @@ def get_social_job(job_id: int, path: Path = DATABASE_PATH) -> dict[str, Any] | 
             "SELECT * FROM social_job_items WHERE job_id = ? ORDER BY position",
             (job_id,),
         ).fetchall()
-    results, errors, browser_issues = [], [], []
+    results, errors, browser_issues, item_details = [], [], [], []
     for item in items:
-        if item["result_json"]:
-            results.append(json.loads(item["result_json"]))
-        if item["error_json"]:
-            errors.append(json.loads(item["error_json"]))
-        if item["browser_issue_json"]:
-            browser_issues.append(json.loads(item["browser_issue_json"]))
+        result = json.loads(item["result_json"]) if item["result_json"] else None
+        error = json.loads(item["error_json"]) if item["error_json"] else None
+        browser_issue = json.loads(item["browser_issue_json"]) if item["browser_issue_json"] else None
+        if result:
+            results.append(result)
+        if error:
+            errors.append(error)
+        if browser_issue:
+            browser_issues.append(browser_issue)
+        item_details.append(
+            {
+                "position": item["position"],
+                "url": item["source_url"],
+                "status": item["status"],
+                "result": result,
+                "error": error,
+                "browser_issue": browser_issue,
+            }
+        )
     processed = sum(item["status"] != "pending" for item in items)
     enrichment_mode = job["enrichment_mode"] or "standard"
     if enrichment_mode == "standard" and job["platform"] == "Instagram" and bool(job["browser_mode"]):
@@ -183,6 +196,7 @@ def get_social_job(job_id: int, path: Path = DATABASE_PATH) -> dict[str, Any] | 
         "results": results,
         "errors": errors,
         "browser_issues": browser_issues,
+        "items": item_details,
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
     }

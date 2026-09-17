@@ -686,7 +686,17 @@ class TikTokBrowserCollector:
             raise TikTokLoginRequired("TikTok belum login di Chrome MIDETA.")
         video_id = TikTokConnector._video_id(url)
         if not video_id:
-            raise TikTokBrowserError("ID video TikTok tidak dapat dibaca dari URL.")
+            session = self.start()
+            session.navigate(url)
+            self._wait_for_page()
+            self._raise_if_access_denied()
+            if not self.is_logged_in():
+                raise TikTokLoginRequired("Login TikTok berakhir saat membuka URL pendek.")
+            resolved_url = session.current_url().strip()
+            video_id = TikTokConnector._video_id(resolved_url)
+            if not video_id:
+                raise TikTokBrowserError("URL pendek TikTok belum mengarah ke video atau foto yang dapat dibaca.")
+            url = resolved_url
         url_username = self._username_from_url(url)
         post = self._post_metrics(url, video_id)
         post.username = post.username or url_username or self._username(author)

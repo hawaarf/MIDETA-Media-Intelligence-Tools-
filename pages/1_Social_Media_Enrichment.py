@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
 
-from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, parse_url_list, social_result_row
+from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, failed_social_result, parse_url_list, social_job_results, social_result_row
 from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, detect_platform, get_platform_connector
 from src.connectors.instagram import InstagramConnector
@@ -17,6 +17,7 @@ from src.database import add_history, create_social_job, get_latest_social_job, 
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, InstagramLoginRequired, build_instagram_browser_result
 from src.models import FieldStatus, SocialResult
+from src.social_urls import resolve_social_url
 from src.tiktok_browser import TikTokAccessDenied, TikTokBrowserCollector, TikTokBrowserError, TikTokLoginRequired, build_tiktok_browser_result
 import src.connectors.tiktok as tiktok_connector_module
 import src.tiktok_free as tiktok_free_module
@@ -25,7 +26,7 @@ from src.ui import apply_theme, page_intro, render_footer, render_github_profile
 
 # Streamlit dapat mempertahankan modul lama saat hanya file parser yang berubah.
 # Muat ulang satu kali agar short URL dan carousel langsung memakai parser terbaru.
-if getattr(tiktok_free_module, "TIKTOK_FREE_PARSER_VERSION", 0) < 2:
+if getattr(tiktok_free_module, "TIKTOK_FREE_PARSER_VERSION", 0) < 3:
     importlib.reload(tiktok_connector_module)
     tiktok_free_module = importlib.reload(tiktok_free_module)
 
@@ -43,6 +44,7 @@ page_intro(
 )
 st.info(
     "Tulis satu URL pada setiap baris. MIDETA dapat menerima sampai 1.000 URL dan menyimpannya bertahap. "
+    "URL pendek dan tautan dari tombol Share akan diarahkan ke posting aslinya secara otomatis. "
     f"Enrichment All mengenali platform secara otomatis, sedangkan Split atau Triple Screen menjalankan maksimal {MAX_PARALLEL_PLATFORMS} platform secara paralel."
 )
 
@@ -359,11 +361,11 @@ def render_job_controls(job: dict[str, Any], slot: str) -> None:
 
 
 def render_job_results(job: dict[str, Any] | None, platform: str) -> None:
-    if not job or not job.get("results"):
-        if job and job["status"] == "completed" and job.get("errors"):
-            st.warning("Proses selesai, tetapi belum ada URL yang menghasilkan metadata.")
+    if not job:
         return
-    results = [SocialResult.model_validate(item) for item in job["results"]]
+    results = social_job_results(job)
+    if not results:
+        return
     if any(result.is_mock for result in results):
         st.warning("DATA CONTOH AKTIF. Informasi di bawah bukan data dari tautan.")
 
@@ -383,11 +385,11 @@ def render_job_results(job: dict[str, Any] | None, platform: str) -> None:
 
     successful = sum(any(field.status == FieldStatus.AVAILABLE for field in all_fields(result)) for result in results)
     metric_cols = st.columns(3)
-    metric_cols[0].metric("Diproses", len(results) + len(job.get("errors", [])))
+    metric_cols[0].metric("Diproses", len(results))
     metric_cols[1].metric("Berhasil", successful)
     metric_cols[2].metric(
         "Periksa",
-        len(results) - successful + len(job.get("errors", [])) + len(job.get("browser_issues", [])),
+        len(results) - successful + len(job.get("browser_issues", [])),
     )
 
     detail_rows = [social_result_row(result) for result in results]
@@ -466,12 +468,23 @@ def available_result_fields(result: SocialResult):
     )
 
 
-def render_all_job_results(jobs: list[dict[str, Any]]) -> None:
+def render_all_job_results(
+    jobs: list[dict[str, Any]],
+    unsupported_urls: list[dict[str, str]] | None = None,
+) -> None:
     results = [
-        SocialResult.model_validate(item)
+        result
         for job in jobs
-        for item in job.get("results", [])
+        for result in social_job_results(job)
     ]
+    results.extend(
+        failed_social_result(
+            item.get("URL", ""),
+            "Tidak dikenali",
+            item.get("Alasan"),
+        )
+        for item in (unsupported_urls or [])
+    )
     if not results:
         if jobs and all(job["status"] == "completed" for job in jobs):
             st.warning("Proses selesai, tetapi belum ada URL yang menghasilkan metadata.")
@@ -489,12 +502,11 @@ def render_all_job_results(jobs: list[dict[str, Any]]) -> None:
         any(field.status == FieldStatus.AVAILABLE for field in available_result_fields(result))
         for result in results
     )
-    error_count = sum(len(job.get("errors", [])) for job in jobs)
     browser_issue_count = sum(len(job.get("browser_issues", [])) for job in jobs)
     metric_cols = st.columns(3)
-    metric_cols[0].metric("Diproses", len(results) + error_count)
+    metric_cols[0].metric("Diproses", len(results))
     metric_cols[1].metric("Berhasil", successful)
-    metric_cols[2].metric("Periksa", len(results) - successful + error_count + browser_issue_count)
+    metric_cols[2].metric("Periksa", len(results) - successful + browser_issue_count)
 
     detail_rows = [social_result_row(result) for result in results]
     for row in detail_rows:
@@ -583,14 +595,20 @@ def collect_one_item(
     url = item["url"]
     position = item["position"]
     try:
-        connector = get_platform_connector(url, job["platform"])
+        needs_browser_target = active_browser is not None and job["platform"] in {"Instagram", "TikTok"}
+        processing_url = (
+            resolve_social_url(url, expected_platform=job["platform"])
+            if not job["mock_mode"] and needs_browser_target
+            else url
+        )
+        connector = get_platform_connector(processing_url, job["platform"])
         if job["mock_mode"]:
             result = connector.mock_enrichment(url)
         browser_issue = None
         if active_browser is not None and not job["mock_mode"] and job["platform"] == "Instagram":
             try:
                 metrics = active_browser.collect(
-                    url,
+                    processing_url,
                     None,
                     mode=job["enrichment_mode"],
                 )
@@ -618,7 +636,7 @@ def collect_one_item(
                 }
         elif active_browser is not None and not job["mock_mode"] and job["platform"] == "TikTok":
             try:
-                metrics = active_browser.collect(url, None)
+                metrics = active_browser.collect(processing_url, None)
                 missing = []
                 if not metrics.caption:
                     missing.append("Caption")
@@ -645,7 +663,7 @@ def collect_one_item(
                     "error": {"URL": url, "Platform": job["platform"], "Alasan": str(exc)},
                 }
         elif not job["mock_mode"] and job["platform"] == "TikTok" and job["enrichment_mode"] == "free":
-            metrics = tiktok_free_collector().collect(url)
+            metrics = tiktok_free_collector().collect(processing_url)
             missing = []
             if not metrics.caption:
                 missing.append("Caption")
@@ -662,7 +680,12 @@ def collect_one_item(
                 }
             result = build_tiktok_browser_result(url, metrics)
         elif not job["mock_mode"]:
-            result = connector.enrich(url)
+            result = connector.enrich(processing_url)
+
+        # Keep the pasted URL in the exported row even when a short/share link
+        # was resolved internally. This preserves the user's original order and
+        # makes failed/retried rows easy to match to the source spreadsheet.
+        result.url = url
 
         fields = [
             result.username,
@@ -859,9 +882,9 @@ if layout_mode == "Enrichment All":
         else:
             grouped_urls, unsupported_urls = group_detected_urls(all_urls)
             st.session_state["social_all_unsupported"] = unsupported_urls
+            st.session_state["social_all_order"] = all_urls
             if not grouped_urls:
                 st.session_state.pop("social_all_jobs", None)
-                st.session_state.pop("social_all_order", None)
                 st.error("Tidak ada URL dari platform yang didukung.")
             else:
                 all_requests = [
@@ -883,17 +906,17 @@ if layout_mode == "Enrichment All":
                 created_jobs = create_requested_jobs(all_requests)
                 if created_jobs:
                     st.session_state["social_all_jobs"] = created_jobs
-                    st.session_state["social_all_order"] = all_urls
 
-    if unsupported_urls := st.session_state.get("social_all_unsupported", []):
+    unsupported_urls = st.session_state.get("social_all_unsupported", [])
+    if unsupported_urls:
         with st.expander(f"{len(unsupported_urls)} URL tidak dikenali", expanded=True):
             st.dataframe(pd.DataFrame(unsupported_urls), width="stretch", hide_index=True)
 
     all_jobs = load_all_jobs()
     job_panels.extend(render_all_job_panels(all_jobs))
-    if all_jobs:
+    if all_jobs or unsupported_urls:
         st.markdown("#### Hasil gabungan")
-        render_all_job_results(all_jobs)
+        render_all_job_results(all_jobs, unsupported_urls)
 elif layout_mode in {"Split Screen", "Triple Screen"}:
     panel_count = 2 if layout_mode == "Split Screen" else MAX_PARALLEL_PLATFORMS
     panel_word = "dua" if panel_count == 2 else "tiga"

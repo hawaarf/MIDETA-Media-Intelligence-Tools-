@@ -70,6 +70,31 @@ class ConnectorTests(unittest.TestCase):
         for url, platform in cases.items():
             with self.subTest(url=url): self.assertEqual(detect_platform(url), platform)
 
+    def test_detects_mobile_share_and_short_platform_urls(self):
+        cases = {
+            "https://m.facebook.com/share/r/abc/": "Facebook",
+            "https://fb.watch/abc/": "Facebook",
+            "https://www.instagram.com/share/reel/abc/": "Instagram",
+            "https://instagr.am/p/abc/": "Instagram",
+            "https://www.threads.com/share/abc/": "Threads",
+            "https://t.co/abc": "X",
+            "https://mobile.twitter.com/akun/status/1": "X",
+            "https://vt.tiktok.com/abc/": "TikTok",
+            "https://www.tiktok.com/t/abc/": "TikTok",
+            "https://music.youtube.com/watch?v=abc": "YouTube",
+            "https://www.youtube-nocookie.com/embed/abc": "YouTube",
+        }
+        for url, platform in cases.items():
+            with self.subTest(url=url):
+                self.assertEqual(detect_platform(url), platform)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(SOCIAL_HTML, "https://example.com/article"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://t.co/abc")
+    def test_short_url_that_leaves_platform_is_not_enriched_as_a_post(self, _validate, _fetch):
+        result = get_connector("https://t.co/abc").enrich("https://t.co/abc")
+        self.assertEqual(result.username.status, FieldStatus.NOT_PUBLIC)
+        self.assertIn("tidak ditemukan", result.note)
+
     @patch("src.connectors.base.fetch_public_html", return_value=(SOCIAL_HTML, "https://instagram.com/p/a"))
     @patch("src.connectors.base.validate_public_url", return_value="https://instagram.com/p/a")
     def test_enrichment_preserves_missing_values_and_status(self, _validate, _fetch):

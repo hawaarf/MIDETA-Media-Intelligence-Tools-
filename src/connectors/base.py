@@ -5,11 +5,12 @@ import re
 from abc import ABC
 from functools import lru_cache
 from typing import Any, Iterable
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from bs4 import BeautifulSoup
 from src.dates import social_date_iso, social_datetime_iso
 from src.http_client import CollectionError, fetch_public_html
 from src.models import CommentCollection, DataField, FieldStatus, PublicComment, SocialResult
+from src.social_urls import platform_from_url
 from src.validators import validate_public_url
 
 
@@ -375,10 +376,14 @@ class BaseConnector(ABC):
         soup = BeautifulSoup(html, "lxml")
         canonical_node = soup.select_one('link[rel="canonical"]')
         canonical_url = self._meta(soup, 'meta[property="og:url"]') or (str(canonical_node.get("href")).strip() if canonical_node and canonical_node.get("href") else None)
-        target_url = canonical_url or final_url
+        target_url = urljoin(final_url, canonical_url) if canonical_url else final_url
         # Short share URLs are resolved by the fetcher. Validate the canonical
         # destination so platform connectors can read the actual post ID.
-        if not self._target_is_available(html, soup, target_url):
+        wrong_platform = (
+            self.platform in {"Facebook", "Instagram", "Threads", "X", "TikTok", "YouTube"}
+            and platform_from_url(target_url) != self.platform
+        )
+        if wrong_platform or not self._target_is_available(html, soup, target_url):
             empty = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
             return SocialResult(
                 url=final_url,

@@ -4,12 +4,13 @@ from datetime import date, datetime
 import re
 
 from src.dates import parse_social_datetime
-from src.models import SocialResult
+from src.models import DataField, FieldStatus, SocialResult
 
-SOCIAL_BATCH_VERSION = 40
+SOCIAL_BATCH_VERSION = 42
 COMMENT_BATCH_VERSION = 9
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+FAILED_URL_MESSAGE = "URL tidak dapat diproses"
 
 
 def format_posting_date(value) -> str:
@@ -92,6 +93,83 @@ def is_current_social_batch(batch: dict) -> bool:
     """Return whether a stored UI batch uses the active parser format."""
     return batch.get("schema_version") == SOCIAL_BATCH_VERSION
 
+
+def failed_social_result(url: str, platform: str, reason: str | None = None) -> SocialResult:
+    """Keep a failed URL in the same table position as the original input."""
+    note = FAILED_URL_MESSAGE
+    if reason:
+        note = f"{note}: {reason}"
+
+    def failed_field() -> DataField:
+        return DataField(value=None, status=FieldStatus.FAILED)
+
+    return SocialResult(
+        url=url,
+        platform=platform,
+        username=failed_field(),
+        caption=failed_field(),
+        posted_at=failed_field(),
+        followers=failed_field(),
+        likes=failed_field(),
+        comments=failed_field(),
+        shares=failed_field(),
+        views=failed_field(),
+        bookmarks=failed_field(),
+        reposts=failed_field(),
+        note=note,
+    )
+
+
+def social_job_results(job: dict) -> list[SocialResult]:
+    """Return processed job rows in their original input order, including failures."""
+    items = job.get("items")
+    if isinstance(items, list):
+        ordered: list[SocialResult] = []
+        for item in items:
+            if item.get("result"):
+                ordered.append(SocialResult.model_validate(item["result"]))
+                continue
+            if item.get("status") != "failed":
+                continue
+            error = item.get("error") or {}
+            reason = error.get("Alasan") or error.get("reason") or error.get("error")
+            ordered.append(
+                failed_social_result(
+                    str(item.get("url") or error.get("URL") or ""),
+                    str(error.get("Platform") or job.get("platform") or "Tidak dikenali"),
+                    str(reason) if reason else None,
+                )
+            )
+        return ordered
+
+    ordered = [SocialResult.model_validate(item) for item in job.get("results", [])]
+    for error in job.get("errors", []):
+        ordered.append(
+            failed_social_result(
+                str(error.get("URL") or ""),
+                str(error.get("Platform") or job.get("platform") or "Tidak dikenali"),
+                str(error.get("Alasan")) if error.get("Alasan") else None,
+            )
+        )
+    return ordered
+
+
+def social_result_failed(result: SocialResult) -> bool:
+    fields = (
+        result.username,
+        result.caption,
+        result.posted_at,
+        result.followers,
+        result.likes,
+        result.comments,
+        result.shares,
+        result.views,
+        result.bookmarks,
+        result.reposts,
+    )
+    return all(field.status == FieldStatus.FAILED for field in fields)
+
+
 def social_result_row(result: SocialResult) -> dict:
     fields = {
         "Tanggal posting": result.posted_at,
@@ -106,8 +184,9 @@ def social_result_row(result: SocialResult) -> dict:
         "Reposts": result.reposts,
     }
     row = {"URL": result.url, "Platform": result.platform, "Waktu pengambilan": result.collected_at.isoformat(), "Data contoh": result.is_mock, "Catatan": result.note}
+    failed = social_result_failed(result)
     for label, field in fields.items():
-        row[label] = field.value
+        row[label] = FAILED_URL_MESSAGE if failed else field.value
         row[f"Status {label}"] = str(field.status)
     return row
 
@@ -132,7 +211,11 @@ def compact_social_export_row(result: SocialResult) -> dict:
     )
     unavailable: list[str] = []
     row = {"Platform": result.platform, "URL": result.url}
+    failed = social_result_failed(result)
     for label, field in fields:
+        if failed:
+            row[label] = FAILED_URL_MESSAGE
+            continue
         if field.value in (None, ""):
             row[label] = "Tidak tersedia"
             unavailable.append(label)
@@ -144,7 +227,9 @@ def compact_social_export_row(result: SocialResult) -> dict:
             value = re.sub(r"\s+", " ", value).strip()
         row[label] = value
     row["Waktu pengambilan"] = result.collected_at.strftime("%Y-%m-%d %H:%M:%S")
-    row["Data yang tidak tersedia"] = ", ".join(unavailable) if unavailable else "Lengkap"
+    row["Data yang tidak tersedia"] = (
+        FAILED_URL_MESSAGE if failed else ", ".join(unavailable) if unavailable else "Lengkap"
+    )
     return row
 
 def rank_comment_rows(rows: list[dict]) -> list[dict]:

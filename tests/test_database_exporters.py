@@ -55,6 +55,15 @@ class DatabaseAndExporterTests(unittest.TestCase):
             self.assertEqual(saved["status"], "paused")
             self.assertEqual(len(saved["results"]), 1)
             self.assertEqual(len(saved["errors"]), 1)
+            self.assertEqual(
+                [(item["position"], item["url"], item["status"]) for item in saved["items"][:3]],
+                [
+                    (1, urls[0], "completed"),
+                    (2, urls[1], "failed"),
+                    (3, urls[2], "pending"),
+                ],
+            )
+            self.assertEqual(saved["items"][1]["error"]["Alasan"], "Dibatasi")
             self.assertEqual(next_social_job_items(job_id, 20, path)[0]["position"], 3)
             self.assertEqual(get_latest_social_job("X", path)["id"], job_id)
 

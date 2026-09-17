@@ -1,5 +1,5 @@
 import unittest
-from src.batch import SOCIAL_BATCH_VERSION, compact_comment_export_rows, compact_social_export_row, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, parse_url_list, rank_comment_rows, social_result_row
+from src.batch import FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, compact_comment_export_rows, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, parse_url_list, rank_comment_rows, social_job_results, social_result_row
 from src.connectors import get_connector
 
 class BatchTests(unittest.TestCase):
@@ -33,6 +33,8 @@ class BatchTests(unittest.TestCase):
                 "https://www.instagram.com/p/ABC/",
                 "https://www.threads.com/@akun/post/DEF",
                 "https://twitter.com/akun/status/456",
+                "https://vt.tiktok.com/SHORT/",
+                "https://t.co/SHORT",
                 "https://example.com/post/789",
             ]
         )
@@ -40,7 +42,8 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(grouped["Facebook"], ["https://www.facebook.com/reel/123"])
         self.assertEqual(grouped["Instagram"], ["https://www.instagram.com/p/ABC/"])
         self.assertEqual(grouped["Threads"], ["https://www.threads.com/@akun/post/DEF"])
-        self.assertEqual(grouped["X"], ["https://twitter.com/akun/status/456"])
+        self.assertEqual(grouped["TikTok"], ["https://vt.tiktok.com/SHORT/"])
+        self.assertEqual(grouped["X"], ["https://twitter.com/akun/status/456", "https://t.co/SHORT"])
         self.assertEqual(unsupported[0]["URL"], "https://example.com/post/789")
 
     def test_stale_social_batch_is_rejected_after_parser_update(self):
@@ -110,3 +113,45 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(row["Tanggal posting"], "25-Aug-2026")
         self.assertEqual(row["Followers"], 0)
         self.assertEqual(row["Views"], 0)
+
+    def test_failed_url_keeps_its_row_and_original_position(self):
+        first_url = "https://x.com/akun/status/1"
+        failed_url = "https://x.com/akun/status/2"
+        third_url = "https://x.com/akun/status/3"
+        first = get_connector(first_url).mock_enrichment(first_url)
+        third = get_connector(third_url).mock_enrichment(third_url)
+        job = {
+            "platform": "X",
+            "items": [
+                {"position": 1, "url": first_url, "status": "completed", "result": first.model_dump(mode="json")},
+                {
+                    "position": 2,
+                    "url": failed_url,
+                    "status": "failed",
+                    "result": None,
+                    "error": {"URL": failed_url, "Platform": "X", "Alasan": "Dibatasi"},
+                },
+                {"position": 3, "url": third_url, "status": "completed", "result": third.model_dump(mode="json")},
+            ],
+        }
+
+        results = social_job_results(job)
+        failed_row = compact_social_export_row(results[1])
+
+        self.assertEqual([result.url for result in results], [first_url, failed_url, third_url])
+        self.assertEqual(failed_row["Caption"], FAILED_URL_MESSAGE)
+        self.assertEqual(failed_row["Likes"], FAILED_URL_MESSAGE)
+        self.assertEqual(failed_row["Data yang tidak tersedia"], FAILED_URL_MESSAGE)
+
+    def test_unknown_platform_can_be_exported_as_a_failed_row(self):
+        result = failed_social_result(
+            "https://example.com/post/1",
+            "Tidak dikenali",
+            "Platform belum didukung",
+        )
+
+        row = compact_social_export_row(result)
+
+        self.assertEqual(row["URL"], "https://example.com/post/1")
+        self.assertEqual(row["Platform"], "Tidak dikenali")
+        self.assertTrue(result.note.startswith(FAILED_URL_MESSAGE))

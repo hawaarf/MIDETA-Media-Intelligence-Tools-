@@ -126,6 +126,28 @@ class TikTokBrowserTests(unittest.TestCase):
         collector._post_metrics.assert_called_once_with(url, "7684605378314669319")
         collector._profile_metrics.assert_called_once_with("ojol.spill", "7684605378314669319")
 
+    def test_short_url_is_resolved_by_logged_in_browser_before_parsing(self):
+        collector = TikTokBrowserCollector()
+        collector.is_logged_in = Mock(return_value=True)
+        session = Mock()
+        session.current_url.return_value = "https://www.tiktok.com/@ojol.spill/video/7684605378314669319"
+        collector.start = Mock(return_value=session)
+        collector._wait_for_page = Mock()
+        collector._raise_if_access_denied = Mock()
+        collector._post_metrics = Mock(
+            return_value=TikTokBrowserMetrics(username="ojol.spill", caption="Caption")
+        )
+        collector._profile_metrics = Mock(return_value=(48_200, 629))
+
+        metrics = collector.collect("https://vt.tiktok.com/SHORT123/")
+
+        self.assertEqual(metrics.followers, 48_200)
+        session.navigate.assert_called_once_with("https://vt.tiktok.com/SHORT123/")
+        collector._post_metrics.assert_called_once_with(
+            "https://www.tiktok.com/@ojol.spill/video/7684605378314669319",
+            "7684605378314669319",
+        )
+
     def test_build_result_does_not_fill_missing_fields_with_unrelated_zeros(self):
         result = build_tiktok_browser_result(
             "https://www.tiktok.com/@ojol.spill/video/7684605378314669319",

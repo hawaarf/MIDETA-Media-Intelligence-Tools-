@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -23,7 +25,8 @@ APIFY_ACTOR_ENDPOINT = (
     "run-sync-get-dataset-items"
 )
 TIKTOK_OEMBED_ENDPOINT = "https://www.tiktok.com/oembed"
-TIKTOK_FREE_PARSER_VERSION = 2
+TIKTOK_PUBLIC_FALLBACK_ENDPOINT = "https://www.tikwm.com/api/"
+TIKTOK_FREE_PARSER_VERSION = 3
 
 
 class TikTokFreeError(RuntimeError):
@@ -32,6 +35,9 @@ class TikTokFreeError(RuntimeError):
 
 class TikTokFreeCollector:
     """Collect public TikTok data without navigating an automated browser."""
+
+    _fallback_lock = Lock()
+    _last_fallback_request = 0.0
 
     def __init__(
         self,
@@ -284,6 +290,127 @@ class TikTokFreeCollector:
                 raise TikTokFreeError("Video TikTok tidak ditemukan, bersifat privat, atau tidak lagi tersedia.")
         raise TikTokFreeError("Views dan followers belum tersedia dari layanan gratis untuk URL ini.")
 
+    @classmethod
+    def _metrics_from_public_item(
+        cls,
+        item: dict[str, Any],
+        video_id: str | None,
+    ) -> TikTokBrowserMetrics:
+        item_id = str(item.get("id") or item.get("aweme_id") or item.get("video_id") or "")
+        if not item_id or (video_id and item_id != video_id):
+            return TikTokBrowserMetrics(source="free")
+
+        author = item.get("author")
+        if not isinstance(author, dict):
+            author = {}
+        posted_at = None
+        for key in ("create_time", "createTime", "datePublished"):
+            value = item.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                posted_at = social_datetime_iso(value)
+            except (TypeError, ValueError, OverflowError, OSError):
+                posted_at = None
+            if posted_at:
+                break
+
+        return TikTokBrowserMetrics(
+            username=cls._clean_username(
+                author.get("unique_id")
+                or author.get("uniqueId")
+                or item.get("authorUniqueId")
+            ),
+            caption=TikTokConnector._caption_value(
+                item.get("title")
+                or item.get("content_desc")
+                or item.get("desc")
+                or item.get("description")
+            ),
+            posted_at=posted_at,
+            views=cls._integer(item, "play_count", "playCount", "view_count", "viewCount"),
+            likes=cls._integer(item, "digg_count", "diggCount", "like_count", "likeCount"),
+            comments=cls._integer(item, "comment_count", "commentCount"),
+            shares=cls._integer(item, "share_count", "shareCount"),
+            bookmarks=cls._integer(item, "collect_count", "collectCount", "bookmarkCount"),
+            source="free",
+        )
+
+    def _public_fallback_metrics(self, url: str) -> TikTokBrowserMetrics:
+        video_id = TikTokConnector._video_id(url)
+        if not video_id:
+            raise TikTokFreeError("ID posting TikTok tidak dapat dibaca dari URL.")
+
+        payload: Any = None
+        for attempt in range(2):
+            try:
+                # The public endpoint accepts one request per second. Serializing
+                # calls keeps multi-platform enrichment from dropping later rows.
+                with self._fallback_lock:
+                    wait_for = 1.05 - (time.monotonic() - type(self)._last_fallback_request)
+                    if wait_for > 0:
+                        time.sleep(wait_for)
+                    response = requests.get(
+                        TIKTOK_PUBLIC_FALLBACK_ENDPOINT,
+                        params={"url": url, "hd": "0"},
+                        headers={"Accept": "application/json", "User-Agent": USER_AGENT},
+                        timeout=self.request_timeout,
+                    )
+                    type(self)._last_fallback_request = time.monotonic()
+                response.raise_for_status()
+                payload = response.json()
+            except requests.Timeout as exc:
+                raise TikTokFreeError("Layanan cadangan TikTok terlalu lama merespons.") from exc
+            except (requests.RequestException, ValueError) as exc:
+                raise TikTokFreeError("Layanan cadangan TikTok belum dapat dihubungi.") from exc
+
+            message = str(payload.get("msg") or payload.get("message") or "") if isinstance(payload, dict) else ""
+            if isinstance(payload, dict) and payload.get("code") == -1 and "1 request/second" in message:
+                if attempt == 0:
+                    continue
+                raise TikTokFreeError("Layanan cadangan TikTok sedang membatasi permintaan.")
+            break
+
+        if not isinstance(payload, dict) or payload.get("code") not in (0, "0"):
+            raise TikTokFreeError("Posting TikTok belum dapat dibaca oleh layanan cadangan.")
+        item = payload.get("data")
+        if not isinstance(item, dict):
+            raise TikTokFreeError("Layanan cadangan TikTok tidak mengembalikan data posting.")
+        metrics = self._metrics_from_public_item(item, video_id)
+        if not self._has_data(metrics):
+            raise TikTokFreeError("Hasil layanan cadangan tidak cocok dengan URL TikTok target.")
+        return metrics
+
+    @staticmethod
+    def _has_data(metrics: TikTokBrowserMetrics) -> bool:
+        return any(
+            getattr(metrics, name) is not None
+            for name in (
+                "username",
+                "caption",
+                "posted_at",
+                "views",
+                "likes",
+                "comments",
+                "shares",
+                "bookmarks",
+                "followers",
+            )
+        )
+
+    @staticmethod
+    def _needs_post_fallback(metrics: TikTokBrowserMetrics) -> bool:
+        return any(
+            getattr(metrics, name) is None
+            for name in ("caption", "posted_at", "views", "likes", "comments", "shares", "bookmarks")
+        )
+
+    @staticmethod
+    def _public_profile_followers(username: str | None) -> int | None:
+        if not username:
+            return None
+        return TikTokConnector()._followers_from_profile(f"https://www.tiktok.com/@{username}")
+
     @staticmethod
     def _merge(
         preferred: TikTokBrowserMetrics,
@@ -306,25 +433,36 @@ class TikTokFreeCollector:
 
         public = self._oembed_metrics(resolved_url)
         token = self.token()
-        if not token:
-            token_warning = (
-                "Token Apify belum disimpan. Caption dan author memakai metadata publik; "
-                "views, followers, dan engagement memerlukan kredit gratis Apify."
-            )
+        provider = TikTokBrowserMetrics(source="free")
+        provider_errors: list[str] = []
+        if token:
+            try:
+                provider = self._apify_metrics(resolved_url, token)
+            except TikTokFreeError as exc:
+                provider_errors.append(str(exc))
+
+        if not token or self._needs_post_fallback(provider):
+            try:
+                fallback = self._public_fallback_metrics(resolved_url)
+                provider = self._merge(provider, fallback)
+            except TikTokFreeError as exc:
+                provider_errors.append(str(exc))
+
+        if not self._has_data(provider):
+            if self._has_data(public):
+                warning = " ".join(dict.fromkeys(provider_errors))
+                if resolve_warning:
+                    warning = f"{resolve_warning} {warning}".strip()
+                public.warning = warning or public.warning
+                return public
+            reason = " ".join(dict.fromkeys(provider_errors))
             if resolve_warning:
-                token_warning = f"{resolve_warning} {token_warning}"
-            public.warning = f"{public.warning} {token_warning}" if public.warning else token_warning
-            return public
-        try:
-            provider = self._apify_metrics(resolved_url, token)
-        except TikTokFreeError as exc:
-            public.warning = str(exc)
-            return public
+                reason = f"{resolve_warning} {reason}".strip()
+            raise TikTokFreeError(reason or "URL TikTok tidak dapat diproses.")
+
         combined = self._merge(provider, public)
+        if combined.followers is None:
+            combined.followers = self._public_profile_followers(combined.username)
         combined.source = "free"
-        if any(
-            getattr(provider, name) is not None
-            for name in ("caption", "views", "likes", "comments", "shares", "followers")
-        ):
-            combined.warning = provider.warning
+        combined.warning = provider.warning
         return combined

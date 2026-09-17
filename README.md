@@ -31,6 +31,8 @@ Aug 30, 2026 https://www.instagram.com/p/contoh/
 
 Hanya URL-nya yang akan dipakai. Hasil disimpan setiap kali satu URL selesai, jadi antrean panjang bisa dijeda dan dilanjutkan tanpa mulai dari awal.
 
+URL pendek dan URL hasil tombol **Share** juga bisa langsung ditempel. Ini mencakup `youtu.be`, `vt.tiktok.com`, `vm.tiktok.com`, `fb.watch`, `fb.me`, `t.co`, serta format `/share/...` milik Facebook, Instagram, dan Threads. MIDETA mengarahkan tautan tersebut ke posting aslinya sebelum membaca data, tetapi tetap menampilkan URL yang ditempel pada baris hasil agar urutannya mudah dicocokkan.
+
 #### Pilihan mode Instagram
 
 Fast dan Advanced sama-sama memakai Chrome khusus MIDETA yang sudah login ke Instagram.
@@ -57,7 +59,7 @@ Password hanya diketik di Instagram. MIDETA tidak membaca atau menyimpannya.
 
 #### TikTok Free Mode
 
-Pilih **Free tanpa login** agar TikTok tidak dibuka satu per satu di Chrome. Caption dan author tetap dibaca dari metadata publik TikTok. Untuk mendapatkan views, followers, likes, comments, shares, dan bookmark, MIDETA memakai kredit gratis Apify.
+Pilih **Free tanpa login** agar TikTok tidak dibuka satu per satu di Chrome. MIDETA lebih dulu memakai sumber publik TikTok dan, bila hasilnya dibatasi atau kosong, mencoba sumber publik cadangan yang tetap dicocokkan dengan ID posting. Token Apify bersifat opsional, tetapi membantu memperluas cakupan data dan peluang mendapatkan followers.
 
 Cara menyiapkannya:
 
@@ -65,9 +67,9 @@ Cara menyiapkannya:
 2. Buka **Settings → API & Integrations** di Apify dan salin API token.
 3. Pilih TikTok di halaman **Social Media Enrichment**.
 4. Tempel token pada kolom **Apify API token**, lalu klik **Simpan token**.
-5. Masukkan URL video dan mulai TikTok Free Mode.
+5. Masukkan URL video, foto, atau short link lalu mulai TikTok Free Mode.
 
-Token disimpan di folder privat pada komputer ini. Token tidak masuk ke Git, database MIDETA, atau file hasil. Jika token belum dipasang atau kredit gratis habis, MIDETA tetap mencoba caption dan author. Kolom lain akan ditandai belum tersedia, bukan diisi dengan angka tebakan.
+Token disimpan di folder privat pada komputer ini. Token tidak masuk ke Git, database MIDETA, atau file hasil. Tanpa token, MIDETA tetap mencoba tanggal, author, caption, views, likes, comments, shares, dan bookmark dari sumber publik yang tersedia. Followers atau kolom lain yang tidak diberikan sumber akan ditandai **Tidak tersedia**, bukan diisi dengan angka tebakan.
 
 Mode **Chrome login** masih tersedia sebagai cadangan. TikTok kadang memberi HTTP 403 ketika banyak URL dibuka berurutan. Jika itu terjadi, hentikan sesi browser dan gunakan Free Mode.
 
@@ -110,6 +112,7 @@ Fitur ini membutuhkan login di Chrome Threads Tracker. Sesi browsernya dibuat te
 - Jika Facebook tidak menampilkan followers tetapi menampilkan friends, jumlah friends dipakai sebagai pengganti.
 - Bookmark Facebook Reels hanya diisi bila Facebook benar-benar menampilkan angkanya.
 - Data yang memang tidak diberikan platform ditulis **Tidak tersedia**. Nilai `0` hanya dipakai jika platform menyatakan angkanya nol.
+- URL yang gagal total tetap berada pada urutan input dan ditulis **URL tidak dapat diproses**, sehingga baris hasil tidak bergeser.
 - Postingan privat, sesi login kedaluwarsa, CAPTCHA, perubahan tampilan platform, dan rate limit dapat membuat sebagian data tidak terbaca.
 
 **Jika halaman tidak mau terbuka saat memakai akun yang login:** enrichment dalam jumlah besar kadang membuat platform membatasi akun atau sesi tersebut untuk sementara. Gejalanya bisa berupa halaman kosong, halaman gagal dimuat, atau data tidak muncul di Chrome MIDETA. Jeda prosesnya, lalu login atau pindah ke akun media sosial lain dan lanjutkan antrean. Akun sebelumnya dapat dipakai lagi setelah aksesnya kembali normal. Hindari mencoba URL yang sama terus-menerus saat akun masih dibatasi.
@@ -192,6 +195,8 @@ Aug 30, 2026 https://www.instagram.com/p/example/
 
 MIDETA uses the URL and ignores the surrounding text. Each result is saved as soon as it finishes, so a large queue can be paused and resumed without starting over.
 
+Short links and links copied from a platform's **Share** button can be pasted directly. This includes `youtu.be`, `vt.tiktok.com`, `vm.tiktok.com`, `fb.watch`, `fb.me`, `t.co`, and the `/share/...` formats used by Facebook, Instagram, and Threads. MIDETA resolves these links to the original post before collecting data while keeping the pasted URL in the result row so the original order remains easy to match.
+
 #### Instagram modes
 
 Fast and Advanced both use a dedicated MIDETA Chrome profile logged in to Instagram.
@@ -218,7 +223,7 @@ Your password is entered only on Instagram. MIDETA does not read or store it.
 
 #### TikTok Free Mode
 
-Choose **Free tanpa login** so MIDETA does not open every TikTok URL in Chrome. Captions and authors come from TikTok's public metadata. MIDETA uses Apify's free credits for views, followers, likes, comments, shares, and bookmarks.
+Choose **Free tanpa login** so MIDETA does not open every TikTok URL in Chrome. MIDETA first checks TikTok's public metadata and, when that result is restricted or empty, uses a public fallback that must match the target post ID. An Apify token is optional, but improves coverage and the chance of retrieving followers.
 
 Setup:
 
@@ -226,9 +231,9 @@ Setup:
 2. Open **Settings → API & Integrations** in Apify and copy the API token.
 3. Select TikTok on the **Social Media Enrichment** page.
 4. Paste the token into **Apify API token**, then click **Simpan token**.
-5. Paste the video URLs and start TikTok Free Mode.
+5. Paste video, photo, or short URLs and start TikTok Free Mode.
 
-The token stays in a private folder on this computer. It is not added to Git, the MIDETA database, or exported files. If no token is configured or the free credits run out, MIDETA still tries to collect the caption and author. Other fields are marked unavailable instead of being filled with guessed numbers.
+The token stays in a private folder on this computer. It is not added to Git, the MIDETA database, or exported files. Without a token, MIDETA still attempts to collect the date, author, caption, views, likes, comments, shares, and bookmarks from available public sources. Followers or other missing fields are marked **Tidak tersedia** instead of being filled with guessed numbers.
 
 **Chrome login** remains available as a fallback. TikTok may return HTTP 403 when several URLs are opened in sequence. If that happens, stop the browser session and use Free Mode.
 
@@ -271,6 +276,7 @@ This feature requires a login in its dedicated Threads Tracker Chrome profile. I
 - If Facebook has no public follower count but shows friends, MIDETA uses the friend count.
 - Facebook Reel bookmarks are filled only when Facebook displays a real count.
 - Data that a platform does not provide is marked **Tidak tersedia**. `0` is used only when the platform reports zero.
+- A URL that fails completely stays in its original input position and is marked **URL tidak dapat diproses**, so following rows never shift.
 - Private posts, expired sessions, CAPTCHAs, layout changes, and rate limits may leave some fields unavailable.
 
 **If pages stop loading for the logged-in account:** a large enrichment run may cause the platform to temporarily limit that account or browser session. The page may appear blank, fail to load, or return no data in MIDETA Chrome. Pause the run, log in or switch to another social media account, and then resume the queue. The previous account can be used again after its access returns to normal. Avoid repeatedly retrying the same URLs while the account is still limited.

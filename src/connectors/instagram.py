@@ -30,8 +30,10 @@ class InstagramConnector(BaseConnector):
     @staticmethod
     def _post_shortcode(url: str) -> str | None:
         parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
+        if parts and parts[0].casefold() == "share":
+            return None
         for index, part in enumerate(parts[:-1]):
-            if part.casefold() in {"p", "reel", "reels"}:
+            if part.casefold() in {"p", "reel", "reels", "tv"}:
                 return parts[index + 1]
         return None
 
