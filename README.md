@@ -8,12 +8,11 @@ MIDETA membantu merapikan metadata dan komentar dari posting media sosial. Aplik
 
 ### Yang bisa dilakukan
 
-MIDETA punya empat bagian utama:
+MIDETA punya tiga bagian utama:
 
 - **Social Media Enrichment** untuk mengambil tanggal posting, author, caption, followers, views, likes, comments, bookmark, shares, dan repost.
 - **Comment Scrapper** untuk mengambil komentar publik, membedakan komentar utama dan reply, lalu mengurutkannya berdasarkan engagement.
 - **Riwayat Analisis** untuk membuka kembali hasil yang pernah diproses.
-- **Threads Tracker** untuk mencari posting Threads berdasarkan keyword, rentang waktu, dan engagement.
 
 Platform yang didukung: YouTube, TikTok, Facebook, Instagram, Threads, dan X.
 
@@ -93,18 +92,6 @@ MIDETA dapat mengambil maksimal 2.000 komentar dari setiap URL. Progress bar men
 
 Comment Scrapper juga mendukung Split Screen dan Triple Screen, dengan hasil terpisah untuk setiap platform.
 
-### Threads Tracker
-
-Threads Tracker mencari posting melalui halaman pencarian Threads. Masukkan satu keyword, lalu pilih:
-
-- **Recent (24 jam)** untuk posting dalam 24 jam terakhir;
-- **Last 7 days** untuk posting dalam tujuh hari terakhir;
-- **All** untuk semua hasil yang berhasil dimuat.
-
-Hasil dapat diurutkan dari engagement paling ramai, engagement paling rendah, atau posting terbaru. Total engagement dihitung dari Likes + Comments + Reposts + Shares. Maksimal 200 hasil dapat diambil dalam satu pencarian, lalu hasilnya dapat diunduh sebagai CSV atau XLSX.
-
-Fitur ini membutuhkan login di Chrome Threads Tracker. Sesi browsernya dibuat terpisah dari Comment Scrapper agar keduanya tidak saling mengganggu. Pilihan **All** berarti seluruh hasil yang berhasil diberikan dan dimuat oleh Threads, bukan seluruh arsip Threads tanpa batas.
-
 ### Catatan hasil
 
 - Angka engagement adalah snapshot saat URL diperiksa dan bisa berubah sesudahnya.
@@ -157,7 +144,6 @@ pages/                     halaman fitur Streamlit
 src/connectors/            pembaca data tiap platform
 src/instagram_browser.py   enrichment Instagram dengan login
 src/comment_browser.py     pengambilan komentar Facebook, Threads, dan X
-src/threads_tracker.py     pencarian keyword dan ranking Threads
 src/batch.py               antrean dan pemulihan proses
 src/database.py            penyimpanan riwayat lokal
 src/exporters.py           pembuatan CSV dan XLSX
@@ -172,12 +158,11 @@ MIDETA cleans up post metadata and comments from social media. It runs on your o
 
 ### What it does
 
-MIDETA has four main sections:
+MIDETA has three main sections:
 
 - **Social Media Enrichment** collects the post date, author, caption, followers, views, likes, comments, bookmarks, shares, and reposts.
 - **Comment Scrapper** collects public comments, separates parent comments from replies, and ranks them by engagement.
 - **Analysis History** keeps earlier results available for review.
-- **Threads Tracker** finds Threads posts by keyword, time range, and engagement.
 
 Supported platforms: YouTube, TikTok, Facebook, Instagram, Threads, and X.
 
@@ -257,18 +242,6 @@ MIDETA can collect up to 2,000 comments from each URL. The progress bar shows ho
 
 Comment Scrapper also supports Split Screen and Triple Screen, with separate results for every platform.
 
-### Threads Tracker
-
-Threads Tracker searches posts through the Threads search page. Enter one keyword, then choose:
-
-- **Recent (24 hours)** for posts from the last 24 hours;
-- **Last 7 days** for posts from the last seven days;
-- **All** for every result that can be loaded.
-
-Results can be sorted by highest engagement, lowest engagement, or newest post. Total engagement is calculated as Likes + Comments + Reposts + Shares. Each search can collect up to 200 results and export them as CSV or XLSX.
-
-This feature requires a login in its dedicated Threads Tracker Chrome profile. Its browser session is separate from Comment Scrapper so the two features do not interfere with each other. **All** means all results returned and loaded by Threads, not the platform's complete archive.
-
 ### Notes about the results
 
 - Engagement is a snapshot and may change after the run.
@@ -323,7 +296,6 @@ src/instagram_browser.py   logged-in Instagram enrichment
 src/tiktok_browser.py      logged-in TikTok fallback
 src/tiktok_free.py         no-login TikTok enrichment
 src/comment_browser.py     Facebook, Threads, and X comment collection
-src/threads_tracker.py     Threads keyword search and ranking
 src/batch.py               queues and resume support
 src/database.py            local history storage
 src/exporters.py           CSV and XLSX generation
