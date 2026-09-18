@@ -15,7 +15,7 @@ from src.config import DATA_DIR, MAX_COMMENTS_PER_URL
 from src.connectors import get_platform_connector
 from src.connectors.base import BaseConnector
 from src.dates import relative_social_date_iso, social_date_iso
-from src.models import CommentCollection, FieldStatus, PublicComment
+from src.models import CommentCollection, DataField, FieldStatus, PublicComment
 
 
 class CommentBrowserError(RuntimeError):
@@ -27,7 +27,7 @@ class CommentBrowserLoginRequired(CommentBrowserError):
 
 
 class CommentBrowserCollector:
-    RUNTIME_VERSION = 5
+    RUNTIME_VERSION = 12
     THREADS_MAX_SCROLL_ROUNDS = 240
     FACEBOOK_MAX_SCROLL_ROUNDS = 240
     X_MAX_SCROLL_ROUNDS = 240
@@ -69,6 +69,7 @@ class CommentBrowserCollector:
         self.wait_seconds = wait_seconds
         self.headless = headless
         self.driver = None
+        self._threads_followers_cache: dict[str, tuple[float, str]] = {}
         atexit.register(self.close)
 
     @staticmethod
@@ -98,15 +99,65 @@ class CommentBrowserCollector:
         if self.driver is None:
             return False
         try:
-            return bool(self.driver.window_handles)
+            handles = self.driver.window_handles
+            if not handles:
+                self._discard_driver()
+                return False
+            try:
+                current_handle = self.driver.current_window_handle
+            except (InvalidSessionIdException, NoSuchWindowException, WebDriverException):
+                current_handle = None
+            if current_handle not in handles:
+                self.driver.switch_to.window(handles[-1])
+            return True
         except (InvalidSessionIdException, NoSuchWindowException, WebDriverException):
-            self.driver = None
+            self._discard_driver()
             return False
+
+    def _discard_driver(self) -> None:
+        """Forget a dead Chrome session so the next action can start cleanly."""
+        driver, self.driver = self.driver, None
+        if driver is None:
+            return
+        try:
+            driver.quit()
+        except WebDriverException:
+            pass
+
+    @staticmethod
+    def _session_was_lost(exc: WebDriverException) -> bool:
+        if isinstance(exc, (InvalidSessionIdException, NoSuchWindowException)):
+            return True
+        message = str(exc).casefold()
+        return any(
+            marker in message
+            for marker in (
+                "no such window",
+                "target window already closed",
+                "web view not found",
+                "invalid session id",
+                "session deleted",
+                "disconnected",
+                "not connected to devtools",
+            )
+        )
 
     def start(self):
         if self.is_running():
             return self.driver
         self.profile_dir.mkdir(parents=True, exist_ok=True)
+        debugger_file = self.profile_dir / "DevToolsActivePort"
+        if debugger_file.exists():
+            try:
+                port = debugger_file.read_text(encoding="utf-8").splitlines()[0].strip()
+                if port.isdigit():
+                    attach_options = webdriver.ChromeOptions()
+                    attach_options.debugger_address = f"127.0.0.1:{port}"
+                    self.driver = webdriver.Chrome(options=attach_options)
+                    self.driver.set_page_load_timeout(self.wait_seconds + 10)
+                    return self.driver
+            except (OSError, IndexError, WebDriverException):
+                self.driver = None
         options = webdriver.ChromeOptions()
         options.add_argument(f"--user-data-dir={self.profile_dir.resolve()}")
         options.add_argument("--profile-directory=Default")
@@ -124,6 +175,205 @@ class CommentBrowserCollector:
                 f"Chrome MIDETA untuk {self.platform} tidak dapat dibuka. Tutup jendela lama, lalu coba lagi."
             ) from exc
         return self.driver
+
+    @staticmethod
+    def _threads_permalink(driver, fallback_url: str) -> str:
+        current_url = str(getattr(driver, "current_url", "") or fallback_url)
+        if re.search(r"/@[^/]+/post/[^/?#]+", current_url, re.I):
+            return current_url
+        try:
+            candidates = driver.execute_script(
+                r"""
+                const canonical = document.querySelector('link[rel="canonical"]')?.href || '';
+                const openGraph = document.querySelector('meta[property="og:url"]')?.content || '';
+                const postLink = Array.from(document.querySelectorAll('a[href*="/post/"]'))
+                  .map(node => node.href || '')
+                  .find(href => /\/@[^/]+\/post\/[^/?#]+/i.test(href)) || '';
+                return [window.location.href || '', canonical, openGraph, postLink];
+                """
+            )
+        except WebDriverException:
+            candidates = []
+        if isinstance(candidates, (list, tuple)):
+            return next(
+                (
+                    str(candidate)
+                    for candidate in candidates
+                    if re.search(r"/@[^/]+/post/[^/?#]+", str(candidate or ""), re.I)
+                ),
+                current_url,
+            )
+        return current_url
+
+    @staticmethod
+    def _threads_detail_url(url: str) -> str:
+        """Use the permalink route that exposes the post header and its views."""
+        base = str(url or "").split("#", 1)[0].rstrip("/")
+        return f"{base}#/" if re.search(r"/@[^/]+/post/[^/?#]+", base, re.I) else str(url)
+
+    @staticmethod
+    def _open_threads_target_card(driver, target_code: str) -> bool:
+        if not target_code:
+            return False
+        try:
+            return bool(
+                driver.execute_script(
+                    r"""
+                    const wanted = String(arguments[0] || '').toLowerCase();
+                    const link = Array.from(document.querySelectorAll('a[href*="/post/"]')).find(node => {
+                      const href = String(node.href || node.getAttribute('href') || '').toLowerCase();
+                      return href.includes(`/post/${wanted}`);
+                    });
+                    if (!link) return false;
+                    link.scrollIntoView({block: 'center', inline: 'nearest'});
+                    link.click();
+                    return true;
+                    """,
+                    target_code,
+                )
+            )
+        except WebDriverException:
+            return False
+
+    def collect_threads_enrichment(self, url: str):
+        """Collect one exact Threads post from the saved browser session."""
+        if self.platform != "Threads":
+            raise CommentBrowserError("Fallback enrichment ini hanya tersedia untuk Threads.")
+        try:
+            return self._collect_threads_enrichment_once(url)
+        except WebDriverException as exc:
+            if self._session_was_lost(exc):
+                self._discard_driver()
+                try:
+                    return self._collect_threads_enrichment_once(url)
+                except WebDriverException as retry_exc:
+                    self._discard_driver()
+                    raise CommentBrowserError(
+                        "Chrome MIDETA untuk Threads terputus. Jalankan URL ini sekali lagi."
+                    ) from retry_exc
+            raise CommentBrowserError(
+                "Chrome MIDETA untuk Threads tidak dapat membaca posting ini."
+            ) from exc
+
+    @staticmethod
+    def _threads_visible_views(driver) -> int | None:
+        try:
+            label = driver.execute_script(
+                r"""
+                const count = '[\\d.,]+\\s*(?:k|m|b|rb|ribu|jt|juta)?';
+                const labels = '(?:views?|tayangan|penayangan|kali\\s+(?:dilihat|ditonton))';
+                const pattern = new RegExp(`^\\s*(?:${count}\\s+${labels}|(?:views?|tayangan|penayangan|dilihat|ditonton)\\s*:?\\s*${count})\\s*$`, 'i');
+                const nodes = Array.from(document.querySelectorAll('div, span, header, h1, h2, h3'));
+                const exact = nodes.find(node => {
+                  const text = (node.innerText || '').replace(/\s+/g, ' ').trim();
+                  return pattern.test(text) && !Array.from(node.children).some(child =>
+                    pattern.test((child.innerText || '').replace(/\s+/g, ' ').trim())
+                  );
+                });
+                if (exact) return (exact.innerText || '').replace(/\s+/g, ' ').trim();
+                const body = (document.body?.innerText || '').replace(/\s+/g, ' ');
+                return (
+                  body.match(/([\d.,]+\s*(?:k|m|b|rb|ribu|jt|juta)?)\s+(?:views?|tayangan|penayangan|kali\s+(?:dilihat|ditonton))\b/i) ||
+                  body.match(/(?:views?|tayangan|penayangan|dilihat|ditonton)\s*:?\s*([\d.,]+\s*(?:k|m|b|rb|ribu|jt|juta)?)/i) ||
+                  []
+                )[0] || '';
+                """
+            )
+        except WebDriverException:
+            return None
+        text = str(label or "")
+        match = re.search(
+            r"([\d.,]+\s*(?:k|m|b|rb|ribu|jt|juta)?)\s+"
+            r"(?:views?|tayangan|penayangan|kali\s+(?:dilihat|ditonton))\b",
+            text,
+            re.I,
+        )
+        if not match:
+            match = re.search(
+                r"(?:views?|tayangan|penayangan|dilihat|ditonton)\s*:?\s*"
+                r"([\d.,]+\s*(?:k|m|b|rb|ribu|jt|juta)?)",
+                text,
+                re.I,
+            )
+        return BaseConnector._human_count(match.group(1)) if match else None
+
+    def _collect_threads_enrichment_once(self, url: str):
+        driver = self.start()
+        driver.get(url)
+        self._wait_for_page()
+        current_url = self._threads_permalink(driver, url)
+        target_match = re.search(r"/post/([^/?#]+)", current_url, re.I)
+        target_code = target_match.group(1) if target_match else ""
+        connector = get_platform_connector(current_url, "Threads")
+        if target_code:
+            try:
+                WebDriverWait(driver, min(self.wait_seconds, 10)).until(
+                    lambda active: connector._target_post(active.page_source, target_code) is not None
+                )
+            except WebDriverException:
+                pass
+        post_html = driver.page_source
+        visible_views = None
+        try:
+            visible_views = WebDriverWait(driver, min(self.wait_seconds, 5)).until(
+                lambda active: self._threads_visible_views(active)
+            )
+        except WebDriverException:
+            visible_views = self._threads_visible_views(driver)
+
+        # A signed-in Threads session can render a permalink as a card in the
+        # For You feed. Open that exact card to reach the real thread header,
+        # where Threads exposes the public view count.
+        if visible_views is None and self._open_threads_target_card(driver, target_code):
+            try:
+                visible_views = WebDriverWait(driver, min(self.wait_seconds, 10)).until(
+                    lambda active: self._threads_visible_views(active)
+                )
+            except WebDriverException:
+                visible_views = self._threads_visible_views(driver)
+            post_html = driver.page_source
+
+        # Reload the detail hash as a final route-level fallback. This also
+        # handles sessions that already added the hash while showing the feed.
+        detail_url = self._threads_detail_url(current_url)
+        if visible_views is None and re.search(r"/@[^/]+/post/[^/?#]+", detail_url, re.I):
+            driver.get(detail_url)
+            self._wait_for_page()
+            current_url = self._threads_permalink(driver, current_url)
+            if target_code:
+                try:
+                    WebDriverWait(driver, min(self.wait_seconds, 10)).until(
+                        lambda active: connector._target_post(active.page_source, target_code) is not None
+                    )
+                except WebDriverException:
+                    pass
+            post_html = driver.page_source
+            try:
+                visible_views = WebDriverWait(driver, min(self.wait_seconds, 10)).until(
+                    lambda active: self._threads_visible_views(active)
+                )
+            except WebDriverException:
+                visible_views = self._threads_visible_views(driver)
+        preview = connector.enrich_loaded_html(post_html, current_url)
+        username = str(preview.username.value or "").strip().lstrip("@")
+        profile_html = None
+        if username:
+            cached = self._threads_followers_cache.get(username.casefold())
+            if cached and time.monotonic() - cached[0] < 900:
+                profile_html = cached[1]
+            else:
+                driver.get(f"https://www.threads.com/@{username}")
+                self._wait_for_page()
+                profile_html = driver.page_source
+                self._threads_followers_cache[username.casefold()] = (time.monotonic(), profile_html)
+        result = connector.enrich_loaded_html(
+            post_html,
+            current_url,
+            profile_html=profile_html,
+        )
+        if visible_views is not None:
+            result.views = DataField(value=visible_views, status=FieldStatus.AVAILABLE)
+        return result
 
     def open_login(self) -> bool:
         """Open the saved session, showing login only when it has expired."""
@@ -159,14 +409,7 @@ class CommentBrowserCollector:
         return bool(names & self.LOGIN_COOKIES[self.platform])
 
     def close(self) -> None:
-        if self.driver is None:
-            return
-        try:
-            self.driver.quit()
-        except WebDriverException:
-            pass
-        finally:
-            self.driver = None
+        self._discard_driver()
 
     def _wait_for_page(self) -> None:
         WebDriverWait(self.start(), self.wait_seconds).until(
@@ -360,6 +603,8 @@ class CommentBrowserCollector:
                 break
             if self.platform == "Facebook" and stable_rounds >= 12 and not clicked:
                 break
+            if self.platform == "Threads" and stable_rounds >= 12 and not clicked:
+                break
             if idle_rounds >= self.IDLE_STABLE_ROUNDS:
                 break
         rows = list(thread_rows.values())
@@ -432,11 +677,14 @@ class CommentBrowserCollector:
               .map(node => node.getBoundingClientRect().top);
             const endTop = endTops.length ? Math.min(...endTops) : Number.POSITIVE_INFINITY;
 
-            const targetAnchor = anchors.find(anchor => {
+            const matchingTargetAnchors = anchors.filter(anchor => {
               const href = anchor.href || '';
               const match = href.match(/\/(@[^/]+)\/post\/([^/?#]+)/);
               return Boolean(match && match[2] === targetCode);
             });
+            const targetAnchor = matchingTargetAnchors.find(anchor =>
+              anchor.closest('[data-pressable-container="true"]')
+            ) || matchingTargetAnchors[0];
             const pagePath = decodeURIComponent(window.location.pathname || '');
             const pageMatch = pagePath.match(/\/@[^/]+\/post\/([^/?#]+)/);
             if (!targetAnchor && (!pageMatch || pageMatch[1] !== targetCode)) return [];
@@ -487,7 +735,8 @@ class CommentBrowserCollector:
                 href,
                 code: match[2],
                 author: match[1].slice(1),
-                date: box.querySelector('time')?.getAttribute('datetime') || anchor.getAttribute('title') || '',
+                date: box.querySelector('time')?.getAttribute('datetime') ||
+                  anchor.getAttribute('title') || anchor.innerText || '',
                 comment,
                 likes: iconMetric(['like', 'suka']),
                 replies: iconMetric(['reply', 'comment', 'balasan', 'komentar']),
@@ -839,6 +1088,39 @@ class CommentBrowserCollector:
         max_comments: int = MAX_COMMENTS_PER_URL,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> CommentCollection:
+        try:
+            return self._collect_once(
+                url,
+                max_comments=max_comments,
+                progress_callback=progress_callback,
+            )
+        except WebDriverException as exc:
+            if self._session_was_lost(exc):
+                self._discard_driver()
+                try:
+                    return self._collect_once(
+                        url,
+                        max_comments=max_comments,
+                        progress_callback=progress_callback,
+                    )
+                except WebDriverException as retry_exc:
+                    self._discard_driver()
+                    raise CommentBrowserError(
+                        f"Chrome MIDETA untuk {self.platform} terputus. "
+                        "Jendelanya sudah dibuka ulang; jalankan pengambilan komentar sekali lagi."
+                    ) from retry_exc
+            raise CommentBrowserError(
+                f"Chrome MIDETA untuk {self.platform} tidak dapat membaca halaman ini. "
+                "Pastikan posting terlihat di Chrome MIDETA, lalu coba lagi."
+            ) from exc
+
+    def _collect_once(
+        self,
+        url: str,
+        *,
+        max_comments: int,
+        progress_callback: Callable[[int, int], None] | None,
+    ) -> CommentCollection:
         connector = get_platform_connector(url, self.platform)
         driver = self.start()
         driver.get(url)
@@ -860,6 +1142,8 @@ class CommentBrowserCollector:
             except WebDriverException:
                 pass
         current_url = driver.current_url or url
+        if self.platform == "Threads":
+            current_url = self._threads_permalink(driver, url)
         if self.platform == "Facebook":
             self._prepare_facebook_comments()
         if self.platform == "Threads":

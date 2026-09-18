@@ -88,6 +88,8 @@ Pilih platform dan masukkan URL posting yang ingin diperiksa. Hasil komentar ber
 
 Facebook, Threads, dan X memakai Chrome khusus MIDETA karena komentarnya baru dimuat saat halaman dibuka. Sebelum pengambilan pertama, klik **Buka Sesi**, login di Chrome MIDETA, lalu klik **Periksa Login**. Sesi akan dipakai kembali sampai kedaluwarsa atau logout.
 
+Enrichment Threads mencoba halaman publik terlebih dahulu. Jika Threads mengembalikan halaman kosong atau `invalid_post` untuk post yang sebenarnya masih ada, MIDETA otomatis memakai Sesi Threads yang sama sebagai fallback. Login satu kali diperlukan hanya untuk post yang dibatasi seperti ini; nilai yang benar-benar tidak tampil tetap ditulis **Tidak tersedia**.
+
 MIDETA dapat mengambil maksimal 2.000 komentar dari setiap URL. Progress bar menampilkan jumlah yang sudah ditemukan selama halaman di-scroll dan reply dibuka. Platform tetap dapat menyembunyikan atau membatasi sebagian komentar.
 
 Comment Scrapper juga mendukung Split Screen dan Triple Screen, dengan hasil terpisah untuk setiap platform.

@@ -10,6 +10,7 @@ import streamlit as st
 from bs4 import BeautifulSoup
 
 from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, failed_social_result, parse_url_list, social_job_results, social_result_row
+from src.comment_browser import CommentBrowserCollector, CommentBrowserError
 from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, detect_platform, get_platform_connector
 from src.connectors.instagram import InstagramConnector
@@ -82,6 +83,11 @@ def tiktok_browser() -> TikTokBrowserCollector:
 
 def tiktok_free_collector() -> TikTokFreeCollector:
     return TikTokFreeCollector()
+
+
+@st.cache_resource(show_spinner=False)
+def threads_metadata_browser_v6() -> CommentBrowserCollector:
+    return CommentBrowserCollector("Threads")
 
 
 def job_chunk_size(job: dict[str, Any]) -> int:
@@ -241,6 +247,33 @@ def render_tiktok_controls(slot: str) -> str:
     return "advanced"
 
 
+def render_threads_controls(slot: str) -> None:
+    st.caption(
+        "MIDETA mencoba metadata publik lebih dulu. Jika Threads mengirim halaman kosong atau invalid_post, "
+        "MIDETA otomatis memakai sesi Chrome Threads untuk membaca post yang benar."
+    )
+    open_col, check_col, close_col = st.columns(3)
+    if open_col.button("Buka Sesi Threads", key=f"open_threads_{slot}", width="stretch"):
+        try:
+            if threads_metadata_browser_v6().open_login():
+                st.success("Sesi Threads tersimpan masih aktif.")
+            else:
+                st.info("Selesaikan login di Chrome MIDETA, lalu tekan Periksa Login.")
+        except CommentBrowserError as exc:
+            st.error(str(exc))
+    if check_col.button("Periksa Login", key=f"check_threads_{slot}", width="stretch"):
+        try:
+            if threads_metadata_browser_v6().is_logged_in():
+                st.success("Threads sudah login dan fallback enrichment siap digunakan.")
+            else:
+                st.warning("Login belum terdeteksi. Post publik tetap dicoba, tetapi post yang dibatasi mungkin belum terbaca.")
+        except CommentBrowserError as exc:
+            st.error(str(exc))
+    if close_col.button("Tutup Chrome Threads", key=f"close_threads_{slot}", width="stretch"):
+        threads_metadata_browser_v6().close()
+        st.info("Chrome Threads MIDETA sudah ditutup.")
+
+
 def render_platform_setup(platform: str, slot: str, compact: bool = False) -> str:
     if compact:
         st.subheader(PLATFORM_ICONS[platform])
@@ -254,6 +287,8 @@ def render_platform_setup(platform: str, slot: str, compact: bool = False) -> st
         return render_instagram_controls(slot)
     if platform == "TikTok":
         return render_tiktok_controls(slot)
+    if platform == "Threads":
+        render_threads_controls(slot)
     return "standard"
 
 
@@ -590,7 +625,7 @@ def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, An
 def collect_one_item(
     job: dict[str, Any],
     item: dict[str, Any],
-    active_browser: InstagramBrowserCollector | TikTokBrowserCollector | None,
+    active_browser: InstagramBrowserCollector | TikTokBrowserCollector | CommentBrowserCollector | None,
 ) -> dict[str, Any]:
     url = item["url"]
     position = item["position"]
@@ -679,6 +714,40 @@ def collect_one_item(
                     "Alasan": detail,
                 }
             result = build_tiktok_browser_result(url, metrics)
+        elif not job["mock_mode"] and job["platform"] == "Threads":
+            result = connector.enrich(processing_url)
+            important_fields = (
+                result.caption,
+                result.likes,
+                result.comments,
+                result.shares,
+                result.views,
+                result.reposts,
+            )
+            if active_browser is not None and any(field.value is None for field in important_fields):
+                try:
+                    browser_result = active_browser.collect_threads_enrichment(processing_url)
+                    if any(
+                        field.status == FieldStatus.AVAILABLE
+                        for field in (
+                            browser_result.username,
+                            browser_result.caption,
+                            browser_result.likes,
+                            browser_result.comments,
+                            browser_result.shares,
+                            browser_result.views,
+                            browser_result.reposts,
+                        )
+                    ):
+                        result = browser_result
+                    else:
+                        browser_issue = {
+                            "URL": url,
+                            "Platform": "Threads",
+                            "Alasan": browser_result.note or "Posting target tidak terlihat di sesi Chrome Threads.",
+                        }
+                except CommentBrowserError as exc:
+                    browser_issue = {"URL": url, "Platform": "Threads", "Alasan": str(exc)}
         elif not job["mock_mode"]:
             result = connector.enrich(processing_url)
 
@@ -779,18 +848,23 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
         seen_jobs.add(job["id"])
         active_browser = None
         needs_browser = (
-            job["platform"] == "Instagram"
+            job["platform"] in {"Instagram", "Threads"}
             or (job["platform"] == "TikTok" and job["enrichment_mode"] == "advanced")
         )
         if needs_browser and not job["mock_mode"]:
             try:
-                active_browser = instagram_browser() if job["platform"] == "Instagram" else tiktok_browser()
-                if not active_browser.is_logged_in():
+                if job["platform"] == "Instagram":
+                    active_browser = instagram_browser()
+                elif job["platform"] == "TikTok":
+                    active_browser = tiktok_browser()
+                else:
+                    active_browser = threads_metadata_browser_v6()
+                if job["platform"] in {"Instagram", "TikTok"} and not active_browser.is_logged_in():
                     set_social_job_status(job["id"], "paused")
                     activity.error(f"Sesi {job['platform']} berakhir. Login kembali, lalu lanjutkan proses.")
                     state_changed = True
                     continue
-            except (InstagramBrowserError, TikTokBrowserError) as exc:
+            except (InstagramBrowserError, TikTokBrowserError, CommentBrowserError) as exc:
                 set_social_job_status(job["id"], "paused")
                 activity.error(str(exc))
                 state_changed = True

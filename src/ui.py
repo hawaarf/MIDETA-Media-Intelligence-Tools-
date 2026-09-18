@@ -55,14 +55,14 @@ ENRICHMENT_GUIDES = {
         "note": "Password diketik langsung di Instagram dan tidak dibaca MIDETA. Fast tidak membuka profil/Reels; gunakan Advanced jika Followers dan Views diperlukan.",
     },
     "Threads": {
-        "summary": "Untuk post Threads publik. Enrichment metadata tidak memerlukan login.",
+        "summary": "Untuk post Threads publik. MIDETA memakai metadata publik dan otomatis beralih ke Chrome Threads bila halaman publik kosong.",
         "steps": [
             ("Salin URL post", "Gunakan tautan dengan format threads.com/@akun/post/…."),
             ("Tempel tautan", "Masukkan satu atau beberapa URL, satu URL per baris."),
             ("Ambil metadata", "MIDETA membaca author, caption, tanggal, views, followers, dan jumlah komentar yang tersedia."),
             ("Review hasil", "Nilai yang tidak diberikan Threads akan tampil 0 atau berstatus tidak tersedia."),
         ],
-        "note": "Login browser Threads hanya diperlukan pada Comment Scrapper, bukan untuk enrichment metadata publik.",
+        "note": "Sebagian post baru dapat dikirim Threads sebagai halaman invalid_post ke pembaca publik. Untuk kasus ini, login satu kali pada Sesi Threads agar fallback browser dapat membaca post target.",
     },
     "X": {
         "summary": "Untuk status/post publik di x.com. Tidak perlu login selama datanya tersedia publik.",

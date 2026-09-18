@@ -1,11 +1,132 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from selenium.common.exceptions import NoSuchWindowException
+
 from src.comment_browser import CommentBrowserCollector
 from src.models import FieldStatus, PublicComment
 
 
 class CommentBrowserTests(unittest.TestCase):
+    def test_threads_enrichment_uses_exact_post_and_profile_page(self):
+        collector = CommentBrowserCollector("Threads")
+        url = "https://www.threads.com/@ojoldiary/post/DdaVM2LE1aI"
+        post_html = """<html><body><header>2.2K views</header><script type="application/json">
+        {"media":{"code":"DdaVM2LE1aI","taken_at":1789697514,
+        "user":{"username":"ojoldiary"},"caption":{"text":"Caption target"},
+        "like_count":15,"text_post_app_info":{"direct_reply_count":9,
+        "repost_count":3,"reshare_count":4}}}</script></body></html>"""
+        profile_html = """<html><meta property="og:description"
+        content="508 Followers • 33 Threads"></html>"""
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.current_url = url
+        driver.page_source = post_html
+        driver.execute_script.return_value = "2.2K views"
+
+        def navigate(target):
+            driver.current_url = target
+            driver.page_source = profile_html if target.endswith("/@ojoldiary") else post_html
+
+        driver.get.side_effect = navigate
+        collector.driver = driver
+
+        with patch.object(collector, "_wait_for_page"):
+            result = collector.collect_threads_enrichment(url)
+
+        self.assertEqual(driver.get.call_args_list[0].args[0], url)
+        self.assertEqual(driver.get.call_args_list[1].args[0], "https://www.threads.com/@ojoldiary")
+        self.assertEqual(result.caption.value, "Caption target")
+        self.assertEqual(result.followers.value, 508)
+        self.assertEqual(result.views.value, 2_200)
+        self.assertEqual(result.comments.value, 9)
+
+    def test_threads_visible_views_ignores_unlabeled_numbers(self):
+        driver = MagicMock()
+        driver.execute_script.return_value = "15 9 3 4"
+
+        self.assertIsNone(CommentBrowserCollector._threads_visible_views(driver))
+
+    def test_threads_visible_views_accepts_indonesian_labels(self):
+        driver = MagicMock()
+        driver.execute_script.side_effect = ["2,2 rb kali dilihat", "Dilihat: 2,2 rb"]
+
+        self.assertEqual(CommentBrowserCollector._threads_visible_views(driver), 2_200)
+        self.assertEqual(CommentBrowserCollector._threads_visible_views(driver), 2_200)
+
+    def test_threads_detail_url_opens_thread_header_route(self):
+        self.assertEqual(
+            CommentBrowserCollector._threads_detail_url(
+                "https://www.threads.com/@ojoldiary/post/DdaVM2LE1aI/"
+            ),
+            "https://www.threads.com/@ojoldiary/post/DdaVM2LE1aI#/",
+        )
+        self.assertEqual(
+            CommentBrowserCollector._threads_detail_url(
+                "https://www.threads.com/share/RrTdJihUN/"
+            ),
+            "https://www.threads.com/share/RrTdJihUN/",
+        )
+
+    def test_threads_target_card_click_uses_exact_shortcode(self):
+        driver = MagicMock()
+        driver.execute_script.return_value = True
+
+        self.assertTrue(
+            CommentBrowserCollector._open_threads_target_card(driver, "DdaVM2LE1aI")
+        )
+        self.assertEqual(driver.execute_script.call_args.args[1], "DdaVM2LE1aI")
+
+    def test_dead_browser_window_is_reopened_automatically(self):
+        collector = CommentBrowserCollector("Threads")
+        stale_driver = MagicMock()
+        collector.driver = stale_driver
+        recovered = MagicMock()
+
+        with patch.object(
+            collector,
+            "_collect_once",
+            side_effect=[NoSuchWindowException("target window already closed"), recovered],
+        ) as collect_once:
+            result = collector.collect("https://www.threads.com/@akun/post/Target123")
+
+        self.assertIs(result, recovered)
+        self.assertEqual(collect_once.call_count, 2)
+        stale_driver.quit.assert_called_once_with()
+
+    def test_threads_share_url_uses_permalink_exposed_by_the_page(self):
+        collector = CommentBrowserCollector("Threads")
+        short_url = "https://www.threads.com/share/RrTdJihUN/"
+        permalink = "https://www.threads.com/@akun/post/Target123"
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.current_url = short_url
+        driver.page_source = "<html></html>"
+        driver.execute_script.return_value = [short_url, permalink, "", ""]
+        collector.driver = driver
+        connector = MagicMock()
+        connector._platform_comments.return_value = []
+        visible = PublicComment(author="ayu", comment="Komentar Threads", source_url=permalink)
+
+        with (
+            patch("src.comment_browser.get_platform_connector", return_value=connector),
+            patch.object(collector, "_wait_for_page"),
+            patch.object(collector, "_load_conversation", return_value=[{"code": "Target123"}]) as loader,
+            patch.object(collector, "_dom_comments", return_value=[visible]) as dom_comments,
+        ):
+            result = collector.collect(short_url)
+
+        loader.assert_called_once_with(
+            "Target123",
+            max_comments=2_000,
+            progress_callback=None,
+        )
+        dom_comments.assert_called_once_with(permalink, [{"code": "Target123"}])
+        self.assertEqual(result.url, permalink)
+        self.assertEqual(result.comments[0].comment, "Komentar Threads")
+
     def test_facebook_login_uses_its_own_saved_profile(self):
         collector = CommentBrowserCollector("Facebook")
         driver = MagicMock()
@@ -228,6 +349,33 @@ class CommentBrowserTests(unittest.TestCase):
             rows = collector._load_conversation("Target123")
 
         self.assertEqual([row["code"] for row in rows], ["Target123", "Comment1", "Comment2"])
+
+    def test_threads_loader_stops_after_comments_stop_changing(self):
+        collector = CommentBrowserCollector("Threads")
+        collector.THREADS_MAX_SCROLL_ROUNDS = 50
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.execute_script.side_effect = [
+            {"reachedEnd": False, "clicked": 0, "scrollY": index * 100, "height": 20_000}
+            for index in range(1, 51)
+        ]
+        collector.driver = driver
+        snapshot = [
+            {"code": "Target123", "is_target": True},
+            {"code": "Comment1", "author": "ayu", "comment": "Komentar pertama"},
+        ]
+
+        with (
+            patch.object(collector, "_threads_dom_rows", return_value=snapshot),
+            patch("src.comment_browser.time.sleep"),
+        ):
+            rows = collector._load_conversation("Target123")
+
+        self.assertEqual([row["code"] for row in rows], ["Target123", "Comment1"])
+        # The first round stores the initial comments, then twelve unchanged
+        # rounds confirm that the visible conversation is exhausted.
+        self.assertEqual(driver.execute_script.call_count, 13)
 
     def test_browser_collection_stops_at_two_thousand_comments_and_reports_progress(self):
         collector = CommentBrowserCollector("Threads")

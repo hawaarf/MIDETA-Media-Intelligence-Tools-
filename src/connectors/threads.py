@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 from src.connectors.base import BaseConnector
 from src.dates import social_date_iso
-from src.models import PublicComment
+from src.models import DataField, FieldStatus, PublicComment, SocialResult
 
 
 class ThreadsConnector(BaseConnector):
@@ -85,6 +85,85 @@ class ThreadsConnector(BaseConnector):
     def _target_is_available(self, html: str, soup, url: str) -> bool:
         shortcode = self._post_shortcode(url)
         return bool(shortcode and self._target_post(html, shortcode))
+
+    def enrich_loaded_html(
+        self,
+        html: str,
+        url: str,
+        *,
+        profile_html: str | None = None,
+    ) -> SocialResult:
+        """Read a Threads post already loaded by the saved Chrome session.
+
+        Threads occasionally returns a generic ``invalid_post`` page to a
+        plain HTTP request even though the same public post is visible in a
+        browser.  This entry point keeps the strict shortcode check used by
+        the public connector while allowing the enrichment page to parse the
+        browser's real page source as a fallback.
+        """
+        soup = BeautifulSoup(html, "lxml")
+        shortcode = self._post_shortcode(url)
+        post = self._target_post(html, shortcode) if shortcode else None
+        if not shortcode or not post:
+            empty = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+            return SocialResult(
+                url=url,
+                platform=self.platform,
+                username=empty,
+                caption=empty,
+                posted_at=empty,
+                followers=empty,
+                likes=empty,
+                comments=empty,
+                shares=empty,
+                views=empty,
+                bookmarks=empty,
+                reposts=empty,
+                note="Posting Threads tidak ditemukan atau tidak tersedia pada sesi browser.",
+            )
+
+        author = self._post_author(post)
+        if not author:
+            parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
+            author = parts[0].lstrip("@") if parts and parts[0].startswith("@") else None
+        caption = self._post_caption(post) or self._meta(
+            soup,
+            'meta[property="og:description"]',
+            'meta[name="description"]',
+        )
+        posted_at = self._platform_posted_at(html, soup, url, None)
+        if not posted_at:
+            posted_at = self._script_posted_at(self._metric_source(html, url))
+        metrics = self._platform_metrics(html, url)
+
+        followers = None
+        if profile_html:
+            profile_soup = BeautifulSoup(profile_html, "lxml")
+            followers = self._profile_count_by_label(
+                profile_html,
+                profile_soup,
+                "followers?",
+                "pengikut",
+            )
+
+        return SocialResult(
+            url=url,
+            platform=self.platform,
+            username=self._field(author),
+            caption=self._field(caption),
+            posted_at=self._field(posted_at),
+            followers=self._field(followers),
+            likes=self._field(metrics.get("likes")),
+            comments=self._field(metrics.get("comments")),
+            shares=self._field(metrics.get("shares")),
+            views=self._field(metrics.get("views")),
+            bookmarks=self._field(None, FieldStatus.NOT_SUPPORTED),
+            reposts=self._field(metrics.get("reposts")),
+            note=(
+                "Threads diperiksa melalui halaman post yang tampil di Chrome MIDETA. "
+                "Data yang tidak ditampilkan platform tetap ditandai tidak tersedia."
+            ),
+        )
 
     def _metric_source(self, html: str, url: str) -> str:
         shortcode = self._post_shortcode(url)

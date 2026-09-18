@@ -33,6 +33,23 @@ THREADS_TAKEN_AT_HTML = """<html><script>{"code":"PostingLain","taken_at":178824
 THREADS_TARGET_DATE_HTML = """<html><head><meta property="article:published_time" content="2026-08-01T00:00:00Z"></head><script>{"code":"PostingLain","taken_at":1787600000},{"code":"TargetDate","taken_at":1788805800}</script></html>"""
 THREADS_STRICT_TARGET_HTML = """<html><head><meta property="og:description" content="Caption rekomendasi yang salah"></head><script type="application/json">{"items":[{"post":{"pk":"other","code":"PostingLain","caption":{"text":"Posting rekomendasi"},"user":{"username":"akun.lain"},"taken_at":1787600000,"view_count":99999,"like_count":999,"text_post_app_info":{"direct_reply_count":88,"reshare_count":77,"repost_count":66}}},{"post":{"pk":"target","code":"TargetStrict","caption":{"text":"Caption target"},"user":{"username":"akun.target"},"taken_at":1788805800,"view_count":846,"like_count":5,"text_post_app_info":{"direct_reply_count":2,"reshare_count":1,"repost_count":0}}}]}</script><script type="application/ld+json">{"@type":"SocialMediaPosting","interactionStatistic":[{"interactionType":"LikeAction","userInteractionCount":777},{"interactionType":"ViewAction","userInteractionCount":88888}]}</script></html>"""
 THREADS_REPLIES_HTML = """<html><script type="application/json">{"thread_items":[{"post":{"pk":"root-1","code":"TargetThreads","caption":{"text":"Posting utama"},"user":{"username":"pemilik"},"taken_at":1788249600}},{"post":{"pk":"comment-1","code":"CommentThreads","caption":{"text":"Komentar langsung"},"user":{"username":"ayu"},"like_count":12,"taken_at":1788253200,"text_post_app_info":{"reply_to_post_id":"root-1","root_post_id":"root-1","direct_reply_count":1}}},{"post":{"pk":"reply-1","code":"ReplyThreads","caption":{"text":"Balasan komentar"},"user":{"username":"bima"},"like_count":3,"taken_at":1788256800,"text_post_app_info":{"reply_to_post_id":"comment-1","root_post_id":"root-1","direct_reply_count":0}}},{"post":{"pk":"other-1","code":"OtherThreads","caption":{"text":"Posting rekomendasi"},"user":{"username":"lain"},"like_count":999,"text_post_app_info":{"root_post_id":"other-root"}}}]}</script></html>"""
+THREADS_BROWSER_CAROUSEL_HTML = """<html><head>
+<link rel="canonical" href="https://www.threads.com/@ojoldiary/post/DdaVM2LE1aI">
+<meta property="og:description" content="Caption metadata target">
+</head><body><header>2.2K views</header><script type="application/json">
+{"route":{"params":{"shortcode":"DdaVM2LE1aI"}},"result":{"data":{"media":{
+"pk":"3988593661768324744","code":"DdaVM2LE1aI","taken_at":1789697514,
+"user":{"username":"ojoldiary"},
+"caption":{"text":"Izin untuk menjawab ya, Pak."},"like_count":15,
+"text_post_app_info":{"direct_reply_count":9,"repost_count":3,"reshare_count":4,
+"self_thread_info":{"post_position_in_self_thread":1,"self_thread_length":2}}
+}}}}
+</script><script>{"post":{"code":"Recommendation","user":{"username":"wrong"},
+"caption":{"text":"Caption rekomendasi"},"like_count":999,
+"view_count":999999,"text_post_app_info":{"direct_reply_count":999,"repost_count":999,"reshare_count":999}}}</script>
+</body></html>"""
+THREADS_BROWSER_PROFILE_HTML = """<html><head><meta property="og:description"
+content="508 Followers • 33 Threads • Ojol Solo–Karanganyar"></head></html>"""
 X_REPLIES_HTML = """<html><script type="application/json">{"tweets":[{"rest_id":"100","legacy":{"full_text":"Posting utama","conversation_id_str":"100","favorite_count":9,"reply_count":2},"core":{"user_results":{"result":{"legacy":{"screen_name":"pemilik"}}}}},{"rest_id":"101","legacy":{"full_text":"Komentar langsung","conversation_id_str":"100","in_reply_to_status_id_str":"100","favorite_count":15,"reply_count":1,"created_at":"Thu Sep 03 03:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"ayu"}}}}},{"rest_id":"102","legacy":{"full_text":"Balasan komentar","conversation_id_str":"100","in_reply_to_status_id_str":"101","favorite_count":4,"reply_count":0,"created_at":"Thu Sep 03 04:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"bima"}}}}},{"rest_id":"999","legacy":{"full_text":"Tweet rekomendasi","conversation_id_str":"999","in_reply_to_status_id_str":"998","favorite_count":999},"core":{"user_results":{"result":{"legacy":{"screen_name":"lain"}}}}}]}</script></html>"""
 X_FLIGHT_HTML = """<html><head><meta property="article:author" content="https://x.com/jurnal_ekuitas"><meta property="og:description" content="Caption X"><meta property="article:published_time" content="2026-08-13T03:07:48.000Z"></head><script>rest_id:"999",counts:{__typename:"ApiCounts",bookmark_count:91,favorite_count:999,reply_count:88,retweet_count:77},views:{__typename:"ViewCountInfo",count:"9999"};rest_id:"2087737859063394648",core:{__typename:"UserCore",screen_name:"jurnal_ekuitas",name:"Stock Journal"},relationship_counts:{__typename:"UserRelationshipCounts",followers:2224,following:106},counts:{__typename:"ApiCounts",bookmark_count:64,favorite_count:629,reply_count:53,retweet_count:64,quote_count:15},views:{__typename:"ViewCountInfo",count:"142215"}</script></html>"""
 INSTAGRAM_REPOST_HTML = """<html><head><meta property="og:description" content="Caption Instagram"></head><script>{"code":"PostingLain","repost_count":91},{"code":"DcRepost123","reshare_count":7}</script></html>"""
@@ -379,6 +396,48 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.comments[0].likes, 12)
         self.assertEqual(result.comments[0].reply_count, 1)
         self.assertNotIn("Posting rekomendasi", [comment.comment for comment in result.comments])
+
+    def test_threads_browser_html_reads_video_carousel_target_only(self):
+        url = "https://www.threads.com/@ojoldiary/post/DdaVM2LE1aI"
+        result = get_connector(url).enrich_loaded_html(
+            THREADS_BROWSER_CAROUSEL_HTML,
+            url,
+            profile_html=THREADS_BROWSER_PROFILE_HTML,
+        )
+
+        self.assertEqual(result.username.value, "ojoldiary")
+        self.assertEqual(result.caption.value, "Izin untuk menjawab ya, Pak.")
+        self.assertEqual(result.posted_at.value, "2026-09-18")
+        self.assertEqual(result.followers.value, 508)
+        self.assertEqual(result.views.value, 2_200)
+        self.assertEqual(result.likes.value, 15)
+        self.assertEqual(result.comments.value, 9)
+        self.assertEqual(result.reposts.value, 3)
+        self.assertEqual(result.shares.value, 4)
+        self.assertNotEqual(result.caption.value, "Caption rekomendasi")
+
+    def test_threads_browser_html_keeps_missing_target_unavailable(self):
+        url = "https://www.threads.com/@ojoldiary/post/MissingTarget"
+        result = get_connector(url).enrich_loaded_html(
+            THREADS_BROWSER_CAROUSEL_HTML,
+            url,
+            profile_html=THREADS_BROWSER_PROFILE_HTML,
+        )
+
+        fields = (
+            result.username,
+            result.caption,
+            result.posted_at,
+            result.followers,
+            result.likes,
+            result.comments,
+            result.shares,
+            result.views,
+            result.bookmarks,
+            result.reposts,
+        )
+        self.assertTrue(all(field.value is None for field in fields))
+        self.assertTrue(all(field.status == FieldStatus.NOT_PUBLIC for field in fields))
 
     @patch("src.connectors.base.fetch_public_html", return_value=(X_REPLIES_HTML, "https://x.com/pemilik/status/100"))
     @patch("src.connectors.base.validate_public_url", return_value="https://x.com/pemilik/status/100")
