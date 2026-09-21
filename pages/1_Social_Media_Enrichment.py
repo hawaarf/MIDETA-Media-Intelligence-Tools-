@@ -2,6 +2,7 @@
 import importlib
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
+import re
 import time
 from typing import Any
 
@@ -9,8 +10,8 @@ import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
 
-from src.batch import SOCIAL_BATCH_VERSION, compact_social_export_row, failed_social_result, parse_url_list, social_job_results, social_result_row
-from src.comment_browser import CommentBrowserCollector, CommentBrowserError
+from src.batch import SOCIAL_BATCH_VERSION, collect_threads_enrichment_with_fallback, compact_social_export_row, failed_social_result, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, social_job_results, social_result_row
+import src.comment_browser as comment_browser_module
 from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, detect_platform, get_platform_connector
 from src.connectors.instagram import InstagramConnector
@@ -34,6 +35,20 @@ if getattr(tiktok_free_module, "TIKTOK_FREE_PARSER_VERSION", 0) < 3:
 TikTokFreeCollector = tiktok_free_module.TikTokFreeCollector
 TikTokFreeError = tiktok_free_module.TikTokFreeError
 
+# Streamlit dapat mempertahankan instance browser dari versi kelas sebelumnya
+# saat aplikasi diperbarui. Pastikan Facebook Advanced selalu memakai collector
+# yang sudah memiliki pembaca enrichment, lalu gunakan nama cache baru agar
+# instance lama tidak diambil kembali.
+if (
+    getattr(comment_browser_module.CommentBrowserCollector, "RUNTIME_VERSION", 0) < 20
+    or not hasattr(comment_browser_module.CommentBrowserCollector, "collect_facebook_enrichment")
+):
+    comment_browser_module = importlib.reload(comment_browser_module)
+
+CommentBrowserCollector = comment_browser_module.CommentBrowserCollector
+CommentBrowserError = comment_browser_module.CommentBrowserError
+CommentBrowserLoginRequired = comment_browser_module.CommentBrowserLoginRequired
+
 
 st.set_page_config(page_title="Social Media Enrichment | MIDETA", page_icon=str(MIDETA_LOGO_PATH), layout="wide")
 apply_theme()
@@ -45,6 +60,7 @@ page_intro(
 )
 st.info(
     "Tulis satu URL pada setiap baris. MIDETA dapat menerima sampai 1.000 URL dan menyimpannya bertahap. "
+    "Setiap baris tetap diproses, termasuk saat URL yang sama muncul lebih dari sekali. "
     "URL pendek dan tautan dari tombol Share akan diarahkan ke posting aslinya secara otomatis. "
     f"Enrichment All mengenali platform secara otomatis, sedangkan Split atau Triple Screen menjalankan maksimal {MAX_PARALLEL_PLATFORMS} platform secara paralel."
 )
@@ -88,6 +104,11 @@ def tiktok_free_collector() -> TikTokFreeCollector:
 @st.cache_resource(show_spinner=False)
 def threads_metadata_browser_v6() -> CommentBrowserCollector:
     return CommentBrowserCollector("Threads")
+
+
+@st.cache_resource(show_spinner=False)
+def facebook_enrichment_browser_v5() -> CommentBrowserCollector:
+    return CommentBrowserCollector("Facebook")
 
 
 def job_chunk_size(job: dict[str, Any]) -> int:
@@ -247,6 +268,55 @@ def render_tiktok_controls(slot: str) -> str:
     return "advanced"
 
 
+def render_facebook_controls(slot: str) -> str:
+    mode_label = st.segmented_control(
+        "Mode enrichment Facebook",
+        ("Fast enrichment", "Advanced enrichment"),
+        default="Fast enrichment",
+        help="Advanced memakai hasil Fast untuk metadata post, lalu sesi login hanya untuk mencari Views Reel target.",
+        key=f"facebook_enrichment_mode_{slot}",
+        width="stretch",
+    )
+    enrichment_mode = "advanced" if mode_label == "Advanced enrichment" else "fast"
+    if enrichment_mode == "fast":
+        st.caption(
+            "Fast: membaca metadata publik dari URL post, video, atau Reel tanpa membuka profil. "
+            "Gunakan Advanced bila Views tidak muncul di hasil Fast."
+        )
+        return enrichment_mode
+
+    st.caption(
+        "Advanced: memakai logic Fast untuk tanggal, author, caption, followers, likes, comments, shares, dan data lain. "
+        "Akun Facebook yang login hanya dipakai untuk mencari Views Reel dengan ID yang sama "
+        f"({ENRICHMENT_BROWSER_CHUNK_SIZE} URL per tahap)."
+    )
+    st.caption(
+        "Password diketik langsung di Facebook dan tidak dibaca MIDETA. Jika Views target tidak ditampilkan Facebook, "
+        "kolom akan ditulis Tidak tersedia dan tidak mengambil angka dari Reel lain."
+    )
+    open_col, check_col, close_col = st.columns(3)
+    if open_col.button("Buka Chrome Facebook", key=f"open_facebook_{slot}", width="stretch"):
+        try:
+            if facebook_enrichment_browser_v5().open_login():
+                st.success("Facebook sudah login dan siap digunakan untuk Advanced enrichment.")
+            else:
+                st.info("Selesaikan login di Chrome Facebook, lalu tekan Periksa Login.")
+        except CommentBrowserError as exc:
+            st.error(str(exc))
+    if check_col.button("Periksa Login", key=f"check_facebook_{slot}", width="stretch"):
+        try:
+            if facebook_enrichment_browser_v5().is_logged_in():
+                st.success("Facebook sudah login dan siap digunakan untuk Advanced enrichment.")
+            else:
+                st.warning("Login Facebook belum terdeteksi. Selesaikan login di Chrome MIDETA.")
+        except CommentBrowserError as exc:
+            st.error(str(exc))
+    if close_col.button("Tutup Chrome Facebook", key=f"close_facebook_{slot}", width="stretch"):
+        facebook_enrichment_browser_v5().close()
+        st.info("Chrome Facebook MIDETA sudah ditutup.")
+    return enrichment_mode
+
+
 def render_threads_controls(slot: str) -> None:
     st.caption(
         "MIDETA mencoba metadata publik lebih dulu. Jika Threads mengirim halaman kosong atau invalid_post, "
@@ -287,13 +357,15 @@ def render_platform_setup(platform: str, slot: str, compact: bool = False) -> st
         return render_instagram_controls(slot)
     if platform == "TikTok":
         return render_tiktok_controls(slot)
+    if platform == "Facebook":
+        return render_facebook_controls(slot)
     if platform == "Threads":
         render_threads_controls(slot)
     return "standard"
 
 
 def validate_job_request(request: dict[str, Any]) -> str | None:
-    urls = parse_url_list(request["url_text"])
+    urls = parse_url_list(request["url_text"], preserve_repeated_rows=True)
     request["urls"] = urls
     if not urls:
         return f"{request['platform']}: masukkan setidaknya satu URL posting."
@@ -336,6 +408,17 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | No
                 errors.append("TikTok belum login. Buka Chrome TikTok dan selesaikan login sebelum memulai batch.")
         except TikTokBrowserError as exc:
             errors.append(str(exc))
+    if requests_are_valid and any(
+        request["platform"] == "Facebook"
+        and request["enrichment_mode"] == "advanced"
+        and not request["mock_mode"]
+        for request in requests
+    ):
+        try:
+            if not facebook_enrichment_browser_v5().is_logged_in():
+                errors.append("Facebook belum login. Buka Chrome Facebook dan selesaikan login sebelum memulai batch.")
+        except CommentBrowserError as exc:
+            errors.append(str(exc))
     if errors:
         for error in errors:
             st.error(error)
@@ -349,8 +432,9 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | No
             SOCIAL_BATCH_VERSION,
             mock_mode=request["mock_mode"],
             browser_mode=(
-                platform == "Instagram"
+                platform in {"Instagram", "Threads"}
                 or (platform == "TikTok" and request["enrichment_mode"] == "advanced")
+                or (platform == "Facebook" and request["enrichment_mode"] == "advanced")
             ),
             enrichment_mode=request["enrichment_mode"],
         )
@@ -363,10 +447,13 @@ def load_current_job(platform: str) -> dict[str, Any] | None:
     job_key = f"social_job_{platform}"
     job_id = st.session_state.get(job_key)
     current_job = get_social_job(job_id) if job_id else None
-    if current_job is None:
-        current_job = get_latest_social_job(platform)
-        if current_job:
-            st.session_state[job_key] = current_job["id"]
+    latest_job = get_latest_social_job(platform)
+    # Setiap tab Streamlit memiliki session_state sendiri. Saat proses baru
+    # dimulai dari tab lain, jangan biarkan tab lama tetap menampilkan antrean
+    # sebelumnya yang sudah berhenti atau gagal.
+    if latest_job and (current_job is None or latest_job["id"] > current_job["id"]):
+        current_job = latest_job
+        st.session_state[job_key] = latest_job["id"]
     if current_job and current_job.get("schema_version") != SOCIAL_BATCH_VERSION:
         st.session_state.pop(job_key, None)
         st.info("Parser MIDETA baru saja diperbarui. Mulai proses baru agar hasil menggunakan pembacaan terbaru.")
@@ -503,6 +590,20 @@ def available_result_fields(result: SocialResult):
     )
 
 
+def facebook_targets_from_job(job: dict[str, Any]) -> dict[str, tuple[int, str]]:
+    """Restore canonical targets already completed by this Facebook job."""
+    targets: dict[str, tuple[int, str]] = {}
+    for item in job.get("items", []):
+        result = item.get("result") or {}
+        note = str(result.get("note") or "")
+        match = re.search(r"Target Facebook tervalidasi:\s*(https?://\S+)", note, re.I)
+        if not match:
+            continue
+        target = match.group(1).rstrip(".").rstrip("/").casefold()
+        targets.setdefault(target, (int(item["position"]), str(item["url"])))
+    return targets
+
+
 def render_all_job_results(
     jobs: list[dict[str, Any]],
     unsupported_urls: list[dict[str, str]] | None = None,
@@ -525,11 +626,10 @@ def render_all_job_results(
             st.warning("Proses selesai, tetapi belum ada URL yang menghasilkan metadata.")
         return
 
-    input_order = {
-        url: position
-        for position, url in enumerate(st.session_state.get("social_all_order", []))
-    }
-    results.sort(key=lambda result: input_order.get(result.url, len(input_order)))
+    results = order_social_results_by_input(
+        results,
+        st.session_state.get("social_all_order", []),
+    )
     if any(result.is_mock for result in results):
         st.warning("DATA CONTOH AKTIF. Informasi di bawah bukan data dari tautan.")
 
@@ -583,17 +683,19 @@ def render_all_job_results(
 def render_job_issues(job: dict[str, Any] | None) -> None:
     if not job:
         return
-    if errors := job.get("errors"):
-        with st.expander(f"{len(errors)} URL tidak dapat diproses", expanded=True):
-            st.dataframe(pd.DataFrame(errors), width="stretch", hide_index=True)
-    if browser_issues := job.get("browser_issues"):
-        with st.expander(f"{len(browser_issues)} URL belum lengkap", expanded=True):
-            st.dataframe(pd.DataFrame(browser_issues), width="stretch", hide_index=True)
+    issue_slot = st.empty()
+    with issue_slot.container():
+        if errors := job.get("errors"):
+            with st.expander(f"{len(errors)} URL tidak dapat diproses", expanded=True):
+                st.dataframe(pd.DataFrame(errors), width="stretch", hide_index=True)
+        if browser_issues := job.get("browser_issues"):
+            with st.expander(f"{len(browser_issues)} URL belum lengkap", expanded=True):
+                st.dataframe(pd.DataFrame(browser_issues), width="stretch", hide_index=True)
 
 
 def render_job_panel(platform: str, slot: str) -> tuple[dict[str, Any] | None, Any]:
     job = load_current_job(platform)
-    if job and job["platform"] in {"Instagram", "TikTok"}:
+    if job and job["platform"] in {"Instagram", "TikTok", "Facebook"}:
         st.caption(f"Antrean aktif menggunakan **{job['enrichment_mode'].title()} enrichment**.")
     if job:
         render_job_controls(job, slot)
@@ -612,8 +714,10 @@ def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, An
         platform = job["platform"]
         with st.container(border=True):
             st.markdown(f"**{PLATFORM_ICONS[platform]}** · {job['processed']:,}/{job['total']:,} URL")
-            if platform in {"Instagram", "TikTok"}:
+            if platform in {"Instagram", "TikTok", "Facebook"}:
                 login_text = "tanpa login" if job["enrichment_mode"] == "free" else "dengan login"
+                if platform == "Facebook" and job["enrichment_mode"] == "fast":
+                    login_text = "tanpa login"
                 st.caption(f"Mode {platform}: {job['enrichment_mode'].title()} enrichment {login_text}.")
             render_job_controls(job, f"all_{platform.lower()}")
             activity = st.empty()
@@ -626,11 +730,12 @@ def collect_one_item(
     job: dict[str, Any],
     item: dict[str, Any],
     active_browser: InstagramBrowserCollector | TikTokBrowserCollector | CommentBrowserCollector | None,
+    facebook_targets: dict[str, tuple[int, str]] | None = None,
 ) -> dict[str, Any]:
     url = item["url"]
     position = item["position"]
     try:
-        needs_browser_target = active_browser is not None and job["platform"] in {"Instagram", "TikTok"}
+        needs_browser_target = active_browser is not None and job["platform"] in {"Instagram", "TikTok", "Facebook"}
         processing_url = (
             resolve_social_url(url, expected_platform=job["platform"])
             if not job["mock_mode"] and needs_browser_target
@@ -697,6 +802,56 @@ def collect_one_item(
                     "url": url,
                     "error": {"URL": url, "Platform": job["platform"], "Alasan": str(exc)},
                 }
+        elif active_browser is not None and not job["mock_mode"] and job["platform"] == "Facebook":
+            # Jalankan parser Fast terhadap permalink target yang sudah
+            # diresolusi agar short/share URL tidak menyumbangkan preview post
+            # sebelumnya atau rekomendasi lain dari halaman Facebook.
+            fast_result = connector.enrich(processing_url)
+            try:
+                browser_result = active_browser.collect_facebook_enrichment(processing_url)
+                result = merge_facebook_advanced_result(fast_result, browser_result)
+                if result.views.value is None:
+                    browser_issue = {
+                        "URL": url,
+                        "Platform": "Facebook",
+                        "Alasan": (
+                            "Views Reel target belum ditampilkan Facebook pada halaman post maupun halaman Reels profil. "
+                            "Nilai dibiarkan Tidak tersedia agar tidak tertukar dengan Reel lain."
+                        ),
+                    }
+            except CommentBrowserLoginRequired as exc:
+                return {"kind": "login_required", "reason": str(exc), "position": position, "url": url}
+            except CommentBrowserError as exc:
+                result = fast_result
+                browser_issue = {
+                    "URL": url,
+                    "Platform": "Facebook",
+                    "Alasan": (
+                        "Metadata Fast berhasil disimpan, tetapi Views belum dapat dibaca dari sesi Facebook: "
+                        f"{exc}"
+                    ),
+                }
+            canonical_target = str(result.url or processing_url).split("?", 1)[0].rstrip("/")
+            target_note = f"Target Facebook tervalidasi: {canonical_target}."
+            result.note = f"{result.note} {target_note}".strip() if result.note else target_note
+            target_key = canonical_target.casefold()
+            if facebook_targets is not None:
+                previous = facebook_targets.get(target_key)
+                if previous and previous[1] != url:
+                    duplicate_reason = (
+                        f"Short URL ini diarahkan Facebook ke posting yang sama dengan baris {previous[0]} "
+                        f"({canonical_target}), sehingga datanya memang berulang."
+                    )
+                    if browser_issue:
+                        browser_issue["Alasan"] = f"{browser_issue['Alasan']} {duplicate_reason}"
+                    else:
+                        browser_issue = {
+                            "URL": url,
+                            "Platform": "Facebook",
+                            "Alasan": duplicate_reason,
+                        }
+                else:
+                    facebook_targets[target_key] = (position, url)
         elif not job["mock_mode"] and job["platform"] == "TikTok" and job["enrichment_mode"] == "free":
             metrics = tiktok_free_collector().collect(processing_url)
             missing = []
@@ -715,39 +870,20 @@ def collect_one_item(
                 }
             result = build_tiktok_browser_result(url, metrics)
         elif not job["mock_mode"] and job["platform"] == "Threads":
-            result = connector.enrich(processing_url)
-            important_fields = (
-                result.caption,
-                result.likes,
-                result.comments,
-                result.shares,
-                result.views,
-                result.reposts,
+            # Threads cukup sering menolak pembaca publik atau mengalami
+            # kegagalan DNS sesaat. Enrichment All selalu menyiapkan sesi
+            # Chrome agar gangguan ini tidak langsung menggagalkan baris.
+            result, threads_issue = collect_threads_enrichment_with_fallback(
+                connector.enrich,
+                active_browser.collect_threads_enrichment if active_browser is not None else None,
+                processing_url,
             )
-            if active_browser is not None and any(field.value is None for field in important_fields):
-                try:
-                    browser_result = active_browser.collect_threads_enrichment(processing_url)
-                    if any(
-                        field.status == FieldStatus.AVAILABLE
-                        for field in (
-                            browser_result.username,
-                            browser_result.caption,
-                            browser_result.likes,
-                            browser_result.comments,
-                            browser_result.shares,
-                            browser_result.views,
-                            browser_result.reposts,
-                        )
-                    ):
-                        result = browser_result
-                    else:
-                        browser_issue = {
-                            "URL": url,
-                            "Platform": "Threads",
-                            "Alasan": browser_result.note or "Posting target tidak terlihat di sesi Chrome Threads.",
-                        }
-                except CommentBrowserError as exc:
-                    browser_issue = {"URL": url, "Platform": "Threads", "Alasan": str(exc)}
+            if threads_issue:
+                browser_issue = {
+                    "URL": url,
+                    "Platform": "Threads",
+                    "Alasan": threads_issue,
+                }
         elif not job["mock_mode"]:
             result = connector.enrich(processing_url)
 
@@ -794,9 +930,15 @@ def collect_one_item(
 
 def collect_job_chunk(task: dict[str, Any], output: Queue) -> None:
     job = task["job"]
+    facebook_targets = facebook_targets_from_job(job) if job["platform"] == "Facebook" else None
     try:
         for item in task["chunk"]:
-            outcome = collect_one_item(job, item, task["active_browser"])
+            outcome = collect_one_item(
+                job,
+                item,
+                task["active_browser"],
+                facebook_targets=facebook_targets,
+            )
             output.put((job["id"], outcome))
             if outcome["kind"] in {"rate_limited", "login_required"}:
                 break
@@ -850,6 +992,7 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
         needs_browser = (
             job["platform"] in {"Instagram", "Threads"}
             or (job["platform"] == "TikTok" and job["enrichment_mode"] == "advanced")
+            or (job["platform"] == "Facebook" and job["enrichment_mode"] == "advanced")
         )
         if needs_browser and not job["mock_mode"]:
             try:
@@ -857,9 +1000,11 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
                     active_browser = instagram_browser()
                 elif job["platform"] == "TikTok":
                     active_browser = tiktok_browser()
+                elif job["platform"] == "Facebook":
+                    active_browser = facebook_enrichment_browser_v5()
                 else:
                     active_browser = threads_metadata_browser_v6()
-                if job["platform"] in {"Instagram", "TikTok"} and not active_browser.is_logged_in():
+                if job["platform"] in {"Instagram", "TikTok", "Facebook"} and not active_browser.is_logged_in():
                     set_social_job_status(job["id"], "paused")
                     activity.error(f"Sesi {job['platform']} berakhir. Login kembali, lalu lanjutkan proses.")
                     state_changed = True
@@ -925,12 +1070,14 @@ job_panels: list[tuple[dict[str, Any] | None, Any]] = []
 if layout_mode == "Enrichment All":
     st.caption(
         "Tempel URL YouTube, TikTok, Facebook, Instagram, Threads, dan X dalam satu kotak. "
-        "MIDETA akan mengenali platformnya, membuat antrean yang aman di belakang layar, lalu menggabungkan hasil sesuai urutan input."
+        "MIDETA akan mengenali platformnya, memproses setiap baris termasuk URL berulang, lalu menggabungkan hasil sesuai urutan input."
     )
     with st.expander("Pengaturan Instagram jika daftar berisi URL Instagram"):
         instagram_mode = render_instagram_controls("all")
     with st.expander("Pengaturan TikTok jika daftar berisi URL TikTok"):
         tiktok_mode = render_tiktok_controls("all")
+    with st.expander("Pengaturan Facebook jika daftar berisi URL Facebook"):
+        facebook_mode = render_facebook_controls("all")
 
     with st.form("enrichment_form_all"):
         all_url_text = st.text_area(
@@ -947,7 +1094,7 @@ if layout_mode == "Enrichment All":
         all_submitted = st.form_submit_button("Mulai Enrichment All", type="primary", width="stretch")
 
     if all_submitted:
-        all_urls = parse_url_list(all_url_text)
+        all_urls = parse_url_list(all_url_text, preserve_repeated_rows=True)
         if not all_urls:
             st.error("Masukkan setidaknya satu URL posting.")
         elif len(all_urls) > MAX_ENRICHMENT_URLS:
@@ -971,6 +1118,8 @@ if layout_mode == "Enrichment All":
                             if platform == "Instagram"
                             else tiktok_mode
                             if platform == "TikTok"
+                            else facebook_mode
+                            if platform == "Facebook"
                             else "standard"
                         ),
                     }

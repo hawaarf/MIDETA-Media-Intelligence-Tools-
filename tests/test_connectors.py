@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+from bs4 import BeautifulSoup
 from src.connectors import detect_platform, get_connector, get_platform_connector
 from src.connectors.base import BaseConnector
 from src.models import FieldStatus
@@ -72,6 +73,18 @@ FACEBOOK_CANONICAL_HTML = """<html><head><link rel="canonical" href="https://www
 FACEBOOK_FULL_CAPTION_HTML = """<html><head><meta property="og:description" content="Paragraf pertama yang lengkap..."></head><body><div data-ad-rendering-role="story_message"><div dir="auto">Paragraf pertama yang lengkap.</div><div dir="auto">Paragraf kedua juga harus masuk.</div></div></body></html>"""
 FACEBOOK_GROUP_HTML = """<html><head><meta property="og:title" content="LIOC ( LIKA LIKU OJOL &amp; CUSTOMER ) | Caption grup | Facebook"><meta property="og:description" content="Caption grup..."><meta property="og:url" content="https://www.facebook.com/groups/1657323981260301/posts/4699586193700716/"></head><body><script>{"join_action":{"group":{"id":"1657323981260301","name":"LIOC ( LIKA LIKU OJOL & CUSTOMER )"}},"node_v2":{"actors":[{"name":"Gondrong Saja","id":"100012853172729","url":null}],"message":{"text":"Caption grup lengkap. Paragraf kedua juga masuk."},"post_id":"4699586193700716"}}</script></body></html>"""
 FACEBOOK_PROFILE_POST_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/profilcontoh/posts/123"><meta property="og:title" content="Profil Contoh"><meta property="og:description" content="Caption Facebook"></head></html>"""
+FACEBOOK_AUTHENTICATED_POST_HTML = """<html><head>
+<title>(5) Maskur Cokern - Caption target | Facebook</title>
+</head><body>
+<script>{"username":"hawarisma.rafanidya"}</script>
+<div class="target-post">
+  <a href="https://www.facebook.com/maskurcokern7" aria-label="Maskur Cokern"></a>
+  <div role="button" aria-label="Tindakan untuk postingan oleh Maskur Cokern ini"></div>
+  <div role="button" aria-label="Suka"><span>64</span></div>
+  <div role="button" aria-label="Beri komentar"><span>35</span></div>
+  <div role="button" aria-label="Kirim ini ke teman atau posting di profil Anda."><span>2</span></div>
+</div>
+</body></html>"""
 FACEBOOK_FOLLOWER_PROFILE_HTML = r"""<html><script>{"text":"1,4\u00a0rb pengikut"}{"text":"2,2\u00a0rb teman"}</script></html>"""
 FACEBOOK_FRIEND_PROFILE_HTML = r"""<html><script>{"text":"2,2\u00a0rb teman"}</script></html>"""
 FACEBOOK_REEL_ZERO_VIEW_HTML = r"""<html><head><meta property="og:url" content="https://www.facebook.com/hery.umbuwole/videos/judul/3556314681183024/"><meta property="og:description" content="Caption Reel"></head><script>{"video_owner":{"url":"https:\/\/www.facebook.com\/hery.umbuwole"}}</script></html>"""
@@ -690,6 +703,52 @@ class ConnectorTests(unittest.TestCase):
         url = "https://www.facebook.com/reel/3556314681183024"
         result = get_connector(url).enrich(url)
         self.assertEqual(result.views.value, 132)
+
+    def test_facebook_reads_exact_reel_card_from_authenticated_grid_html(self):
+        connector = get_connector("https://www.facebook.com/reel/123")
+        html = """
+        <main>
+          <a href="/reel/999"><span>9.9K</span></a>
+          <a href="/reel/123"><span aria-label="812 views">812</span></a>
+        </main>
+        """
+
+        self.assertEqual(connector._views_from_reels_html(html, "123"), 812)
+
+    def test_facebook_authenticated_result_keeps_missing_views_unavailable(self):
+        connector = get_connector("https://www.facebook.com/reel/123")
+        post_html = (
+            '<meta property="og:url" content="https://www.facebook.com/reel/123">'
+            '<script>{"video_owner":{"name":"Echy","url":"https:\\/\\/www.facebook.com\\/echy"},'
+            '"tracking":"{\\"video_id\\":\\"123\\"}"}</script>'
+        )
+
+        result = connector.enrich_loaded_html(post_html, "https://www.facebook.com/reel/123")
+
+        self.assertIsNone(result.views.value)
+        self.assertEqual(result.views.status, FieldStatus.NOT_PUBLIC)
+
+    def test_facebook_authenticated_dom_ignores_logged_in_account(self):
+        connector = get_connector("https://www.facebook.com/maskurcokern7/posts/pfbidTarget")
+
+        result = connector.enrich_loaded_html(
+            FACEBOOK_AUTHENTICATED_POST_HTML,
+            "https://www.facebook.com/maskurcokern7/posts/pfbidTarget",
+        )
+
+        soup = BeautifulSoup(FACEBOOK_AUTHENTICATED_POST_HTML, "lxml")
+        self.assertEqual(result.username.value, "Maskur Cokern")
+        self.assertEqual(result.likes.value, 64)
+        self.assertEqual(result.comments.value, 35)
+        self.assertEqual(result.shares.value, 2)
+        self.assertEqual(
+            connector._target_profile_url(
+                FACEBOOK_AUTHENTICATED_POST_HTML,
+                soup,
+                "https://www.facebook.com/maskurcokern7/posts/pfbidTarget",
+            ),
+            "https://www.facebook.com/maskurcokern7",
+        )
 
     @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_FULL_CAPTION_HTML, "https://www.facebook.com/akun/posts/123"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/akun/posts/123")

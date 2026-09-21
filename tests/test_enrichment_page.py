@@ -81,6 +81,22 @@ class EnrichmentPageTests(unittest.TestCase):
         self.assertIn("Hapus token", button_labels)
         self.assertIn("Mulai TikTok Free Mode", button_labels)
 
+    def test_facebook_offers_advanced_enrichment_with_login_controls(self):
+        with (
+            patch("src.database.get_social_job", return_value=None),
+            patch("src.database.get_latest_social_job", return_value=None),
+        ):
+            app = self._app()
+            app.get("button_group")[1].set_value("Facebook").run(timeout=10)
+            app.get("button_group")[2].set_value("Advanced enrichment").run(timeout=10)
+
+        self.assertFalse(app.exception)
+        button_labels = [widget.label for widget in app.button]
+        self.assertIn("Buka Chrome Facebook", button_labels)
+        self.assertIn("Periksa Login", button_labels)
+        self.assertIn("Tutup Chrome Facebook", button_labels)
+        self.assertIn("Mulai Advanced Enrichment", button_labels)
+
 
 if __name__ == "__main__":
     unittest.main()

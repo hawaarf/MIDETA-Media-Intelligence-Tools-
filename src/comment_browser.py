@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.common.exceptions import InvalidSessionIdException, NoSuchWindowException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
@@ -15,7 +16,7 @@ from src.config import DATA_DIR, MAX_COMMENTS_PER_URL
 from src.connectors import get_platform_connector
 from src.connectors.base import BaseConnector
 from src.dates import relative_social_date_iso, social_date_iso
-from src.models import CommentCollection, DataField, FieldStatus, PublicComment
+from src.models import CommentCollection, DataField, FieldStatus, PublicComment, SocialResult
 
 
 class CommentBrowserError(RuntimeError):
@@ -27,7 +28,7 @@ class CommentBrowserLoginRequired(CommentBrowserError):
 
 
 class CommentBrowserCollector:
-    RUNTIME_VERSION = 12
+    RUNTIME_VERSION = 20
     THREADS_MAX_SCROLL_ROUNDS = 240
     FACEBOOK_MAX_SCROLL_ROUNDS = 240
     X_MAX_SCROLL_ROUNDS = 240
@@ -178,18 +179,20 @@ class CommentBrowserCollector:
 
     @staticmethod
     def _threads_permalink(driver, fallback_url: str) -> str:
+        # A permalink supplied by the user is authoritative.  Never replace it
+        # with the first post link rendered by Threads (which can be a
+        # recommendation rather than the requested conversation).
+        if re.search(r"/@[^/]+/post/[^/?#]+", str(fallback_url or ""), re.I):
+            return str(fallback_url).split("#", 1)[0].rstrip("/")
         current_url = str(getattr(driver, "current_url", "") or fallback_url)
         if re.search(r"/@[^/]+/post/[^/?#]+", current_url, re.I):
-            return current_url
+            return current_url.split("#", 1)[0].rstrip("/")
         try:
             candidates = driver.execute_script(
                 r"""
                 const canonical = document.querySelector('link[rel="canonical"]')?.href || '';
                 const openGraph = document.querySelector('meta[property="og:url"]')?.content || '';
-                const postLink = Array.from(document.querySelectorAll('a[href*="/post/"]'))
-                  .map(node => node.href || '')
-                  .find(href => /\/@[^/]+\/post\/[^/?#]+/i.test(href)) || '';
-                return [window.location.href || '', canonical, openGraph, postLink];
+                return [window.location.href || '', canonical, openGraph];
                 """
             )
         except WebDriverException:
@@ -197,13 +200,32 @@ class CommentBrowserCollector:
         if isinstance(candidates, (list, tuple)):
             return next(
                 (
-                    str(candidate)
-                    for candidate in candidates
+                    str(candidate).split("#", 1)[0].rstrip("/")
+                    for candidate in candidates[:3]
                     if re.search(r"/@[^/]+/post/[^/?#]+", str(candidate or ""), re.I)
                 ),
                 current_url,
             )
         return current_url
+
+    def _resolve_threads_permalink(self, driver, fallback_url: str) -> str:
+        """Wait for a Threads share URL to expose its own canonical post."""
+        if re.search(r"/@[^/]+/post/[^/?#]+", str(fallback_url or ""), re.I):
+            return self._threads_permalink(driver, fallback_url)
+        resolved = ""
+        try:
+            resolved = WebDriverWait(driver, min(self.wait_seconds, 10)).until(
+                lambda active: (
+                    candidate
+                    if re.search(r"/@[^/]+/post/[^/?#]+", candidate, re.I)
+                    else False
+                )
+                if (candidate := self._threads_permalink(active, fallback_url))
+                else False
+            )
+        except WebDriverException:
+            pass
+        return str(resolved or self._threads_permalink(driver, fallback_url))
 
     @staticmethod
     def _threads_detail_url(url: str) -> str:
@@ -235,6 +257,50 @@ class CommentBrowserCollector:
         except WebDriverException:
             return False
 
+    def _activate_threads_target(self, driver, permalink: str, target_code: str) -> str:
+        """Open the exact Threads card and return only its active permalink."""
+        def active_permalink(active) -> str | bool:
+            value = str(getattr(active, "current_url", "") or "")
+            match = re.search(r"/@[^/]+/post/([^/?#]+)", value, re.I)
+            if match and match.group(1).casefold() == target_code.casefold():
+                return value.split("#", 1)[0].rstrip("/")
+            return False
+
+        active = active_permalink(driver)
+        if active:
+            return str(active)
+
+        # Threads sometimes turns a valid post route into its home page with
+        # injected_media_ids. The exact post card remains present there, so
+        # open that card by shortcode instead of accepting another feed item.
+        if self._open_threads_target_card(driver, target_code):
+            try:
+                return str(WebDriverWait(driver, min(self.wait_seconds, 8)).until(active_permalink))
+            except WebDriverException:
+                pass
+
+        driver.get(self._threads_detail_url(permalink))
+        self._wait_for_page()
+        active = active_permalink(driver)
+        if active:
+            return str(active)
+        if self._open_threads_target_card(driver, target_code):
+            try:
+                return str(WebDriverWait(driver, min(self.wait_seconds, 8)).until(active_permalink))
+            except WebDriverException:
+                pass
+
+        # The shortcode-only route can expose the requested card even when a
+        # copied username in the permalink is stale or misspelled.
+        driver.get(f"https://www.threads.com/t/{target_code}")
+        self._wait_for_page()
+        if self._open_threads_target_card(driver, target_code):
+            try:
+                return str(WebDriverWait(driver, min(self.wait_seconds, 8)).until(active_permalink))
+            except WebDriverException:
+                pass
+        return ""
+
     def collect_threads_enrichment(self, url: str):
         """Collect one exact Threads post from the saved browser session."""
         if self.platform != "Threads":
@@ -254,6 +320,164 @@ class CommentBrowserCollector:
             raise CommentBrowserError(
                 "Chrome MIDETA untuk Threads tidak dapat membaca posting ini."
             ) from exc
+
+    def collect_facebook_enrichment(self, url: str) -> SocialResult:
+        """Collect one exact Facebook post plus profile-level views/followers."""
+        if self.platform != "Facebook":
+            raise CommentBrowserError("Advanced enrichment ini hanya tersedia untuk Facebook.")
+        if not self.is_logged_in(open_platform=False):
+            raise CommentBrowserLoginRequired(
+                "Facebook belum login. Buka Chrome Facebook, selesaikan login, lalu tekan Periksa Login."
+            )
+        try:
+            return self._collect_facebook_enrichment_once(url)
+        except WebDriverException as exc:
+            if self._session_was_lost(exc):
+                self._discard_driver()
+                raise CommentBrowserLoginRequired(
+                    "Sesi Chrome Facebook terputus. Buka Chrome Facebook dan periksa login sebelum melanjutkan."
+                ) from exc
+            raise CommentBrowserError(
+                "Chrome MIDETA untuk Facebook tidak dapat membaca posting ini. Pastikan posting terlihat, lalu coba lagi."
+            ) from exc
+
+    @staticmethod
+    def _same_facebook_target(expected_url: str, candidate_url: str) -> bool:
+        """Reject a stale/recommended Facebook post when the target ID is known."""
+        connector = get_platform_connector(expected_url, "Facebook")
+        expected_ids = set(connector._post_identifiers(expected_url))
+        if not expected_ids:
+            return True
+        candidate_ids = set(connector._post_identifiers(candidate_url))
+        return bool(expected_ids & candidate_ids)
+
+    @classmethod
+    def _facebook_permalink(cls, driver, fallback_url: str) -> str:
+        post_pattern = re.compile(
+            r"facebook\.com/(?:reel/|watch(?:/|\?)|[^/?#]+/(?:posts|videos|photos|reels)/|groups/[^/?#]+/(?:posts|permalink)/|(?:permalink|story|photo)\.php)",
+            re.I,
+        )
+
+        def target_permalink(active):
+            current_url = str(getattr(active, "current_url", "") or "")
+            try:
+                candidates = active.execute_script(
+                    r"""
+                    const canonical = document.querySelector('link[rel="canonical"]')?.href || '';
+                    const openGraph = document.querySelector('meta[property="og:url"]')?.content || '';
+                    return [window.location.href || '', canonical, openGraph];
+                    """
+                )
+            except WebDriverException:
+                candidates = []
+            if not isinstance(candidates, (list, tuple)):
+                candidates = []
+            for candidate in [current_url, *candidates]:
+                value = str(candidate or "").strip()
+                if post_pattern.search(value) and cls._same_facebook_target(fallback_url, value):
+                    return value
+            return False
+
+        try:
+            return WebDriverWait(driver, 12, poll_frequency=0.25).until(target_permalink)
+        except WebDriverException as exc:
+            current_url = str(getattr(driver, "current_url", "") or fallback_url)
+            raise CommentBrowserError(
+                "URL Facebook tidak berhasil diarahkan ke posting target. Buka ulang sesi Facebook lalu coba URL ini lagi."
+            ) from exc
+
+    def _facebook_reels_html(self, reels_url: str, connector, target: str) -> tuple[str, int | None]:
+        driver = self.start()
+        driver.get(reels_url)
+        self._wait_for_page()
+        last_height = None
+        stable_rounds = 0
+        html = driver.page_source
+        for _ in range(35):
+            views = connector._views_from_reels_html(html, target)
+            if views is not None:
+                return html, views
+            try:
+                state = driver.execute_script(
+                    r"""
+                    const target = String(arguments[0] || '');
+                    const match = Array.from(document.querySelectorAll('a[href]')).find(node =>
+                      String(node.href || node.getAttribute('href') || '').includes(target)
+                    );
+                    if (match) match.scrollIntoView({block: 'center', inline: 'nearest'});
+                    const before = document.documentElement.scrollHeight;
+                    if (!match) window.scrollTo(0, before);
+                    return {found: Boolean(match), height: before};
+                    """,
+                    target,
+                )
+            except WebDriverException:
+                break
+            time.sleep(0.45)
+            html = driver.page_source
+            height = state.get("height") if isinstance(state, dict) else None
+            found = bool(state.get("found")) if isinstance(state, dict) else False
+            if found:
+                views = connector._views_from_reels_html(html, target)
+                return html, views
+            if height == last_height:
+                stable_rounds += 1
+            else:
+                stable_rounds = 0
+            last_height = height
+            if stable_rounds >= 5:
+                break
+        return html, connector._views_from_reels_html(html, target)
+
+    def _collect_facebook_enrichment_once(self, url: str) -> SocialResult:
+        driver = self.start()
+        driver.get(url)
+        self._wait_for_page()
+        current_url = self._facebook_permalink(driver, url)
+        connector = get_platform_connector(current_url, "Facebook")
+        target_ids = [
+            identifier
+            for identifier in connector._post_identifiers(current_url)
+            if identifier.isdigit()
+        ]
+        if target_ids:
+            try:
+                WebDriverWait(driver, min(self.wait_seconds, 10)).until(
+                    lambda active: bool(connector._target_feedback_positions(active.page_source, current_url))
+                )
+            except WebDriverException:
+                pass
+        post_html = driver.page_source
+        post_soup = BeautifulSoup(post_html, "lxml")
+        profile_url = connector._target_profile_url(post_html, post_soup, current_url)
+        profile_html = None
+        reels_html = None
+        visible_views = None
+        if profile_url:
+            driver.get(profile_url)
+            self._wait_for_page()
+            profile_html = driver.page_source
+        provisional = connector.enrich_loaded_html(
+            post_html,
+            current_url,
+            profile_html=profile_html,
+        )
+        if provisional.views.value is None and profile_url and target_ids:
+            reels_url = connector._profile_reels_url(profile_url)
+            reels_html, visible_views = self._facebook_reels_html(
+                reels_url,
+                connector,
+                target_ids[0],
+            )
+        result = connector.enrich_loaded_html(
+            post_html,
+            current_url,
+            profile_html=profile_html,
+            reels_html=reels_html,
+        )
+        if visible_views is not None:
+            result.views = DataField(value=visible_views, status=FieldStatus.AVAILABLE)
+        return result
 
     @staticmethod
     def _threads_visible_views(driver) -> int | None:
@@ -379,6 +603,12 @@ class CommentBrowserCollector:
         """Open the saved session, showing login only when it has expired."""
         driver = self.start()
         try:
+            if self.platform == "Facebook":
+                # Match Instagram's quick login flow: show Chrome immediately
+                # without loading and waiting for the Facebook home feed first.
+                # Facebook will redirect an active saved session as needed.
+                driver.get(self.LOGIN_URLS[self.platform])
+                return self.is_logged_in(open_platform=False)
             driver.get(self.HOME_URLS[self.platform])
             self._wait_for_page()
             if self.is_logged_in(open_platform=False):
@@ -448,8 +678,13 @@ class CommentBrowserCollector:
         previous_scroll = None
         previous_height = None
         reported_count = -1
+        locked_threads_url = ""
         if self.platform == "Threads":
             max_rounds = self.THREADS_MAX_SCROLL_ROUNDS
+            current_url = str(getattr(driver, "current_url", "") or "")
+            current_match = re.search(r"/@[^/]+/post/([^/?#]+)", current_url, re.I)
+            if current_match and current_match.group(1).casefold() == target_code.casefold():
+                locked_threads_url = self._threads_detail_url(current_url)
         elif self.platform == "Facebook":
             max_rounds = self.FACEBOOK_MAX_SCROLL_ROUNDS
         elif self.platform == "X":
@@ -492,6 +727,36 @@ class CommentBrowserCollector:
                 state = driver.execute_script(
                     r"""
                     const platform = arguments[0];
+                    const targetCode = String(arguments[1] || '');
+                    const postAnchors = Array.from(document.querySelectorAll('a[href*="/post/"]'));
+                    const targetAnchor = platform === 'Threads' && targetCode
+                      ? postAnchors.find(node => {
+                          const href = String(node.href || node.getAttribute('href') || '');
+                          const match = href.match(/\/@[^/]+\/post\/([^/?#]+)/i);
+                          return match && match[1].toLowerCase() === targetCode.toLowerCase();
+                        })
+                      : null;
+                    const pageMatch = decodeURIComponent(window.location.pathname || '')
+                      .match(/\/@[^/]+\/post\/([^/?#]+)/i);
+                    const targetLocked = platform !== 'Threads' || Boolean(
+                      targetCode && pageMatch &&
+                      pageMatch[1].toLowerCase() === targetCode.toLowerCase()
+                    );
+                    if (!targetLocked) {
+                      return {
+                        reachedEnd: true,
+                        clicked: 0,
+                        scrollY: window.scrollY,
+                        height: document.documentElement.scrollHeight,
+                        targetLocked: false
+                      };
+                    }
+                    const targetBox = targetAnchor
+                      ? (targetAnchor.closest('[data-pressable-container="true"]') || targetAnchor)
+                      : null;
+                    const targetTop = targetBox
+                      ? targetBox.getBoundingClientRect().top + window.scrollY
+                      : 0;
                     const labels = [
                       'show replies', 'show more replies', 'view replies', 'view more replies',
                       'tampilkan balasan', 'lihat balasan', 'balasan lainnya',
@@ -499,25 +764,47 @@ class CommentBrowserCollector:
                       'lihat komentar sebelumnya', 'lihat komentar lainnya', 'muat komentar lainnya',
                       'tampilkan komentar lainnya'
                     ];
-                    let clicked = 0;
-                    for (const node of document.querySelectorAll('button, [role="button"]')) {
-                      const text = (node.innerText || node.getAttribute('aria-label') || '').trim().toLowerCase();
-                      const replyLoader =
-                        /^(show|view|see|load|tampilkan|lihat|muat).*?(repl|balasan|comments?|komentar).*$/i.test(text) ||
-                        /^\d[\d.,]*\s+(?:more\s+|lainnya\s+)?(?:replies|balasan|comments?|komentar)\b/i.test(text);
-                      const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
-                      if (visible && (labels.some(label => text.includes(label)) || replyLoader)) {
-                        node.click();
-                        clicked += 1;
-                      }
-                    }
                     const endLabels = ['related threads', 'thread terkait', 'threads terkait'];
-                    const end = Array.from(document.querySelectorAll('div, span')).find(node => {
+                    const endCandidates = Array.from(document.querySelectorAll('div, span')).filter(node => {
                       const text = (node.textContent || '').trim().toLowerCase();
                       return endLabels.includes(text) && !Array.from(node.children).some(child =>
                         (child.textContent || '').trim().toLowerCase() === text
                       );
                     });
+                    const endTops = endCandidates
+                      .map(node => node.getBoundingClientRect().top + window.scrollY)
+                      .filter(top => top > targetTop);
+                    const endTop = endTops.length ? Math.min(...endTops) : Number.POSITIVE_INFINITY;
+                    const end = endCandidates.find(node =>
+                      node.getBoundingClientRect().top + window.scrollY === endTop
+                    );
+                    const controls = Array.from(document.querySelectorAll('button, [role="button"]'));
+                    const matchingLoaders = controls.filter(node => {
+                      const text = (node.innerText || node.getAttribute('aria-label') || '').trim().toLowerCase();
+                      const replyLoader =
+                        /^(show|view|see|load|tampilkan|lihat|muat).*?(repl|balasan|comments?|komentar).*$/i.test(text) ||
+                        /^\d[\d.,]*\s+(?:more\s+|lainnya\s+)?(?:replies|balasan|comments?|komentar)\b/i.test(text);
+                      const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
+                      const nodeTop = node.getBoundingClientRect().top + window.scrollY;
+                      const insideTargetConversation = platform !== 'Threads' || (
+                        nodeTop > targetTop && nodeTop < endTop
+                      );
+                      const postLink = node.closest('a[href*="/post/"]');
+                      const isPostCard = node.matches('[data-pressable-container="true"]');
+                      return visible && insideTargetConversation && !postLink && !isPostCard &&
+                        (labels.some(label => text.includes(label)) || replyLoader);
+                    });
+                    // Only activate the smallest matching controls. Parent
+                    // pressable cards often contain the words "View replies"
+                    // but open another post instead of expanding the target.
+                    const leafLoaders = matchingLoaders.filter(node => !matchingLoaders.some(other =>
+                      other !== node && node.contains(other)
+                    ));
+                    let clicked = 0;
+                    for (const node of leafLoaders) {
+                      node.click();
+                      clicked += 1;
+                    }
                     let scrollTarget = window;
                     if (platform === 'Facebook') {
                       const seed = Array.from(document.querySelectorAll('[role="article"]')).find(node =>
@@ -559,10 +846,12 @@ class CommentBrowserCollector:
                       reachedEnd,
                       clicked,
                       scrollY,
-                      height
+                      height,
+                      targetLocked
                     };
                     """,
                     self.platform,
+                    target_code,
                 )
             except WebDriverException:
                 break
@@ -588,6 +877,14 @@ class CommentBrowserCollector:
                 break
 
             state = state if isinstance(state, dict) else {"reachedEnd": bool(state)}
+            if self.platform == "Threads" and state.get("targetLocked") is False:
+                if locked_threads_url:
+                    try:
+                        driver.get(locked_threads_url)
+                        self._wait_for_page()
+                    except WebDriverException:
+                        pass
+                break
             scroll_position = state.get("scrollY")
             page_height = state.get("height")
             moved = previous_scroll is None or scroll_position != previous_scroll
@@ -675,7 +972,6 @@ class CommentBrowserCollector:
                 );
               })
               .map(node => node.getBoundingClientRect().top);
-            const endTop = endTops.length ? Math.min(...endTops) : Number.POSITIVE_INFINITY;
 
             const matchingTargetAnchors = anchors.filter(anchor => {
               const href = anchor.href || '';
@@ -687,11 +983,13 @@ class CommentBrowserCollector:
             ) || matchingTargetAnchors[0];
             const pagePath = decodeURIComponent(window.location.pathname || '');
             const pageMatch = pagePath.match(/\/@[^/]+\/post\/([^/?#]+)/);
-            if (!targetAnchor && (!pageMatch || pageMatch[1] !== targetCode)) return [];
+            if (!pageMatch || pageMatch[1].toLowerCase() !== targetCode.toLowerCase()) return [];
             const targetBox = targetAnchor
               ? (targetAnchor.closest('[data-pressable-container="true"]') || targetAnchor)
               : null;
             const targetTop = targetBox ? targetBox.getBoundingClientRect().top : Number.NEGATIVE_INFINITY;
+            const boundedEndTops = endTops.filter(top => top > targetTop);
+            const endTop = boundedEndTops.length ? Math.min(...boundedEndTops) : Number.POSITIVE_INFINITY;
             rows.push({code: targetCode, comment: '', is_target: true});
             seen.add(targetCode);
 
@@ -716,11 +1014,22 @@ class CommentBrowserCollector:
                 .filter(text => text && text !== match[1].slice(1));
               candidates.sort((a, b) => b.length - a.length);
               const iconMetric = labels => {
-                const icon = Array.from(box.querySelectorAll('svg')).find(svg =>
-                  labels.some(label => (svg.getAttribute('aria-label') || '').toLowerCase().includes(label)));
-                if (!icon) return '';
-                const parent = icon.closest('button, [role="button"], div');
-                return parent ? (parent.getAttribute('aria-label') || parent.innerText || '') : '';
+                const controls = Array.from(box.querySelectorAll('button, [role="button"]'));
+                const control = controls.find(node => {
+                  const iconText = Array.from(node.querySelectorAll('svg, img'))
+                    .map(icon => `${icon.getAttribute('aria-label') || ''} ${icon.getAttribute('alt') || ''}`)
+                    .join(' ');
+                  const value = `${node.getAttribute('aria-label') || ''} ${node.textContent || ''} ${iconText}`
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase();
+                  return labels.some(label => value.includes(label));
+                });
+                if (!control) return '';
+                const iconText = Array.from(control.querySelectorAll('svg, img'))
+                  .map(icon => `${icon.getAttribute('aria-label') || ''} ${icon.getAttribute('alt') || ''}`)
+                  .join(' ');
+                return `${control.getAttribute('aria-label') || ''} ${control.textContent || ''} ${iconText}`.trim();
               };
               const group = box.parentElement?.parentElement || box;
               let groupIndex = groups.indexOf(group);
@@ -1143,7 +1452,7 @@ class CommentBrowserCollector:
                 pass
         current_url = driver.current_url or url
         if self.platform == "Threads":
-            current_url = self._threads_permalink(driver, url)
+            current_url = self._resolve_threads_permalink(driver, url)
         if self.platform == "Facebook":
             self._prepare_facebook_comments()
         if self.platform == "Threads":
@@ -1153,6 +1462,23 @@ class CommentBrowserCollector:
         else:
             target_match = None
         target_code = target_match.group(1) if target_match else ""
+        if self.platform == "Threads" and not target_code:
+            return CommentCollection(
+                url=url,
+                platform=self.platform,
+                status=FieldStatus.NOT_PUBLIC,
+                reason="Permalink posting Threads target tidak dapat dibaca. Pastikan URL share masih aktif.",
+            )
+        if self.platform == "Threads":
+            active_permalink = self._activate_threads_target(driver, current_url, target_code)
+            if not active_permalink:
+                return CommentCollection(
+                    url=current_url,
+                    platform=self.platform,
+                    status=FieldStatus.NOT_PUBLIC,
+                    reason="Chrome Threads tidak berada di posting target, sehingga pengambilan dihentikan.",
+                )
+            current_url = active_permalink
         thread_rows = (
             self._load_conversation(
                 target_code,
@@ -1169,7 +1495,19 @@ class CommentBrowserCollector:
         )
         if not isinstance(thread_rows, list):
             thread_rows = []
-        structured_comments = connector._platform_comments(driver.page_source, current_url)
+        target_rows_present = (
+            self.platform != "Threads"
+            or any(
+                str(row.get("code") or "").casefold() == target_code.casefold()
+                and bool(row.get("is_target"))
+                for row in thread_rows
+            )
+        )
+        structured_comments = (
+            connector._platform_comments(driver.page_source, current_url)
+            if target_rows_present
+            else []
+        )
         if self.platform in {"Facebook", "Threads", "X"}:
             dom_comments = self._dom_comments(current_url, thread_rows)
             comments = self._merge_comments(structured_comments, dom_comments)

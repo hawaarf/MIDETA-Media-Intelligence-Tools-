@@ -105,6 +105,11 @@ class CommentBrowserTests(unittest.TestCase):
         driver.current_url = short_url
         driver.page_source = "<html></html>"
         driver.execute_script.return_value = [short_url, permalink, "", ""]
+        driver.get.side_effect = lambda target: setattr(
+            driver,
+            "current_url",
+            permalink if "/@akun/post/Target123" in target else short_url,
+        )
         collector.driver = driver
         connector = MagicMock()
         connector._platform_comments.return_value = []
@@ -113,11 +118,13 @@ class CommentBrowserTests(unittest.TestCase):
         with (
             patch("src.comment_browser.get_platform_connector", return_value=connector),
             patch.object(collector, "_wait_for_page"),
+            patch.object(collector, "_activate_threads_target", return_value=permalink) as activate,
             patch.object(collector, "_load_conversation", return_value=[{"code": "Target123"}]) as loader,
             patch.object(collector, "_dom_comments", return_value=[visible]) as dom_comments,
         ):
             result = collector.collect(short_url)
 
+        activate.assert_called_once_with(driver, permalink, "Target123")
         loader.assert_called_once_with(
             "Target123",
             max_comments=2_000,
@@ -126,6 +133,120 @@ class CommentBrowserTests(unittest.TestCase):
         dom_comments.assert_called_once_with(permalink, [{"code": "Target123"}])
         self.assertEqual(result.url, permalink)
         self.assertEqual(result.comments[0].comment, "Komentar Threads")
+
+    def test_threads_share_url_does_not_use_a_recommended_post_link(self):
+        short_url = "https://www.threads.com/share/RrTdJihUN/"
+        recommendation = "https://www.threads.com/@lain/post/Recommendation123"
+        driver = MagicMock()
+        driver.current_url = short_url
+        # The fourth value represents the old generic first-post fallback.
+        # It must never be accepted as the share target.
+        driver.execute_script.return_value = [short_url, "", "", recommendation]
+
+        self.assertEqual(
+            CommentBrowserCollector._threads_permalink(driver, short_url),
+            short_url,
+        )
+
+    def test_threads_home_injected_card_is_opened_by_exact_shortcode(self):
+        collector = CommentBrowserCollector("Threads")
+        target = "https://www.threads.com/@pemilik/post/Target123"
+        driver = MagicMock()
+        driver.current_url = "https://www.threads.com/"
+
+        def open_target(_driver, code):
+            self.assertEqual(code, "Target123")
+            driver.current_url = target
+            return True
+
+        with patch.object(collector, "_open_threads_target_card", side_effect=open_target):
+            active = collector._activate_threads_target(
+                driver,
+                "https://www.threads.com/@nama-lama/post/Target123",
+                "Target123",
+            )
+
+        self.assertEqual(active, target)
+        driver.get.assert_not_called()
+
+    def test_threads_loader_only_opens_replies_inside_target_conversation(self):
+        collector = CommentBrowserCollector("Threads")
+        collector.THREADS_MAX_SCROLL_ROUNDS = 1
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.execute_script.return_value = {
+            "reachedEnd": True,
+            "clicked": 1,
+            "scrollY": 100,
+            "height": 1_000,
+            "targetLocked": True,
+        }
+        collector.driver = driver
+        rows = [
+            {"code": "Target123", "is_target": True},
+            {"code": "Comment456", "comment": "Komentar", "comment_type": "parent"},
+            {"code": "Reply789", "comment": "Balasan", "comment_type": "reply"},
+        ]
+
+        with (
+            patch.object(collector, "_threads_dom_rows", return_value=rows),
+            patch("src.comment_browser.time.sleep"),
+        ):
+            result = collector._load_conversation("Target123")
+
+        script_call = driver.execute_script.call_args
+        self.assertEqual(script_call.args[2], "Target123")
+        self.assertIn("insideTargetConversation", script_call.args[0])
+        self.assertIn("leafLoaders", script_call.args[0])
+        self.assertNotIn("targetAnchor ||", script_call.args[0])
+        self.assertEqual(
+            [row["comment_type"] for row in result if row.get("comment")],
+            ["parent", "reply"],
+        )
+
+    def test_threads_comment_metrics_read_button_text_content(self):
+        collector = CommentBrowserCollector("Threads")
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.execute_script.return_value = []
+        collector.driver = driver
+
+        collector._threads_dom_rows("Target123")
+
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn("button, [role=\"button\"]", script)
+        self.assertIn("node.textContent", script)
+        self.assertIn("control.textContent", script)
+        self.assertEqual(collector._count("Like1 Like"), 1)
+
+    def test_threads_loader_restores_target_if_the_page_changes_post(self):
+        collector = CommentBrowserCollector("Threads")
+        collector.THREADS_MAX_SCROLL_ROUNDS = 1
+        target = "https://www.threads.com/@pemilik/post/Target123"
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_url = target
+        driver.execute_script.return_value = {
+            "reachedEnd": True,
+            "clicked": 0,
+            "scrollY": 100,
+            "height": 1_000,
+            "targetLocked": False,
+        }
+        collector.driver = driver
+
+        with (
+            patch.object(
+                collector,
+                "_threads_dom_rows",
+                return_value=[{"code": "Target123", "is_target": True}],
+            ),
+            patch.object(collector, "_wait_for_page"),
+            patch("src.comment_browser.time.sleep"),
+        ):
+            collector._load_conversation("Target123")
+
+        driver.get.assert_called_once_with(f"{target}#/")
 
     def test_facebook_login_uses_its_own_saved_profile(self):
         collector = CommentBrowserCollector("Facebook")
@@ -139,6 +260,81 @@ class CommentBrowserTests(unittest.TestCase):
             self.assertTrue(collector.is_logged_in())
 
         driver.get.assert_called_once_with("https://www.facebook.com/login/")
+
+    def test_facebook_advanced_reads_followers_and_exact_reel_views(self):
+        collector = CommentBrowserCollector("Facebook")
+        url = "https://www.facebook.com/reel/123"
+        profile_url = "https://www.facebook.com/echy"
+        post_html = (
+            '<html><head><meta property="og:url" content="https://www.facebook.com/reel/123">'
+            '<meta property="og:description" content="Caption target"></head>'
+            '<script>{"feedback":{"subscription_target_id":"123",'
+            '"reaction_count":{"count":38},"total_comment_count":12},'
+            '"video_owner":{"name":"Echy","url":"https:\\/\\/www.facebook.com\\/echy"}}</script></html>'
+        )
+        profile_html = "<html><body><strong>7.5K followers</strong></body></html>"
+        reels_html = (
+            '<html><a href="/reel/999"><span>9.9K</span></a>'
+            '<a href="/reel/123"><span aria-label="812 views">812</span></a></html>'
+        )
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.current_url = url
+        driver.page_source = post_html
+        driver.get_cookies.return_value = [{"name": "c_user", "value": "1000123456789"}]
+
+        def navigate(target):
+            driver.current_url = target
+            if target == profile_url:
+                driver.page_source = profile_html
+            elif target == f"{profile_url}/reels/":
+                driver.page_source = reels_html
+            else:
+                driver.page_source = post_html
+
+        driver.get.side_effect = navigate
+        driver.execute_script.return_value = [url, url, url]
+        collector.driver = driver
+
+        with patch.object(collector, "_wait_for_page"):
+            result = collector.collect_facebook_enrichment(url)
+
+        self.assertEqual(result.username.value, "Echy")
+        self.assertEqual(result.caption.value, "Caption target")
+        self.assertEqual(result.followers.value, 7_500)
+        self.assertEqual(result.views.value, 812)
+        self.assertEqual(result.likes.value, 38)
+        self.assertEqual(result.comments.value, 12)
+        self.assertIn(f"{profile_url}/reels/", [call.args[0] for call in driver.get.call_args_list])
+
+    def test_facebook_share_waits_for_resolved_post_permalink(self):
+        short_url = "https://www.facebook.com/share/p/Example/"
+        permalink = "https://www.facebook.com/maskurcokern7/posts/pfbidTarget"
+        driver = MagicMock()
+        driver.current_url = permalink
+        driver.execute_script.return_value = [short_url, "", ""]
+
+        self.assertEqual(
+            CommentBrowserCollector._facebook_permalink(driver, short_url),
+            permalink,
+        )
+
+    def test_facebook_target_match_rejects_a_stale_previous_reel(self):
+        expected = "https://www.facebook.com/reel/123"
+
+        self.assertTrue(
+            CommentBrowserCollector._same_facebook_target(
+                expected,
+                "https://www.facebook.com/reel/123?tracking=abc",
+            )
+        )
+        self.assertFalse(
+            CommentBrowserCollector._same_facebook_target(
+                expected,
+                "https://www.facebook.com/reel/999",
+            )
+        )
 
     def test_facebook_dom_rows_are_converted_to_parent_and_reply(self):
         collector = CommentBrowserCollector("Facebook")
@@ -612,6 +808,23 @@ class CommentBrowserTests(unittest.TestCase):
             [call.args[0] for call in driver.get.call_args_list],
             ["https://www.threads.com/", "https://www.threads.com/login/"],
         )
+
+    def test_facebook_open_login_goes_directly_to_login_without_waiting_for_home(self):
+        collector = CommentBrowserCollector("Facebook")
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        collector.driver = driver
+
+        with (
+            patch.object(collector, "_wait_for_page") as page_wait,
+            patch.object(collector, "is_logged_in", return_value=True) as login_check,
+        ):
+            session_active = collector.open_login()
+
+        self.assertTrue(session_active)
+        driver.get.assert_called_once_with("https://www.facebook.com/login/")
+        page_wait.assert_not_called()
+        login_check.assert_called_once_with(open_platform=False)
 
 
 if __name__ == "__main__":

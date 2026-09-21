@@ -52,15 +52,15 @@ PLACEHOLDERS = {
 
 
 @st.cache_resource(show_spinner=False)
-def comment_browser(platform: str) -> CommentBrowserCollector:
+def comment_browser_v5(platform: str) -> CommentBrowserCollector:
     return CommentBrowserCollector(platform)
 
 
 def current_comment_browser(platform: str) -> CommentBrowserCollector:
     """Upgrade a cached browser object after a Streamlit hot reload."""
-    browser = comment_browser(platform)
+    browser = comment_browser_v5(platform)
     if (
-        getattr(browser, "RUNTIME_VERSION", 0) >= 6
+        getattr(browser, "RUNTIME_VERSION", 0) >= 18
         and "max_comments" in inspect.signature(browser.collect).parameters
     ):
         return browser

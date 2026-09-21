@@ -1,5 +1,6 @@
 import unittest
-from src.batch import FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, compact_comment_export_rows, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, parse_url_list, rank_comment_rows, social_job_results, social_result_row
+from src.batch import FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, collect_threads_enrichment_with_fallback, compact_comment_export_rows, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, rank_comment_rows, social_job_results, social_result_row
+from src.models import DataField, FieldStatus
 from src.connectors import get_connector
 
 class BatchTests(unittest.TestCase):
@@ -20,6 +21,38 @@ class BatchTests(unittest.TestCase):
                 "https://www.instagram.com/p/Dcspim8kilm/",
             ],
         )
+
+    def test_parse_url_list_can_preserve_repeated_spreadsheet_rows(self):
+        url = "https://www.instagram.com/p/ABC/"
+        value = f"{url}\n{url}\n[{url}]({url})"
+
+        self.assertEqual(
+            parse_url_list(value, preserve_repeated_rows=True),
+            [url, url, url],
+        )
+
+    def test_combined_results_keep_repeated_urls_in_original_input_order(self):
+        instagram_url = "https://www.instagram.com/p/ABC/"
+        facebook_url = "https://www.facebook.com/reel/123"
+        threads_url = "https://www.threads.com/@akun/post/DEF"
+        first_instagram = get_connector(instagram_url).mock_enrichment(instagram_url)
+        first_instagram.caption.value = "Instagram pertama"
+        second_instagram = get_connector(instagram_url).mock_enrichment(instagram_url)
+        second_instagram.caption.value = "Instagram kedua"
+        facebook = get_connector(facebook_url).mock_enrichment(facebook_url)
+        threads = get_connector(threads_url).mock_enrichment(threads_url)
+
+        ordered = order_social_results_by_input(
+            [first_instagram, second_instagram, facebook, threads],
+            [instagram_url, facebook_url, instagram_url, threads_url],
+        )
+
+        self.assertEqual(
+            [result.url for result in ordered],
+            [instagram_url, facebook_url, instagram_url, threads_url],
+        )
+        self.assertEqual(ordered[0].caption.value, "Instagram pertama")
+        self.assertEqual(ordered[2].caption.value, "Instagram kedua")
 
     def test_parse_url_list_ignores_rows_without_urls(self):
         value = "Aug 30, 2026\ncaption tanpa tautan\nhttps://www.threads.com/@akun/post/ABC."
@@ -83,6 +116,85 @@ class BatchTests(unittest.TestCase):
         row = social_result_row(result)
         for key in ("Tanggal posting", "Author", "Caption", "Followers", "Views", "Likes", "Comments", "Save atau bookmark", "Shares", "Reposts"):
             self.assertIn(key, row)
+
+    def test_facebook_advanced_keeps_fast_metadata_and_only_adds_browser_views(self):
+        fast = get_connector("https://www.facebook.com/reel/123").mock_enrichment(
+            "https://www.facebook.com/reel/123"
+        )
+        fast.username = DataField(value="author_fast", status=FieldStatus.AVAILABLE)
+        fast.caption = DataField(value="caption fast", status=FieldStatus.AVAILABLE)
+        fast.likes = DataField(value=123, status=FieldStatus.AVAILABLE)
+        fast.comments = DataField(value=45, status=FieldStatus.AVAILABLE)
+        fast.views = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+
+        browser = fast.model_copy(deep=True)
+        browser.username = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+        browser.caption = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+        browser.likes = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+        browser.comments = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+        browser.views = DataField(value=8_120, status=FieldStatus.AVAILABLE)
+
+        merged = merge_facebook_advanced_result(fast, browser)
+
+        self.assertEqual(merged.username.value, "author_fast")
+        self.assertEqual(merged.caption.value, "caption fast")
+        self.assertEqual(merged.likes.value, 123)
+        self.assertEqual(merged.comments.value, 45)
+        self.assertEqual(merged.views.value, 8_120)
+
+    def test_facebook_advanced_keeps_fast_views_when_browser_has_none(self):
+        fast = get_connector("https://www.facebook.com/reel/123").mock_enrichment(
+            "https://www.facebook.com/reel/123"
+        )
+        fast.views = DataField(value=900, status=FieldStatus.AVAILABLE)
+        browser = fast.model_copy(deep=True)
+        browser.views = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+
+        merged = merge_facebook_advanced_result(fast, browser)
+
+        self.assertEqual(merged.views.value, 900)
+        self.assertEqual(merged.views.status, FieldStatus.AVAILABLE)
+
+    def test_threads_uses_browser_when_public_reader_fails(self):
+        url = "https://www.threads.com/@akun/post/ABC"
+        browser_result = get_connector(url).mock_enrichment(url)
+        browser_calls = []
+
+        def public_collect(_url):
+            raise RuntimeError("Domain tidak dapat ditemukan.")
+
+        def browser_collect(target_url):
+            browser_calls.append(target_url)
+            return browser_result
+
+        result, issue = collect_threads_enrichment_with_fallback(
+            public_collect,
+            browser_collect,
+            url,
+        )
+
+        self.assertIs(result, browser_result)
+        self.assertIsNone(issue)
+        self.assertEqual(browser_calls, [url])
+
+    def test_threads_reports_both_failures_when_public_and_browser_are_unavailable(self):
+        url = "https://www.threads.com/@akun/post/ABC"
+
+        def public_collect(_url):
+            raise RuntimeError("Domain tidak dapat ditemukan.")
+
+        def browser_collect(_url):
+            raise RuntimeError("Chrome tidak merespons.")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Pembaca publik Threads gagal.*Chrome tidak merespons",
+        ):
+            collect_threads_enrichment_with_fallback(
+                public_collect,
+                browser_collect,
+                url,
+            )
 
     def test_compact_social_export_has_no_blank_cells_or_repeated_status_columns(self):
         result = get_connector("https://youtu.be/demo").mock_enrichment("https://youtu.be/demo")

@@ -31,14 +31,19 @@ ENRICHMENT_GUIDES = {
         "note": "Password diketik langsung di TikTok dan tidak dibaca MIDETA. Akun privat, verifikasi, atau pembatasan sementara tetap dapat membuat data tidak lengkap.",
     },
     "Facebook": {
-        "summary": "Mendukung post, Reel, video, share link, dan permalink grup yang dapat diakses publik.",
+        "summary": "Pilih Fast untuk metadata publik atau Advanced untuk mencari Views Reel lewat sesi Facebook yang sudah login.",
+        "modes": [
+            ("Fast enrichment · tanpa login", "Membaca metadata publik dari post, video, Reel, share link, atau permalink grup tanpa membuka profil."),
+            ("Advanced enrichment · login", "Membuka post target, profil author, dan halaman Reels untuk mencocokkan ID Reel sebelum mengambil Views dan followers/friends."),
+        ],
         "steps": [
-            ("Salin URL publik", "Gunakan tautan posting yang bisa dibuka tanpa akun khusus."),
+            ("Tentukan kebutuhan", "Gunakan Fast untuk proses cepat atau Advanced bila Views perlu dicari dari halaman Reels profil."),
+            ("Siapkan sesi", "Untuk Advanced, buka Chrome Facebook dari MIDETA, login, lalu tekan Periksa Login."),
             ("Tempel tautan", "Masukkan URL Facebook satu per baris; share link akan diikuti ke tujuan akhirnya."),
-            ("Ambil metadata", "MIDETA mencocokkan ID post agar data rekomendasi tidak tercampur."),
+            ("Ambil metadata", "MIDETA mencocokkan ID post/Reel agar data rekomendasi atau Reel lain tidak tercampur."),
             ("Periksa hasil", "Review author, followers/friends, caption, views, dan engagement lalu ekspor."),
         ],
-        "note": "Posting privat, grup tertutup, dan halaman yang memaksa login akan ditandai tidak tersedia atau diblokir.",
+        "note": "Advanced hanya mengisi Views bila Facebook menampilkan angka untuk ID Reel yang sama. Jika tidak, hasil ditulis Tidak tersedia. Password diketik langsung di Facebook dan tidak dibaca MIDETA.",
     },
     "Instagram": {
         "summary": "Pilih Fast untuk engagement atau Advanced untuk metadata lengkap. Keduanya memakai sesi Instagram yang sudah login.",

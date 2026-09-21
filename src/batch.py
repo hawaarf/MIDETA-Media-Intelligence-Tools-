@@ -1,13 +1,15 @@
 """Batch URL and tabular result helpers."""
 from __future__ import annotations
+from collections import defaultdict, deque
 from datetime import date, datetime
 import re
+from typing import Callable
 
 from src.dates import parse_social_datetime
 from src.models import DataField, FieldStatus, SocialResult
 
-SOCIAL_BATCH_VERSION = 42
-COMMENT_BATCH_VERSION = 9
+SOCIAL_BATCH_VERSION = 47
+COMMENT_BATCH_VERSION = 13
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 FAILED_URL_MESSAGE = "URL tidak dapat diproses"
@@ -50,22 +52,60 @@ URL_PATTERN = re.compile(r"https?://[^\s,<>\"'\[\](){}]+", re.IGNORECASE)
 URL_TRAILING_PUNCTUATION = ".,;:!?"
 
 
-def parse_url_list(value: str) -> list[str]:
-    """Extract unique URLs from pasted rows while preserving input order.
+def parse_url_list(value: str, *, preserve_repeated_rows: bool = False) -> list[str]:
+    """Extract URLs from pasted rows while preserving their input order.
 
     Spreadsheet rows often include a date or another column before the URL.
     Only the URL itself is sent to the connector, so values such as
     ``Aug 30, 2026 https://www.instagram.com/p/example/`` remain valid input.
+
+    By default, repeated URLs are removed for callers such as the comment
+    scraper. Social enrichment can set ``preserve_repeated_rows`` so every
+    spreadsheet row is processed, even when multiple rows contain the same
+    URL. Duplicate URL tokens on one Markdown-link row are still counted once.
     """
     urls: list[str] = []
     seen: set[str] = set()
     for line in value.splitlines():
+        seen_on_line: set[str] = set()
         for match in URL_PATTERN.findall(line):
             url = match.rstrip(URL_TRAILING_PUNCTUATION)
-            if url and url not in seen:
-                seen.add(url)
-                urls.append(url)
+            if not url or url in seen_on_line:
+                continue
+            seen_on_line.add(url)
+            if not preserve_repeated_rows and url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
     return urls
+
+
+def order_social_results_by_input(
+    results: list[SocialResult],
+    input_urls: list[str],
+) -> list[SocialResult]:
+    """Order combined platform results by every input occurrence.
+
+    A URL may intentionally appear on several spreadsheet rows. Each result is
+    matched to the next unused occurrence instead of using a dictionary that
+    collapses repeated URLs into one position.
+    """
+    positions: dict[str, deque[int]] = defaultdict(deque)
+    for position, url in enumerate(input_urls):
+        positions[url].append(position)
+
+    fallback_position = len(input_urls)
+    decorated: list[tuple[int, int, SocialResult]] = []
+    for sequence, result in enumerate(results):
+        matching_positions = positions.get(result.url)
+        position = (
+            matching_positions.popleft()
+            if matching_positions
+            else fallback_position + sequence
+        )
+        decorated.append((position, sequence, result))
+    decorated.sort(key=lambda item: (item[0], item[1]))
+    return [result for _, _, result in decorated]
 
 
 def group_social_urls(urls: list[str]) -> tuple[dict[str, list[str]], list[dict[str, str]]]:
@@ -118,6 +158,94 @@ def failed_social_result(url: str, platform: str, reason: str | None = None) -> 
         reposts=failed_field(),
         note=note,
     )
+
+
+def merge_facebook_advanced_result(
+    fast_result: SocialResult,
+    browser_result: SocialResult,
+) -> SocialResult:
+    """Keep Fast enrichment authoritative and use login only to improve Views.
+
+    Facebook's authenticated page uses a different layout from its public page.
+    It is useful for locating the exact Reel view count, but often omits regular
+    post metadata that the Fast connector can already read reliably.
+    """
+    merged = fast_result.model_copy(deep=True)
+    if browser_result.views.value not in (None, ""):
+        merged.views = browser_result.views.model_copy(deep=True)
+    elif merged.views.value in (None, ""):
+        merged.views = browser_result.views.model_copy(deep=True)
+    merged.collected_at = max(fast_result.collected_at, browser_result.collected_at)
+    return merged
+
+
+def collect_threads_enrichment_with_fallback(
+    public_collect: Callable[[str], SocialResult],
+    browser_collect: Callable[[str], SocialResult] | None,
+    url: str,
+) -> tuple[SocialResult, str | None]:
+    """Use Chrome when the public Threads reader is incomplete or unavailable."""
+    public_error: Exception | None = None
+    try:
+        public_result = public_collect(url)
+    except Exception as exc:
+        public_error = exc
+        public_result = None
+
+    important_fields = (
+        (
+            public_result.caption,
+            public_result.likes,
+            public_result.comments,
+            public_result.shares,
+            public_result.views,
+            public_result.reposts,
+        )
+        if public_result is not None
+        else ()
+    )
+    needs_browser = public_result is None or any(
+        field.value is None for field in important_fields
+    )
+    if not needs_browser:
+        return public_result, None
+
+    if browser_collect is None:
+        if public_result is not None:
+            return public_result, None
+        raise RuntimeError(str(public_error or "Posting Threads tidak dapat dibaca."))
+
+    try:
+        browser_result = browser_collect(url)
+    except Exception as browser_error:
+        if public_result is not None:
+            return public_result, str(browser_error)
+        raise RuntimeError(
+            "Pembaca publik Threads gagal dan sesi Chrome juga belum dapat membaca posting target. "
+            f"Pembaca publik: {public_error}. Chrome: {browser_error}"
+        ) from browser_error
+
+    browser_has_data = any(
+        field.status == FieldStatus.AVAILABLE
+        for field in (
+            browser_result.username,
+            browser_result.caption,
+            browser_result.likes,
+            browser_result.comments,
+            browser_result.shares,
+            browser_result.views,
+            browser_result.reposts,
+        )
+    )
+    if browser_has_data:
+        return browser_result, None
+
+    public_detail = f" Pembaca publik juga gagal: {public_error}" if public_error else ""
+    issue = (
+        browser_result.note
+        or "Posting target tidak terlihat di sesi Chrome Threads."
+    ) + public_detail
+    return (public_result or browser_result), issue
 
 
 def social_job_results(job: dict) -> list[SocialResult]:

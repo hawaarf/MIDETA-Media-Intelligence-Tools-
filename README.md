@@ -32,6 +32,12 @@ Hanya URL-nya yang akan dipakai. Hasil disimpan setiap kali satu URL selesai, ja
 
 URL pendek dan URL hasil tombol **Share** juga bisa langsung ditempel. Ini mencakup `youtu.be`, `vt.tiktok.com`, `vm.tiktok.com`, `fb.watch`, `fb.me`, `t.co`, serta format `/share/...` milik Facebook, Instagram, dan Threads. MIDETA mengarahkan tautan tersebut ke posting aslinya sebelum membaca data, tetapi tetap menampilkan URL yang ditempel pada baris hasil agar urutannya mudah dicocokkan.
 
+#### Pilihan mode Facebook
+
+Facebook menyediakan dua mode. **Fast** membaca metadata publik tanpa login. **Advanced** memakai Chrome Facebook yang sudah login, membuka post target dan profil author, lalu mencari Reel dengan ID yang sama pada halaman Reels untuk melengkapi followers/friends dan views.
+
+Gunakan **Advanced** bila views tidak muncul pada mode Fast. MIDETA tidak mengambil angka dari kartu Reel lain: jika Reel target tidak ditemukan atau Facebook tidak menampilkan angkanya, kolom Views ditulis **Tidak tersedia**. Untuk memakainya, pilih Advanced, klik **Buka Chrome Facebook**, login langsung di Facebook, lalu klik **Periksa Login** sebelum memulai antrean.
+
 #### Pilihan mode Instagram
 
 Fast dan Advanced sama-sama memakai Chrome khusus MIDETA yang sudah login ke Instagram.
@@ -183,6 +189,12 @@ Aug 30, 2026 https://www.instagram.com/p/example/
 MIDETA uses the URL and ignores the surrounding text. Each result is saved as soon as it finishes, so a large queue can be paused and resumed without starting over.
 
 Short links and links copied from a platform's **Share** button can be pasted directly. This includes `youtu.be`, `vt.tiktok.com`, `vm.tiktok.com`, `fb.watch`, `fb.me`, `t.co`, and the `/share/...` formats used by Facebook, Instagram, and Threads. MIDETA resolves these links to the original post before collecting data while keeping the pasted URL in the result row so the original order remains easy to match.
+
+#### Facebook modes
+
+Facebook has two modes. **Fast** reads public metadata without login. **Advanced** uses a logged-in MIDETA Chrome profile, opens the target post and author profile, then finds the Reel with the same ID on the profile's Reels page to complete followers/friends and views.
+
+Use **Advanced** when views are missing in Fast mode. MIDETA never borrows a number from another Reel card: if the target Reel cannot be found or Facebook does not expose its count, Views is marked **Tidak tersedia**. Select Advanced, click **Buka Chrome Facebook**, log in directly on Facebook, then click **Periksa Login** before starting the queue.
 
 #### Instagram modes
 

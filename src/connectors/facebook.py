@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 
 from src.connectors.base import BaseConnector
 from src.dates import relative_social_date_iso, social_date_iso
+from src.models import DataField, FieldStatus, SocialResult
 
 
 class FacebookConnector(BaseConnector):
@@ -26,12 +27,26 @@ class FacebookConnector(BaseConnector):
         )
         if followers is not None:
             return followers
-        return super()._profile_count_by_label(
+        friends = super()._profile_count_by_label(
             profile_html,
             profile_soup,
             "friends?",
             "teman",
         )
+        if friends is not None:
+            return friends
+        # The authenticated desktop page often renders these counts as
+        # ordinary visible text instead of serialising them into a script.
+        visible_text = profile_soup.get_text(" ", strip=True)
+        for label in ("followers?", "pengikut", "friends?", "teman"):
+            match = re.search(
+                rf"(\d[\d.,]*\s*(?:k|m|b|rb|ribu|jt|juta)?)\s+(?:{label})\b",
+                visible_text,
+                re.I,
+            )
+            if match:
+                return self._human_count(match.group(1))
+        return None
 
     @staticmethod
     def _decode_script_value(value: str) -> str:
@@ -176,7 +191,7 @@ class FacebookConnector(BaseConnector):
         return current
 
     def _target_owner(self, html: str, url: str) -> tuple[str | None, str | None]:
-        anchors = self._target_anchor_positions(html, url)
+        anchors = self._target_feedback_positions(html, url)
         if not anchors:
             return None, None
         candidates: list[tuple[int, str, str | None]] = []
@@ -202,6 +217,121 @@ class FacebookConnector(BaseConnector):
             return None, None
         _, name, profile_url = min(candidates, key=lambda item: item[0])
         return name, profile_url
+
+    @staticmethod
+    def _visible_post_owner(soup: BeautifulSoup) -> tuple[str | None, str | None]:
+        """Read the owner from the action menu of the post shown on screen.
+
+        Authenticated Facebook pages include the signed-in account in their
+        scripts and navigation.  The post action label is scoped to the open
+        post, so it is a safer fallback for share URLs that do not expose
+        OpenGraph metadata.
+        """
+        patterns = (
+            r"^Tindakan untuk postingan oleh\s+(.+?)\s+ini$",
+            r"^Actions? for (?:this )?post by\s+(.+?)$",
+            r"^Actions? for\s+(.+?)(?:'s|’s) post$",
+        )
+        for node in soup.select("[aria-label]"):
+            label = re.sub(r"\s+", " ", str(node.get("aria-label") or "")).strip()
+            author = None
+            for pattern in patterns:
+                match = re.match(pattern, label, re.I)
+                if match:
+                    author = match.group(1).strip()
+                    break
+            if not author:
+                continue
+
+            profile_url = None
+            root = node
+            for _ in range(7):
+                if root is None:
+                    break
+                for link in root.select("a[href]"):
+                    link_label = re.sub(
+                        r"\s+",
+                        " ",
+                        " ".join(
+                            value
+                            for value in (
+                                str(link.get("aria-label") or "").strip(),
+                                link.get_text(" ", strip=True),
+                            )
+                            if value
+                        ),
+                    ).strip()
+                    if link_label.casefold() != author.casefold():
+                        continue
+                    href = str(link.get("href") or "").replace("\\/", "/").replace("&amp;", "&")
+                    parsed = urlparse(href)
+                    parts = [part for part in parsed.path.split("/") if part]
+                    if not parts:
+                        continue
+                    profile_url = f"https://www.facebook.com/{parts[0]}"
+                    break
+                if profile_url:
+                    break
+                root = root.parent
+            return author, profile_url
+        return None, None
+
+    def _visible_post_metrics(self, soup: BeautifulSoup) -> dict[str, int]:
+        """Read engagement buttons only from the currently open post card."""
+        action_node = next(
+            (
+                node
+                for node in soup.select("[aria-label]")
+                if re.search(
+                    r"Tindakan untuk postingan oleh|Actions? for (?:this )?post by|Actions? for .+(?:'s|’s) post",
+                    str(node.get("aria-label") or ""),
+                    re.I,
+                )
+            ),
+            None,
+        )
+        if action_node is None:
+            return {}
+
+        def metric_nodes(root):
+            return list(root.select("[aria-label]"))
+
+        root = action_node
+        for _ in range(8):
+            nodes = metric_nodes(root)
+            labels = [str(node.get("aria-label") or "").casefold() for node in nodes]
+            if (
+                any(label in {"suka", "like"} for label in labels)
+                and any(label in {"beri komentar", "comment"} for label in labels)
+                and any("kirim ini ke teman" in label or "send this to friends" in label for label in labels)
+            ):
+                break
+            if root.parent is None:
+                return {}
+            root = root.parent
+        else:
+            return {}
+
+        metrics: dict[str, int] = {}
+        for node in metric_nodes(root):
+            label = re.sub(r"\s+", " ", str(node.get("aria-label") or "")).strip().casefold()
+            text = re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip()
+            if not text or not re.fullmatch(
+                r"\d[\d.,]*\s*(?:k|m|b|rb|ribu|jt|juta)?",
+                text,
+                re.I,
+            ):
+                continue
+            value = self._localized_count(text)
+            if value is None:
+                continue
+            if label in {"suka", "like"}:
+                metrics.setdefault("likes", value)
+            elif label in {"beri komentar", "comment"}:
+                metrics.setdefault("comments", value)
+            elif "kirim ini ke teman" in label or "send this to friends" in label:
+                metrics.setdefault("shares", value)
+        return metrics
 
     def _group_post_actor(self, html: str, post_id: str) -> tuple[str | None, str | None]:
         candidates: list[tuple[int, str, str | None]] = []
@@ -253,17 +383,37 @@ class FacebookConnector(BaseConnector):
             owner_name, _ = self._target_owner(html, url)
             if owner_name:
                 return owner_name
+            visible_author, _ = self._visible_post_owner(soup)
+            if visible_author:
+                return visible_author
+            title = soup.title.get_text(" ", strip=True) if soup.title else ""
+            title_match = re.match(
+                r"^(?:\(\d+\)\s*)?(.+?)\s+-\s+.+?\s+\|\s+Facebook$",
+                title,
+                re.I | re.S,
+            )
+            if title_match:
+                candidate = re.sub(r"\s+", " ", title_match.group(1)).strip()
+                if candidate and candidate.casefold() != "facebook":
+                    return candidate
             title = self._meta(soup, 'meta[property="og:title"]')
-            if not title:
+            if title:
+                parts = [part.strip() for part in title.split(" | ") if part.strip()]
+                if len(parts) >= 2 and parts[-1].casefold() != "facebook" and len(parts[-1]) <= 120:
+                    return parts[-1]
+                title_key = re.sub(r"[^a-z0-9]", "", title.casefold())
+                current_key = re.sub(r"[^a-z0-9]", "", (current or "").casefold())
+                if current_key and title_key == current_key:
+                    return title
+            url_author = self._author_from_url(url)
+            if not url_author:
                 return current
-            parts = [part.strip() for part in title.split(" | ") if part.strip()]
-            if len(parts) >= 2 and parts[-1].casefold() != "facebook" and len(parts[-1]) <= 120:
-                return parts[-1]
-            title_key = re.sub(r"[^a-z0-9]", "", title.casefold())
             current_key = re.sub(r"[^a-z0-9]", "", (current or "").casefold())
-            if current_key and title_key == current_key:
-                return title
-            return current
+            url_key = re.sub(r"[^a-z0-9]", "", url_author.casefold())
+            # Keep a display name that clearly represents the same URL owner,
+            # but reject unrelated script authors such as the account that is
+            # currently signed in to Facebook.
+            return current if current_key and current_key == url_key else url_author
         group_id, post_id = group_post
         author = self._group_post_author(html, post_id) or current
         group_name = self._group_name(html, soup, group_id)
@@ -275,22 +425,108 @@ class FacebookConnector(BaseConnector):
         return author if author.casefold().endswith(suffix.casefold()) else f"{author}{suffix}"
 
     def _platform_followers(self, html: str, soup, url: str, author: str | None) -> int | None:
+        profile_url = self._target_profile_url(html, soup, url)
+        return self._followers_from_profile(profile_url) if profile_url else None
+
+    def _target_profile_url(self, html: str, soup, url: str) -> str | None:
+        """Return the profile that owns the requested post, never a recommendation."""
         canonical = self._meta(soup, 'meta[property="og:url"]') or url
         parts = [unquote(part) for part in urlparse(canonical).path.split("/") if part]
-        reserved = {"groups", "reel", "reels", "watch", "videos", "posts", "permalink.php"}
-        profile_url = None
+        reserved = {
+            "groups",
+            "reel",
+            "reels",
+            "watch",
+            "videos",
+            "posts",
+            "photos",
+            "permalink.php",
+            "photo.php",
+            "story.php",
+            "share",
+        }
+        profile_url: str | None = None
         group_post = self._group_post_ids(canonical)
         if group_post:
             _, profile_url = self._group_post_actor(html, group_post[1])
         if not profile_url:
             _, profile_url = self._target_owner(html, canonical)
-        if len(parts) >= 2 and parts[0].casefold() not in reserved and parts[1].casefold() in {"videos", "posts"}:
+        if not profile_url:
+            _, profile_url = self._visible_post_owner(soup)
+        if len(parts) >= 2 and parts[0].casefold() not in reserved and parts[1].casefold() in {
+            "videos",
+            "posts",
+            "photos",
+            "reels",
+        }:
             profile_url = profile_url or f"https://www.facebook.com/{parts[0]}"
         if not profile_url:
             owner = re.search(r'"video_owner"\s*:\s*\{.{0,1500}?"url"\s*:\s*"((?:\\.|[^"\\])*)"', html, re.I | re.S)
             if owner:
                 profile_url = self._decode_script_value(owner.group(1)).replace("\\/", "/")
-        return self._followers_from_profile(profile_url) if profile_url else None
+        if not profile_url:
+            return None
+        normalized = profile_url.replace("\\/", "/").replace("&amp;", "&").strip()
+        return normalized or None
+
+    @staticmethod
+    def _profile_reels_url(profile_url: str) -> str:
+        parsed = urlparse(profile_url)
+        if parsed.path.casefold().rstrip("/") == "/profile.php":
+            separator = "&" if parsed.query else "?"
+            return f"{profile_url}{separator}sk=reels"
+        return f"{profile_url.split('?', 1)[0].rstrip('/')}/reels/"
+
+    def _views_from_reels_html(self, reels_html: str, target: str) -> int | None:
+        """Read views only from the exact Reel card requested by the user."""
+        markers = list(re.finditer(r'"profile_reel_node"\s*:', reels_html, re.I))
+        for index, marker in enumerate(markers):
+            end = markers[index + 1].start() if index + 1 < len(markers) else min(len(reels_html), marker.start() + 100_000)
+            block = reels_html[marker.start():end]
+            video_ids = re.findall(r'\\?"video_id\\?"\s*:\s*\\?"(\d+)\\?"', block, re.I)
+            if not video_ids or video_ids[0] != target:
+                continue
+            for pattern in (
+                r'"play_count"\s*:\s*"?(\d+)"?',
+                r'"video_view_count"\s*:\s*"?(\d+)"?',
+                r'"view_count"\s*:\s*"?(\d+)"?',
+                r'"play_count_reduced"\s*:\s*"([^"]+)"',
+            ):
+                match = re.search(pattern, block, re.I)
+                count = self._localized_count(match.group(1)) if match else None
+                if count is not None:
+                    return count
+
+        # Logged-in Facebook can render the grid as ordinary anchors without
+        # profile_reel_node data. Limit this fallback to an href containing the
+        # exact numeric target so a nearby Reel cannot donate its view count.
+        soup = BeautifulSoup(reels_html, "lxml")
+        labeled_pattern = re.compile(
+            r"(\d[\d.,]*\s*(?:k|m|b|rb|ribu|jt|juta)?)\s*"
+            r"(?:views?|tayangan|pemutaran|plays?|kali\s+(?:dilihat|ditonton))\b",
+            re.I,
+        )
+        for anchor in soup.select("a[href]"):
+            href = unquote(str(anchor.get("href") or ""))
+            if target not in href:
+                continue
+            values = [
+                anchor.get_text(" ", strip=True),
+                str(anchor.get("aria-label") or ""),
+                str(anchor.get("title") or ""),
+            ]
+            for node in anchor.select("span, div"):
+                if not node.select_one("span, div"):
+                    values.append(node.get_text(" ", strip=True))
+            for value in values:
+                match = labeled_pattern.search(value)
+                if match:
+                    return self._localized_count(match.group(1))
+            for value in reversed(values):
+                if re.fullmatch(r"\s*\d[\d.,]*\s*(?:k|m|b|rb|ribu|jt|juta)?\s*", value, re.I):
+                    return self._localized_count(value)
+
+        return None
 
     def _platform_views(self, html: str, soup, url: str, author: str | None) -> int | None:
         canonical = self._meta(soup, 'meta[property="og:url"]') or url
@@ -314,25 +550,82 @@ class FacebookConnector(BaseConnector):
         reels_html = self._public_profile_html(f"https://www.facebook.com/{username}/reels/")
         if not reels_html:
             return None
-        target = target_ids[0]
-        markers = list(re.finditer(r'"profile_reel_node"\s*:', reels_html, re.I))
-        for index, marker in enumerate(markers):
-            end = markers[index + 1].start() if index + 1 < len(markers) else min(len(reels_html), marker.start() + 100_000)
-            block = reels_html[marker.start():end]
-            video_ids = re.findall(r'\\?"video_id\\?"\s*:\s*\\?"(\d+)\\?"', block, re.I)
-            if not video_ids or video_ids[0] != target:
-                continue
-            for pattern in (
-                r'"play_count"\s*:\s*"?(\d+)"?',
-                r'"video_view_count"\s*:\s*"?(\d+)"?',
-                r'"view_count"\s*:\s*"?(\d+)"?',
-                r'"play_count_reduced"\s*:\s*"([^"]+)"',
-            ):
-                match = re.search(pattern, block, re.I)
-                count = self._localized_count(match.group(1)) if match else None
-                if count is not None:
-                    return count
-        return None
+        return self._views_from_reels_html(reels_html, target_ids[0])
+
+    def enrich_loaded_html(
+        self,
+        html: str,
+        url: str,
+        *,
+        profile_html: str | None = None,
+        reels_html: str | None = None,
+    ) -> SocialResult:
+        """Build an exact Facebook result from an authenticated browser page."""
+        soup = BeautifulSoup(html, "lxml")
+        canonical = self._meta(soup, 'meta[property="og:url"]') or url
+        author = self._meta(
+            soup,
+            'meta[name="author"]',
+            'meta[property="article:author"]',
+            'meta[property="profile:username"]',
+        )
+        author = author or self._script_author(html) or self._author_from_url(canonical)
+        author = self._platform_author(html, soup, canonical, author)
+        caption = self._meta(soup, 'meta[property="og:description"]', 'meta[name="description"]')
+        caption = self._full_caption(soup, caption)
+        caption = self._platform_caption(html, canonical, caption)
+        posted = self._meta(
+            soup,
+            'meta[property="article:published_time"]',
+            'meta[name="date"]',
+            'meta[itemprop="datePublished"]',
+        )
+        posted = self._platform_posted_at(html, soup, canonical, posted)
+        if not posted:
+            posted = self._script_posted_at(self._metric_source(html, canonical))
+
+        stats = self._script_metrics(self._metric_source(html, canonical))
+        stats.update(self._platform_metrics(html, canonical))
+        stats = self._merge_meta_metrics(stats, self._meta_metrics(soup))
+        for name, value in self._visible_post_metrics(soup).items():
+            if stats.get(name) is None:
+                stats[name] = value
+        if profile_html:
+            profile_soup = BeautifulSoup(profile_html, "lxml")
+            followers = self._profile_count_by_label(profile_html, profile_soup, "followers?", "pengikut")
+            if followers is not None:
+                stats["followers"] = followers
+        target_ids = [identifier for identifier in self._post_identifiers(canonical) if identifier.isdigit()]
+        if stats.get("views") is None and reels_html and target_ids:
+            views = self._views_from_reels_html(reels_html, target_ids[0])
+            if views is not None:
+                stats["views"] = views
+
+        def field(name: str) -> DataField:
+            value = stats.get(name)
+            return DataField(
+                value=value,
+                status=FieldStatus.AVAILABLE if value is not None else FieldStatus.NOT_PUBLIC,
+            )
+
+        return SocialResult(
+            url=canonical,
+            platform=self.platform,
+            username=self._field(author),
+            caption=self._field(caption),
+            posted_at=self._field(posted),
+            followers=field("followers"),
+            likes=field("likes"),
+            comments=field("comments"),
+            shares=field("shares"),
+            views=field("views"),
+            bookmarks=field("bookmarks"),
+            reposts=field("reposts"),
+            note=(
+                "Facebook Advanced membaca post target melalui sesi login dan mencocokkan Views "
+                "dengan ID Reel yang sama pada halaman profil."
+            ),
+        )
 
     def _platform_caption(self, html: str, url: str, current: str | None) -> str | None:
         identifiers = self._post_identifiers(url)
