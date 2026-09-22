@@ -2,14 +2,15 @@
 from concurrent.futures import ThreadPoolExecutor
 import importlib
 import inspect
-from queue import Queue
+from queue import Empty, Queue
+import time
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 import src.comment_browser as comment_browser_module
 
-from src.batch import COMMENT_BATCH_VERSION, compact_comment_export_rows, parse_url_list, rank_comment_rows
+from src.batch import COMMENT_BATCH_VERSION, batch_progress_fraction, compact_comment_export_rows, parse_url_list, rank_comment_rows
 from src.comment_browser import CommentBrowserCollector
 from src.config import MAX_COMMENTS_PER_URL, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, get_platform_connector
@@ -25,12 +26,11 @@ render_github_profile()
 page_intro(
     "02",
     "Comment Scrapper",
-    "Kumpulkan komentar publik dari YouTube, TikTok, Facebook, Instagram, Threads, atau X dan urutkan berdasarkan engagement.",
+    "Kumpulkan komentar publik, reply, dan engagement dari URL posting.",
 )
 st.warning(
-    "Tulis satu URL pada setiap baris. MIDETA hanya mengambil komentar yang dapat ditampilkan oleh platform. "
-    f"Maksimal {MAX_COMMENTS_PER_URL:,} komentar diambil dari setiap URL. Split atau Triple Screen dapat menjalankan "
-    f"maksimal {MAX_PARALLEL_PLATFORMS} platform dengan proses dan hasil terpisah."
+    "Alur: pilih platform → tempel satu URL per baris → ambil komentar → periksa dan unduh hasil. "
+    f"Maksimal {MAX_COMMENTS_PER_URL:,} komentar per URL."
 )
 
 PLATFORM_ICONS = {
@@ -111,8 +111,9 @@ def render_platform_setup(platform: str, slot: str, compact: bool = False) -> No
         with st.expander(f"Cara pakai {platform}"):
             render_platform_guide("comments", platform)
     else:
-        st.caption(f"Bagian ini khusus untuk komentar {platform}.")
-        render_platform_guide("comments", platform)
+        st.caption(f"Siap mengambil komentar {platform}. Detail alur dan batasannya tersedia di bawah.")
+        with st.expander(f"Cara pakai {platform}"):
+            render_platform_guide("comments", platform)
     if platform in {"Facebook", "Threads", "X"}:
         render_browser_controls(platform, slot)
 
@@ -296,6 +297,9 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
             "preview": None,
             "processed": 0,
             "total": len(request["urls"]),
+            "active_fraction": 0.04,
+            "heartbeat_started": time.monotonic(),
+            "comment_count": 0,
         }
         active_browser = None
         if platform in {"Facebook", "Threads", "X"} and not request["mock_mode"]:
@@ -311,14 +315,18 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
                         "Alasan": str(exc),
                     }
                 )
-                progress_targets[platform].progress(100, text=f"{platform}: Chrome tidak dapat dimulai")
+                progress_targets[platform].progress(1.0, text=f"{platform}: Chrome tidak dapat dimulai")
                 continue
         tasks.append({"request": request, "active_browser": active_browser})
-        progress_targets[platform].progress(0, text=f"{platform}: menyiapkan {len(request['urls']):,} URL…")
+        progress_targets[platform].progress(
+            batch_progress_fraction(0, len(request["urls"]), 0.04),
+            text=f"{platform}: menyiapkan {len(request['urls']):,} URL…",
+        )
 
     if tasks:
         output: Queue = Queue()
         completed_workers = 0
+        finished_platforms: set[str] = set()
         with ThreadPoolExecutor(
             max_workers=min(len(tasks), MAX_PARALLEL_PLATFORMS),
             thread_name_prefix="mideta-comments",
@@ -326,18 +334,52 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
             for task in tasks:
                 executor.submit(collect_comment_platform, task, output)
             while completed_workers < len(tasks):
-                platform, outcome = output.get()
+                try:
+                    platform, outcome = output.get(timeout=0.4)
+                except Empty:
+                    now = time.monotonic()
+                    for task in tasks:
+                        active_platform = task["request"]["platform"]
+                        if active_platform in finished_platforms:
+                            continue
+                        state = states[active_platform]
+                        elapsed = now - state["heartbeat_started"]
+                        heartbeat = min(0.9, 0.04 + (elapsed / (elapsed + 10.0)) * 0.86)
+                        state["active_fraction"] = max(state["active_fraction"], heartbeat)
+                        progress_targets[active_platform].progress(
+                            batch_progress_fraction(
+                                state["processed"],
+                                state["total"],
+                                state["active_fraction"],
+                            ),
+                            text=(
+                                f"{active_platform}: memproses URL {state['processed'] + 1:,} "
+                                f"dari {state['total']:,} · {state['comment_count']:,} komentar ditemukan"
+                            ),
+                        )
+                    continue
                 if outcome is None:
                     completed_workers += 1
+                    finished_platforms.add(platform)
                     continue
                 state = states[platform]
                 if outcome["kind"] == "progress":
                     limit = max(int(outcome.get("limit") or MAX_COMMENTS_PER_URL), 1)
                     count = max(int(outcome.get("count") or 0), 0)
-                    current_fraction = min(count / limit, 0.95)
-                    percentage = int((state["processed"] + current_fraction) / state["total"] * 100)
+                    if count == 0:
+                        state["heartbeat_started"] = time.monotonic()
+                        state["active_fraction"] = 0.04
+                    state["comment_count"] = count
+                    state["active_fraction"] = max(
+                        state["active_fraction"],
+                        min(count / limit, 0.95),
+                    )
                     progress_targets[platform].progress(
-                        percentage,
+                        batch_progress_fraction(
+                            state["processed"],
+                            state["total"],
+                            state["active_fraction"],
+                        ),
                         text=(
                             f"{platform}: URL {state['processed'] + 1:,} dari {state['total']:,} · "
                             f"{count:,} komentar ditemukan (maks. {MAX_COMMENTS_PER_URL:,})"
@@ -346,9 +388,11 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
                     continue
                 store_collection(state, outcome)
                 state["processed"] += 1
-                percentage = int(state["processed"] / state["total"] * 100)
+                state["active_fraction"] = 0.04
+                state["heartbeat_started"] = time.monotonic()
+                state["comment_count"] = 0
                 progress_targets[platform].progress(
-                    percentage,
+                    batch_progress_fraction(state["processed"], state["total"]),
                     text=f"{platform}: {state['processed']:,} dari {state['total']:,} URL selesai",
                 )
 

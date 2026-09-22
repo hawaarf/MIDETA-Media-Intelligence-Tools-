@@ -1,9 +1,15 @@
 import unittest
-from src.batch import FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, collect_threads_enrichment_with_fallback, compact_comment_export_rows, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, rank_comment_rows, social_job_results, social_result_row
+from src.batch import FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_comment_export_rows, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, rank_comment_rows, social_job_results, social_result_row
 from src.models import DataField, FieldStatus
 from src.connectors import get_connector
 
 class BatchTests(unittest.TestCase):
+    def test_batch_progress_moves_during_active_url_without_finishing_early(self):
+        self.assertEqual(batch_progress_fraction(0, 10), 0.0)
+        self.assertGreater(batch_progress_fraction(0, 10, 0.5), 0.0)
+        self.assertLess(batch_progress_fraction(9, 10, 0.95), 1.0)
+        self.assertEqual(batch_progress_fraction(10, 10, 0.5), 1.0)
+
     def test_parse_url_list_removes_blanks_and_duplicates(self):
         value = "https://youtube.com/watch?v=1\n\nhttps://x.com/a/status/2\nhttps://youtube.com/watch?v=1"
         self.assertEqual(parse_url_list(value), ["https://youtube.com/watch?v=1", "https://x.com/a/status/2"])

@@ -535,7 +535,7 @@ textarea:focus-visible {
 }
 
 .feature-card {
-  min-height: 252px;
+  min-height: 190px;
   margin-top: 1rem;
   padding: 1.2rem;
   background: linear-gradient(155deg, var(--surface-raised), var(--surface));
@@ -569,7 +569,7 @@ textarea:focus-visible {
 
 .feature-card .number {
   display: block;
-  margin-top: 2.6rem;
+  margin-top: 1.25rem;
   color: #817985;
   font-size: 0.62rem;
   font-weight: 750;

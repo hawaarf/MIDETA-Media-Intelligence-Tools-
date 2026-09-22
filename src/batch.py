@@ -15,6 +15,26 @@ MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "O
 FAILED_URL_MESSAGE = "URL tidak dapat diproses"
 
 
+def batch_progress_fraction(
+    processed: int,
+    total: int,
+    active_fraction: float = 0.0,
+) -> float:
+    """Return a stable 0..1 progress value for a durable batch.
+
+    ``active_fraction`` represents work already happening on the next URL. It
+    deliberately stops below one so an in-flight request can never make the UI
+    claim that a row has been saved before it reaches the database.
+    """
+    if total <= 0:
+        return 1.0
+    completed = min(max(int(processed), 0), total)
+    if completed >= total:
+        return 1.0
+    active = min(max(float(active_fraction), 0.0), 0.95)
+    return min((completed + active) / total, 0.999)
+
+
 def format_posting_date(value) -> str:
     """Format a posting date consistently for tables and downloads."""
     parsed_datetime = parse_social_datetime(value)

@@ -1,7 +1,7 @@
 """MIDETA Social Media Enrichment batch page."""
 import importlib
 from concurrent.futures import ThreadPoolExecutor
-from queue import Queue
+from queue import Empty, Queue
 import re
 import time
 from typing import Any
@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
 
-from src.batch import SOCIAL_BATCH_VERSION, collect_threads_enrichment_with_fallback, compact_social_export_row, failed_social_result, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, social_job_results, social_result_row
+from src.batch import SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_social_export_row, failed_social_result, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, social_job_results, social_result_row
 import src.comment_browser as comment_browser_module
 from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, detect_platform, get_platform_connector
@@ -56,13 +56,11 @@ render_github_profile()
 page_intro(
     "01",
     "Social Media Enrichment",
-    "Masukkan beberapa tautan YouTube, TikTok, Facebook, Instagram, Threads, atau X untuk melihat metadata publiknya.",
+    "Ubah daftar URL media sosial menjadi metadata yang siap diperiksa dan diunduh.",
 )
 st.info(
-    "Tulis satu URL pada setiap baris. MIDETA dapat menerima sampai 1.000 URL dan menyimpannya bertahap. "
-    "Setiap baris tetap diproses, termasuk saat URL yang sama muncul lebih dari sekali. "
-    "URL pendek dan tautan dari tombol Share akan diarahkan ke posting aslinya secara otomatis. "
-    f"Enrichment All mengenali platform secara otomatis, sedangkan Split atau Triple Screen menjalankan maksimal {MAX_PARALLEL_PLATFORMS} platform secara paralel."
+    "Alur: pilih mode → tempel satu URL per baris → mulai enrichment → periksa dan unduh hasil. "
+    "Enrichment All mengenali platform dan URL pendek secara otomatis."
 )
 
 PLATFORM_ICONS = {
@@ -305,8 +303,9 @@ def render_platform_setup(platform: str, slot: str, compact: bool = False) -> st
         with st.expander(f"Cara pakai {platform}"):
             render_platform_guide("enrichment", platform)
     else:
-        st.caption(f"Bagian ini khusus untuk URL {platform}.")
-        render_platform_guide("enrichment", platform)
+        st.caption(f"Siap memproses URL {platform}. Detail alur dan batasannya tersedia di bawah.")
+        with st.expander(f"Cara pakai {platform}"):
+            render_platform_guide("enrichment", platform)
     if platform == "Instagram":
         return render_instagram_controls(slot)
     if platform == "TikTok":
@@ -403,11 +402,17 @@ def load_current_job(platform: str) -> dict[str, Any] | None:
     return current_job
 
 
-def render_job_controls(job: dict[str, Any], slot: str) -> None:
+def render_job_controls(job: dict[str, Any], slot: str) -> Any:
+    progress = st.progress(
+        batch_progress_fraction(job["processed"], job["total"]),
+        text=(
+            f"{job['processed']:,} dari {job['total']:,} URL selesai"
+            if job["status"] == "completed"
+            else f"{job['processed']:,} dari {job['total']:,} URL sudah disimpan"
+        ),
+    )
     if job["status"] not in {"running", "paused"}:
-        return
-    percentage = int(job["processed"] / job["total"] * 100) if job["total"] else 0
-    st.progress(percentage, text=f"{job['processed']:,} dari {job['total']:,} URL sudah disimpan")
+        return progress
     control_cols = st.columns([2, 3])
     if job["status"] == "running":
         if control_cols[0].button("Jeda proses", key=f"pause_social_{slot}_{job['id']}", width="stretch"):
@@ -422,6 +427,7 @@ def render_job_controls(job: dict[str, Any], slot: str) -> None:
             set_social_job_status(job["id"], "running")
             st.rerun()
         control_cols[1].caption("Hasil yang sudah selesai tetap tersimpan. Tekan Lanjutkan proses untuk meneruskan antrean.")
+    return progress
 
 
 def render_job_results(job: dict[str, Any] | None, platform: str) -> None:
@@ -635,20 +641,19 @@ def render_job_issues(job: dict[str, Any] | None) -> None:
                 st.dataframe(pd.DataFrame(browser_issues), width="stretch", hide_index=True)
 
 
-def render_job_panel(platform: str, slot: str) -> tuple[dict[str, Any] | None, Any]:
+def render_job_panel(platform: str, slot: str) -> tuple[dict[str, Any] | None, Any, Any | None]:
     job = load_current_job(platform)
     if job and job["platform"] in {"Instagram", "TikTok", "Facebook"}:
         st.caption(f"Antrean aktif menggunakan **{job['enrichment_mode'].title()} enrichment**.")
-    if job:
-        render_job_controls(job, slot)
+    progress = render_job_controls(job, slot) if job else None
     activity = st.empty()
     render_job_results(job, platform)
     render_job_issues(job)
-    return job, activity
+    return job, activity, progress
 
 
-def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, Any], Any]]:
-    panels: list[tuple[dict[str, Any], Any]] = []
+def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, Any], Any, Any]]:
+    panels: list[tuple[dict[str, Any], Any, Any]] = []
     if not jobs:
         return panels
     st.markdown("#### Status per platform")
@@ -661,10 +666,10 @@ def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, An
                 if platform == "Facebook" and job["enrichment_mode"] == "fast":
                     login_text = "tanpa login"
                 st.caption(f"Mode {platform}: {job['enrichment_mode'].title()} enrichment {login_text}.")
-            render_job_controls(job, f"all_{platform.lower()}")
+            progress = render_job_controls(job, f"all_{platform.lower()}")
             activity = st.empty()
             render_job_issues(job)
-        panels.append((job, activity))
+        panels.append((job, activity, progress))
     return panels
 
 
@@ -894,11 +899,11 @@ def persist_outcome(job: dict[str, Any], outcome: dict[str, Any], activity: Any)
     return True
 
 
-def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None:
+def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any, Any | None]]) -> None:
     tasks: list[dict[str, Any]] = []
     state_changed = False
     seen_jobs: set[int] = set()
-    for job, activity in job_panels:
+    for job, activity, progress in job_panels:
         if not job or job["status"] != "running" or job["id"] in seen_jobs:
             continue
         seen_jobs.add(job["id"])
@@ -934,7 +939,15 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
         activity.info(
             f"{job['platform']} · {mode_text}: memproses URL {chunk[0]['position']:,}–{chunk[-1]['position']:,} dari {job['total']:,}."
         )
-        tasks.append({"job": job, "activity": activity, "active_browser": active_browser, "chunk": chunk})
+        tasks.append(
+            {
+                "job": job,
+                "activity": activity,
+                "progress": progress,
+                "active_browser": active_browser,
+                "chunk": chunk,
+            }
+        )
 
     if not tasks:
         if state_changed:
@@ -943,8 +956,18 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
 
     output: Queue = Queue()
     completed_workers = 0
+    finished_jobs: set[int] = set()
     processed_counts = {task["job"]["id"]: task["job"]["processed"] for task in tasks}
     tasks_by_id = {task["job"]["id"]: task for task in tasks}
+    heartbeat_started = {task["job"]["id"]: time.monotonic() for task in tasks}
+    active_fractions = {task["job"]["id"]: 0.04 for task in tasks}
+    for task in tasks:
+        job = task["job"]
+        if task["progress"] is not None:
+            task["progress"].progress(
+                batch_progress_fraction(job["processed"], job["total"], active_fractions[job["id"]]),
+                text=f"{job['platform']}: memproses URL {job['processed'] + 1:,} dari {job['total']:,}…",
+            )
     with ThreadPoolExecutor(
         max_workers=min(len(tasks), MAX_PARALLEL_PLATFORMS),
         thread_name_prefix="mideta-platform",
@@ -952,16 +975,54 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
         for task in tasks:
             executor.submit(collect_job_chunk, task, output)
         while completed_workers < len(tasks):
-            job_id, outcome = output.get()
+            try:
+                job_id, outcome = output.get(timeout=0.4)
+            except Empty:
+                now = time.monotonic()
+                for active_job_id, task in tasks_by_id.items():
+                    if active_job_id in finished_jobs or task["progress"] is None:
+                        continue
+                    elapsed = now - heartbeat_started[active_job_id]
+                    heartbeat = min(0.9, 0.04 + (elapsed / (elapsed + 10.0)) * 0.86)
+                    active_fractions[active_job_id] = max(active_fractions[active_job_id], heartbeat)
+                    job = task["job"]
+                    task["progress"].progress(
+                        batch_progress_fraction(
+                            processed_counts[active_job_id],
+                            job["total"],
+                            active_fractions[active_job_id],
+                        ),
+                        text=(
+                            f"{job['platform']}: memproses URL {processed_counts[active_job_id] + 1:,} "
+                            f"dari {job['total']:,}…"
+                        ),
+                    )
+                continue
             if outcome is None:
                 completed_workers += 1
+                finished_jobs.add(job_id)
                 continue
             task = tasks_by_id[job_id]
             saved = persist_outcome(task["job"], outcome, task["activity"])
             if saved:
                 processed_counts[job_id] += 1
+                active_fractions[job_id] = 0.04
+                heartbeat_started[job_id] = time.monotonic()
+                if task["progress"] is not None:
+                    task["progress"].progress(
+                        batch_progress_fraction(processed_counts[job_id], task["job"]["total"]),
+                        text=(
+                            f"{task['job']['platform']}: {processed_counts[job_id]:,} dari "
+                            f"{task['job']['total']:,} URL selesai"
+                        ),
+                    )
                 task["activity"].info(
                     f"{task['job']['platform']}: {processed_counts[job_id]:,} dari {task['job']['total']:,} URL sudah disimpan."
+                )
+            elif task["progress"] is not None:
+                task["progress"].progress(
+                    batch_progress_fraction(processed_counts[job_id], task["job"]["total"]),
+                    text=f"{task['job']['platform']}: proses dijeda pada URL berikutnya",
                 )
     time.sleep(0.3)
     st.rerun()
@@ -976,7 +1037,7 @@ layout_mode = st.segmented_control(
     width="stretch",
 )
 
-job_panels: list[tuple[dict[str, Any] | None, Any]] = []
+job_panels: list[tuple[dict[str, Any] | None, Any, Any | None]] = []
 
 if layout_mode == "Enrichment All":
     st.caption(

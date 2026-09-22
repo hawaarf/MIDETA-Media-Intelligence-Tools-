@@ -186,7 +186,7 @@ def render_github_profile() -> None:
     )
 
 def render_brand_header() -> None:
-    brand, home, features, about, dashboard = st.columns([4.3, 1, 1, 1, 1.8], vertical_alignment="center")
+    brand, enrichment, comments, history = st.columns([4.8, 1.45, 1.45, 1.2], vertical_alignment="center")
     brand.markdown(
         f"""
         <div class="brand-lockup">
@@ -196,10 +196,24 @@ def render_brand_header() -> None:
         """,
         unsafe_allow_html=True,
     )
-    home.link_button("Beranda", "#top", width="stretch")
-    features.link_button("Fitur", "#features", width="stretch")
-    about.link_button("Tentang", "#about", width="stretch")
-    dashboard.page_link("pages/1_Social_Media_Enrichment.py", label="Buka Dashboard", icon=":material/arrow_forward:", width="stretch")
+    enrichment.page_link(
+        "pages/1_Social_Media_Enrichment.py",
+        label="Enrichment",
+        icon=":material/database:",
+        width="stretch",
+    )
+    comments.page_link(
+        "pages/2_Comment_Scrapper.py",
+        label="Komentar",
+        icon=":material/forum:",
+        width="stretch",
+    )
+    history.page_link(
+        "pages/3_Riwayat_Analisis.py",
+        label="Riwayat",
+        icon=":material/history:",
+        width="stretch",
+    )
     st.markdown('<div class="header-rule"></div>', unsafe_allow_html=True)
 
 def page_intro(number: str, title: str, description: str) -> None:
