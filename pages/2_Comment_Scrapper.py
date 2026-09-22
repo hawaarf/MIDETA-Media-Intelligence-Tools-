@@ -17,13 +17,11 @@ from src.connectors import PLATFORM_OPTIONS, get_platform_connector
 from src.database import add_history
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.models import FieldStatus
-from src.runtime import browser_sessions_available
 from src.ui import apply_theme, page_intro, render_footer, render_github_profile, render_platform_guide, status_label
 
 
 st.set_page_config(page_title="Comment Scrapper | MIDETA", page_icon=str(MIDETA_LOGO_PATH), layout="wide")
 apply_theme()
-BROWSER_SESSIONS_AVAILABLE = browser_sessions_available(str(st.context.url or ""))
 render_github_profile()
 page_intro(
     "02",
@@ -79,13 +77,6 @@ def current_comment_browser(platform: str) -> CommentBrowserCollector:
 
 
 def render_browser_controls(platform: str, slot: str) -> None:
-    if not BROWSER_SESSIONS_AVAILABLE:
-        st.info(
-            f"Versi web mencoba komentar publik {platform} tanpa sesi login. "
-            "Komentar yang hanya tampil setelah login akan ditandai Tidak tersedia. "
-            "Jalankan MIDETA secara lokal bila memerlukan komentar dan reply yang lebih lengkap."
-        )
-        return
     st.info(f"Mode browser {platform} aktif otomatis karena komentar dimuat dari percakapan di Chrome MIDETA.")
     st.caption(
         f"Login cukup dilakukan sekali. Sesi {platform} disimpan di profil Chrome khusus MIDETA dan dipakai kembali "
@@ -311,11 +302,7 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
             "comment_count": 0,
         }
         active_browser = None
-        if (
-            BROWSER_SESSIONS_AVAILABLE
-            and platform in {"Facebook", "Threads", "X"}
-            and not request["mock_mode"]
-        ):
+        if platform in {"Facebook", "Threads", "X"} and not request["mock_mode"]:
             try:
                 active_browser = current_comment_browser(platform)
                 active_browser.start()

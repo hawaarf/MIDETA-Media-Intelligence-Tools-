@@ -16,12 +16,6 @@ MIDETA punya tiga bagian utama:
 
 Platform yang didukung: YouTube, TikTok, Facebook, Instagram, Threads, dan X.
 
-### Versi web dan versi lokal
-
-Versi web di Streamlit Community Cloud tidak dapat membuka atau mengendalikan Chrome di laptop pengunjung. Karena itu, MIDETA otomatis memakai pembaca publik untuk semua platform ketika dibuka dari web dan tidak menampilkan tombol login yang tidak dapat bekerja. Data yang hanya terlihat setelah login akan ditulis **Tidak tersedia**.
-
-Untuk enrichment atau komentar yang membutuhkan sesi Facebook, Instagram, Threads, atau X, jalankan MIDETA secara lokal. Tombol **Buka Sesi**, **Periksa Login**, dan **Tutup Chrome** hanya muncul pada versi lokal, lalu sesi tersimpan di perangkat tersebut.
-
 ### Social Media Enrichment
 
 Untuk satu platform, tempel satu URL per baris lalu mulai proses. Satu antrean dapat berisi sampai 1.000 URL.
