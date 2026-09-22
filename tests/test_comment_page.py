@@ -9,18 +9,24 @@ from streamlit.testing.v1 import AppTest
 class CommentPageTests(unittest.TestCase):
     def test_deployed_mode_uses_public_comments_without_login_buttons(self):
         page = Path(__file__).resolve().parents[1] / "pages" / "2_Comment_Scrapper.py"
-        with patch.dict(os.environ, {"MIDETA_BROWSER_SESSIONS": "disabled"}):
-            app = AppTest.from_file(page)
-            app.run(timeout=10)
-            app.get("button_group")[1].set_value("Facebook").run(timeout=10)
+        for platform in ("Facebook", "Threads", "X"):
+            with self.subTest(platform=platform), patch.dict(
+                os.environ,
+                {"MIDETA_BROWSER_SESSIONS": "disabled"},
+            ):
+                app = AppTest.from_file(page)
+                app.run(timeout=10)
+                app.get("button_group")[1].set_value(platform).run(timeout=10)
 
-        self.assertFalse(app.exception)
-        button_labels = [widget.label for widget in app.button]
-        self.assertNotIn("Buka Sesi Facebook", button_labels)
-        self.assertNotIn("Periksa Login", button_labels)
-        self.assertNotIn("Tutup Chrome", button_labels)
-        self.assertIn("Ambil Semua Komentar", button_labels)
-        self.assertTrue(any("Versi web mencoba komentar publik" in item.value for item in app.info))
+            self.assertFalse(app.exception)
+            button_labels = [widget.label for widget in app.button]
+            self.assertFalse(any(label.startswith("Buka Sesi") for label in button_labels))
+            self.assertNotIn("Periksa Login", button_labels)
+            self.assertNotIn("Tutup Chrome", button_labels)
+            self.assertIn("Ambil Semua Komentar", button_labels)
+            self.assertTrue(
+                any(f"Versi web mencoba komentar publik {platform}" in item.value for item in app.info)
+            )
 
     def test_triple_screen_keeps_platform_inputs_and_results_separate(self):
         page = Path(__file__).resolve().parents[1] / "pages" / "2_Comment_Scrapper.py"

@@ -102,21 +102,28 @@ class EnrichmentPageTests(unittest.TestCase):
         self.assertIn("Mulai Advanced Enrichment", button_labels)
 
     def test_deployed_mode_uses_public_fallback_without_login_buttons(self):
-        with (
-            patch.dict(os.environ, {"MIDETA_BROWSER_SESSIONS": "disabled"}),
-            patch("src.database.get_social_job", return_value=None),
-            patch("src.database.get_latest_social_job", return_value=None),
-        ):
-            app = self._app()
-            app.get("button_group")[1].set_value("Facebook").run(timeout=10)
+        cases = {
+            "Facebook": ("Mulai Fast Enrichment", "Versi web memakai Fast enrichment"),
+            "Instagram": ("Ambil Semua Metadata", "Versi web memproses Instagram"),
+            "Threads": ("Ambil Semua Metadata", "Versi web mencoba data publik Threads"),
+        }
+        for platform, (submit_label, info_text) in cases.items():
+            with self.subTest(platform=platform):
+                with (
+                    patch.dict(os.environ, {"MIDETA_BROWSER_SESSIONS": "disabled"}),
+                    patch("src.database.get_social_job", return_value=None),
+                    patch("src.database.get_latest_social_job", return_value=None),
+                ):
+                    app = self._app()
+                    app.get("button_group")[1].set_value(platform).run(timeout=10)
 
-        self.assertFalse(app.exception)
-        button_labels = [widget.label for widget in app.button]
-        self.assertNotIn("Buka Chrome Facebook", button_labels)
-        self.assertNotIn("Periksa Login", button_labels)
-        self.assertNotIn("Tutup Chrome Facebook", button_labels)
-        self.assertIn("Mulai Fast Enrichment", button_labels)
-        self.assertTrue(any("Versi web memakai Fast enrichment" in item.value for item in app.info))
+                self.assertFalse(app.exception)
+                button_labels = [widget.label for widget in app.button]
+                self.assertFalse(any(label.startswith(("Buka Chrome", "Buka Sesi")) for label in button_labels))
+                self.assertNotIn("Periksa Login", button_labels)
+                self.assertFalse(any(label.startswith("Tutup Chrome") for label in button_labels))
+                self.assertIn(submit_label, button_labels)
+                self.assertTrue(any(info_text in item.value for item in app.info))
 
 
 if __name__ == "__main__":
