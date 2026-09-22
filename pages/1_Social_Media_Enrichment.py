@@ -19,6 +19,7 @@ from src.database import add_history, create_social_job, get_latest_social_job, 
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, InstagramLoginRequired, build_instagram_browser_result
 from src.models import FieldStatus, SocialResult
+from src.runtime import browser_sessions_available
 from src.social_urls import resolve_social_url
 from src.tiktok_browser import build_tiktok_browser_result
 import src.connectors.tiktok as tiktok_connector_module
@@ -52,6 +53,7 @@ CommentBrowserLoginRequired = comment_browser_module.CommentBrowserLoginRequired
 
 st.set_page_config(page_title="Social Media Enrichment | MIDETA", page_icon=str(MIDETA_LOGO_PATH), layout="wide")
 apply_theme()
+BROWSER_SESSIONS_AVAILABLE = browser_sessions_available(str(st.context.url or ""))
 render_github_profile()
 page_intro(
     "01",
@@ -123,6 +125,13 @@ def recover_instagram_followers(username: str | None) -> int | None:
 
 
 def render_instagram_controls(slot: str) -> str:
+    if not BROWSER_SESSIONS_AVAILABLE:
+        st.info(
+            "Versi web memproses Instagram dari data publik tanpa sesi login. "
+            "Followers, Views, atau engagement yang tidak dipublikasikan Instagram akan ditulis Tidak tersedia. "
+            "Jalankan MIDETA secara lokal bila memerlukan mode login."
+        )
+        return "public"
     mode_label = st.segmented_control(
         "Mode enrichment Instagram",
         ("Fast enrichment", "Advanced enrichment"),
@@ -221,6 +230,13 @@ def render_tiktok_controls(slot: str) -> str:
 
 
 def render_facebook_controls(slot: str) -> str:
+    if not BROWSER_SESSIONS_AVAILABLE:
+        st.info(
+            "Versi web memakai Fast enrichment Facebook tanpa sesi login. "
+            "Views Reel yang hanya terlihat setelah login akan ditulis Tidak tersedia. "
+            "Jalankan MIDETA secara lokal bila memerlukan Advanced enrichment."
+        )
+        return "fast"
     mode_label = st.segmented_control(
         "Mode enrichment Facebook",
         ("Fast enrichment", "Advanced enrichment"),
@@ -270,6 +286,12 @@ def render_facebook_controls(slot: str) -> str:
 
 
 def render_threads_controls(slot: str) -> None:
+    if not BROWSER_SESSIONS_AVAILABLE:
+        st.info(
+            "Versi web mencoba data publik Threads tanpa sesi login. "
+            "Data yang dibatasi Threads akan ditulis Tidak tersedia; mode login tetap tersedia saat MIDETA dijalankan lokal."
+        )
+        return
     st.caption(
         "MIDETA mencoba metadata publik lebih dulu. Jika Threads mengirim halaman kosong atau invalid_post, "
         "MIDETA otomatis memakai sesi Chrome Threads untuk membaca post yang benar."
@@ -344,13 +366,16 @@ def group_detected_urls(urls: list[str]) -> tuple[dict[str, list[str]], list[dic
 def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | None:
     errors = [error for request in requests if (error := validate_job_request(request))]
     requests_are_valid = not errors
-    if requests_are_valid and any(request["platform"] == "Instagram" and not request["mock_mode"] for request in requests):
+    if BROWSER_SESSIONS_AVAILABLE and requests_are_valid and any(
+        request["platform"] == "Instagram" and not request["mock_mode"]
+        for request in requests
+    ):
         try:
             if not instagram_browser().is_logged_in():
                 errors.append("Instagram belum login. Buka Chrome Instagram dan selesaikan login sebelum memulai batch.")
         except InstagramBrowserError as exc:
             errors.append(str(exc))
-    if requests_are_valid and any(
+    if BROWSER_SESSIONS_AVAILABLE and requests_are_valid and any(
         request["platform"] == "Facebook"
         and request["enrichment_mode"] == "advanced"
         and not request["mock_mode"]
@@ -374,8 +399,11 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | No
             SOCIAL_BATCH_VERSION,
             mock_mode=request["mock_mode"],
             browser_mode=(
-                platform in {"Instagram", "Threads"}
-                or (platform == "Facebook" and request["enrichment_mode"] == "advanced")
+                BROWSER_SESSIONS_AVAILABLE
+                and (
+                    platform in {"Instagram", "Threads"}
+                    or (platform == "Facebook" and request["enrichment_mode"] == "advanced")
+                )
             ),
             enrichment_mode=request["enrichment_mode"],
         )
@@ -662,9 +690,7 @@ def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, An
         with st.container(border=True):
             st.markdown(f"**{PLATFORM_ICONS[platform]}** · {job['processed']:,}/{job['total']:,} URL")
             if platform in {"Instagram", "TikTok", "Facebook"}:
-                login_text = "tanpa login" if job["enrichment_mode"] == "free" else "dengan login"
-                if platform == "Facebook" and job["enrichment_mode"] == "fast":
-                    login_text = "tanpa login"
+                login_text = "dengan login" if job.get("browser_mode") else "tanpa login"
                 st.caption(f"Mode {platform}: {job['enrichment_mode'].title()} enrichment {login_text}.")
             progress = render_job_controls(job, f"all_{platform.lower()}")
             activity = st.empty()
@@ -912,7 +938,7 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any, Any | Non
             job["platform"] in {"Instagram", "Threads"}
             or (job["platform"] == "Facebook" and job["enrichment_mode"] == "advanced")
         )
-        if needs_browser and not job["mock_mode"]:
+        if BROWSER_SESSIONS_AVAILABLE and needs_browser and not job["mock_mode"]:
             try:
                 if job["platform"] == "Instagram":
                     active_browser = instagram_browser()

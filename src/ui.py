@@ -31,14 +31,14 @@ ENRICHMENT_GUIDES = {
         "note": "Tanpa token, proses tetap berjalan dengan metadata publik yang tersedia. Posting privat, terhapus, atau dibatasi wilayah dapat menghasilkan data tidak lengkap.",
     },
     "Facebook": {
-        "summary": "Pilih Fast untuk metadata publik atau Advanced untuk mencari Views Reel lewat sesi Facebook yang sudah login.",
+        "summary": "Fast memakai data publik. Advanced tersedia pada aplikasi lokal untuk mencari Views Reel lewat sesi Facebook yang sudah login.",
         "modes": [
             ("Fast enrichment · tanpa login", "Membaca metadata publik dari post, video, Reel, share link, atau permalink grup tanpa membuka profil."),
             ("Advanced enrichment · login", "Membuka post target, profil author, dan halaman Reels untuk mencocokkan ID Reel sebelum mengambil Views dan followers/friends."),
         ],
         "steps": [
             ("Tentukan kebutuhan", "Gunakan Fast untuk proses cepat atau Advanced bila Views perlu dicari dari halaman Reels profil."),
-            ("Siapkan sesi", "Untuk Advanced, buka Chrome Facebook dari MIDETA, login, lalu tekan Periksa Login."),
+            ("Siapkan sesi lokal", "Untuk Advanced, jalankan MIDETA lokal, buka Chrome Facebook, login, lalu tekan Periksa Login."),
             ("Tempel tautan", "Masukkan URL Facebook satu per baris; share link akan diikuti ke tujuan akhirnya."),
             ("Ambil metadata", "MIDETA mencocokkan ID post/Reel agar data rekomendasi atau Reel lain tidak tercampur."),
             ("Periksa hasil", "Review author, followers/friends, caption, views, dan engagement lalu ekspor."),
@@ -46,28 +46,28 @@ ENRICHMENT_GUIDES = {
         "note": "Advanced hanya mengisi Views bila Facebook menampilkan angka untuk ID Reel yang sama. Jika tidak, hasil ditulis Tidak tersedia. Password diketik langsung di Facebook dan tidak dibaca MIDETA.",
     },
     "Instagram": {
-        "summary": "Pilih Fast untuk engagement atau Advanced untuk metadata lengkap. Keduanya memakai sesi Instagram yang sudah login.",
+        "summary": "Versi web memakai data publik. Fast dan Advanced dengan sesi Instagram tersedia saat MIDETA dijalankan lokal.",
         "modes": [
             ("Fast enrichment · login", "Membuka halaman posting saja untuk mengambil likes, comments, shares, dan repost lebih cepat. Followers dan views tidak dicari."),
             ("Advanced enrichment · login", "Membuka posting lalu profil/Reels untuk melengkapi followers dan views, selain engagement posting. Waktunya lebih lama."),
         ],
         "steps": [
             ("Tentukan kebutuhan", "Pilih Fast untuk engagement saja atau Advanced untuk followers dan views juga."),
-            ("Siapkan sesi", "Login satu kali di Chrome khusus MIDETA; sesi yang sama digunakan oleh kedua mode."),
+            ("Siapkan sesi lokal", "Jalankan MIDETA lokal lalu login satu kali di Chrome khusus MIDETA; sesi yang sama digunakan oleh kedua mode."),
             ("Tempel URL", "Masukkan URL post atau Reel Instagram, satu URL per baris."),
             ("Ambil & periksa", "Jalankan proses, cek catatan browser, lalu unduh CSV atau XLSX."),
         ],
         "note": "Password diketik langsung di Instagram dan tidak dibaca MIDETA. Fast tidak membuka profil/Reels; gunakan Advanced jika Followers dan Views diperlukan.",
     },
     "Threads": {
-        "summary": "Untuk post Threads publik. MIDETA memakai metadata publik dan otomatis beralih ke Chrome Threads bila halaman publik kosong.",
+        "summary": "Untuk post Threads publik. Fallback Chrome hanya tersedia saat MIDETA dijalankan lokal.",
         "steps": [
             ("Salin URL post", "Gunakan tautan dengan format threads.com/@akun/post/…."),
             ("Tempel tautan", "Masukkan satu atau beberapa URL, satu URL per baris."),
             ("Ambil metadata", "MIDETA membaca author, caption, tanggal, views, followers, dan jumlah komentar yang tersedia."),
             ("Review hasil", "Nilai yang tidak diberikan Threads akan tampil 0 atau berstatus tidak tersedia."),
         ],
-        "note": "Sebagian post baru dapat dikirim Threads sebagai halaman invalid_post ke pembaca publik. Untuk kasus ini, login satu kali pada Sesi Threads agar fallback browser dapat membaca post target.",
+        "note": "Sebagian post baru dapat dikirim Threads sebagai halaman invalid_post. Jalankan MIDETA lokal dan login pada Sesi Threads bila fallback browser dibutuhkan.",
     },
     "X": {
         "summary": "Untuk status/post publik di x.com. Tidak perlu login selama datanya tersedia publik.",
@@ -104,13 +104,13 @@ COMMENT_GUIDES = {
         "note": "Komentar yang hanya dimuat di aplikasi, dibatasi wilayah, atau berada di balik login mungkin tidak tersedia.",
     },
     "Facebook": {
-        "summary": "MIDETA memakai Chrome Facebook agar komentar yang dimuat setelah halaman dibuka ikut terbaca.",
+        "summary": "Versi web mencoba komentar publik. Aplikasi lokal dapat memakai Chrome Facebook untuk komentar yang dimuat setelah login.",
         "modes": [
-            ("Sesi tersimpan", "Klik ‘Buka Sesi Facebook’, login satu kali, lalu ‘Periksa Login’."),
+            ("Sesi lokal tersimpan", "Di MIDETA lokal, klik ‘Buka Sesi Facebook’, login satu kali, lalu ‘Periksa Login’."),
             ("Muat percakapan", "MIDETA memilih semua komentar bila tersedia, membuka komentar lanjutan dan reply, lalu menyimpan hasil yang terlihat."),
         ],
         "steps": [
-            ("Buka sesi", "Login di Chrome khusus MIDETA agar posting dan komentarnya dapat ditampilkan."),
+            ("Buka sesi lokal", "Jalankan MIDETA lokal lalu login di Chrome khusus MIDETA agar posting dan komentarnya dapat ditampilkan."),
             ("Periksa login", "Kembali ke MIDETA lalu pastikan sesi Facebook sudah terdeteksi."),
             ("Tempel tautan", "Masukkan satu URL Facebook per baris."),
             ("Ambil & periksa", "Tunggu pemuatan komentar selesai, lalu review parent/reply dan unduh hasil."),
@@ -128,10 +128,10 @@ COMMENT_GUIDES = {
         "note": "Login Instagram pada halaman Enrichment digunakan untuk metadata posting dan mode Advanced, bukan untuk membuka komentar privat di Comment Scrapper.",
     },
     "Threads": {
-        "summary": "MIDETA otomatis memakai browser Threads agar komentar dinamis, parent, dan reply dapat dibaca.",
+        "summary": "Versi web mencoba komentar publik. Aplikasi lokal dapat memakai browser Threads untuk parent dan reply dinamis.",
         "modes": [
             ("Posting publik", "Langsung jalankan URL. MIDETA membuka percakapan memakai browser Threads secara otomatis."),
-            ("Jika dibatasi", "Tekan ‘Buka Sesi Threads’, login satu kali, lalu ‘Periksa Login’. Sesi tersimpan akan dipakai untuk scraping berikutnya."),
+            ("Jika dibatasi", "Jalankan MIDETA lokal, tekan ‘Buka Sesi Threads’, login satu kali, lalu ‘Periksa Login’."),
         ],
         "steps": [
             ("Buka sesi", "Jika posting tidak terlihat, buka sesi Threads dan login satu kali."),
@@ -142,10 +142,10 @@ COMMENT_GUIDES = {
         "note": "Sesi bertahan sampai Threads mengakhirinya atau Anda logout. Password tidak dibaca oleh MIDETA.",
     },
     "X": {
-        "summary": "MIDETA otomatis memakai browser X agar reply yang dimuat dinamis dapat dibaca dari percakapan target.",
+        "summary": "Versi web mencoba reply publik. Aplikasi lokal dapat memakai browser X untuk reply yang dimuat dinamis.",
         "modes": [
             ("Posting publik", "Langsung jalankan URL status. MIDETA membuka percakapan memakai browser X secara otomatis."),
-            ("Jika dibatasi", "Tekan ‘Buka Sesi X’, login satu kali, lalu ‘Periksa Login’."),
+            ("Jika dibatasi", "Jalankan MIDETA lokal, tekan ‘Buka Sesi X’, login satu kali, lalu ‘Periksa Login’."),
         ],
         "steps": [
             ("Salin URL status", "Gunakan x.com/akun/status/ID dari post utama."),
