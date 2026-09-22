@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import atexit
+import json
 import re
 import time
 from pathlib import Path
@@ -28,10 +29,11 @@ class CommentBrowserLoginRequired(CommentBrowserError):
 
 
 class CommentBrowserCollector:
-    RUNTIME_VERSION = 20
+    RUNTIME_VERSION = 22
     THREADS_MAX_SCROLL_ROUNDS = 240
     FACEBOOK_MAX_SCROLL_ROUNDS = 240
     X_MAX_SCROLL_ROUNDS = 240
+    X_IDLE_STABLE_ROUNDS = 16
     OTHER_MAX_SCROLL_ROUNDS = 30
     END_STABLE_ROUNDS = 3
     IDLE_STABLE_ROUNDS = 8
@@ -71,6 +73,7 @@ class CommentBrowserCollector:
         self.headless = headless
         self.driver = None
         self._threads_followers_cache: dict[str, tuple[float, str]] = {}
+        self._x_response_capture_ready = False
         atexit.register(self.close)
 
     @staticmethod
@@ -664,11 +667,178 @@ class CommentBrowserCollector:
             stored[code].update(updates)
         return added
 
+    def _install_x_response_capture(self) -> None:
+        """Keep X conversation payloads before its virtualized UI discards them."""
+        driver = self.start()
+        source = r"""
+        (() => {
+          if (window.__midetaXCaptureInstalled) return;
+          window.__midetaXCaptureInstalled = true;
+          window.__midetaXResponses = [];
+          const wanted = value => /(?:TweetDetail|TweetResultByRestId|conversation)/i.test(String(value || ''));
+          const remember = (url, body) => {
+            const text = String(body || '');
+            if (!wanted(url) || !text || !/(?:tweet_results|conversation_id_str|threaded_conversation)/i.test(text)) return;
+            const queue = window.__midetaXResponses || (window.__midetaXResponses = []);
+            queue.push({url: String(url || ''), body: text});
+            if (queue.length > 120) queue.splice(0, queue.length - 120);
+          };
+
+          const nativeFetch = window.fetch;
+          if (typeof nativeFetch === 'function') {
+            window.fetch = async function(...args) {
+              const response = await nativeFetch.apply(this, args);
+              try {
+                const request = args[0];
+                const url = typeof request === 'string' ? request : (request?.url || response.url || '');
+                if (wanted(url)) response.clone().text().then(body => remember(url, body)).catch(() => {});
+              } catch (_) {}
+              return response;
+            };
+          }
+
+          const nativeOpen = XMLHttpRequest.prototype.open;
+          const nativeSend = XMLHttpRequest.prototype.send;
+          XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+            this.__midetaXUrl = String(url || '');
+            return nativeOpen.call(this, method, url, ...rest);
+          };
+          XMLHttpRequest.prototype.send = function(...args) {
+            if (wanted(this.__midetaXUrl)) {
+              this.addEventListener('load', () => {
+                try {
+                  if (!this.responseType || this.responseType === 'text') {
+                    remember(this.__midetaXUrl, this.responseText || '');
+                  }
+                } catch (_) {}
+              }, {once: true});
+            }
+            return nativeSend.apply(this, args);
+          };
+        })();
+        """
+        try:
+            driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": source},
+            )
+            self._x_response_capture_ready = True
+        except (AttributeError, WebDriverException):
+            self._x_response_capture_ready = False
+
+    @staticmethod
+    def _x_payload_rows(payloads, target_code: str) -> list[dict]:
+        """Convert captured TweetDetail responses into one stable conversation."""
+        if not target_code or not isinstance(payloads, list):
+            return []
+
+        decoded: list[object] = []
+        for payload in payloads:
+            body = payload.get("body") if isinstance(payload, dict) else payload
+            if isinstance(body, (dict, list)):
+                decoded.append(body)
+                continue
+            text = str(body or "").strip()
+            if not text:
+                continue
+            start_positions = [position for position in (text.find("{"), text.find("[")) if position >= 0]
+            if not start_positions:
+                continue
+            try:
+                decoded.append(json.loads(text[min(start_positions):]))
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        tweets: dict[str, dict] = {}
+
+        def walk(value) -> None:
+            if isinstance(value, dict):
+                legacy = value.get("legacy")
+                identifier = value.get("rest_id") or value.get("id_str")
+                note = value.get("note_tweet")
+                looks_like_tweet = isinstance(legacy, dict) and (
+                    legacy.get("conversation_id_str")
+                    or legacy.get("in_reply_to_status_id_str")
+                    or legacy.get("id_str")
+                )
+                if identifier and (looks_like_tweet or isinstance(note, dict)):
+                    tweets.setdefault(str(identifier), value)
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        for payload in decoded:
+            walk(payload)
+
+        rows: list[dict] = []
+        for identifier, tweet in tweets.items():
+            legacy = tweet.get("legacy") if isinstance(tweet.get("legacy"), dict) else {}
+            conversation_id = str(legacy.get("conversation_id_str") or "")
+            parent_id = str(legacy.get("in_reply_to_status_id_str") or "")
+            is_target = identifier == target_code
+            if conversation_id != target_code or (not is_target and not parent_id):
+                continue
+
+            author = ""
+            core = tweet.get("core") if isinstance(tweet.get("core"), dict) else {}
+            user_results = core.get("user_results") if isinstance(core.get("user_results"), dict) else {}
+            user = user_results.get("result") if isinstance(user_results.get("result"), dict) else {}
+            for source in (user.get("legacy"), user.get("core"), core):
+                if isinstance(source, dict):
+                    author = str(source.get("screen_name") or source.get("name") or "").strip()
+                    if author:
+                        break
+
+            text = str(legacy.get("full_text") or "").strip()
+            note = tweet.get("note_tweet") if isinstance(tweet.get("note_tweet"), dict) else {}
+            note_results = note.get("note_tweet_results") if isinstance(note.get("note_tweet_results"), dict) else {}
+            note_result = note_results.get("result") if isinstance(note_results.get("result"), dict) else {}
+            text = str(note_result.get("text") or text).strip()
+            rows.append(
+                {
+                    "href": f"https://x.com/{author or 'i'}/status/{identifier}",
+                    "code": identifier,
+                    "author": author,
+                    "date": legacy.get("created_at") or "",
+                    "comment": "" if is_target else text,
+                    "likes": legacy.get("favorite_count") or 0,
+                    "replies": legacy.get("reply_count") or 0,
+                    "comment_type": "parent" if parent_id == target_code else "reply",
+                    "context": (
+                        f"Replying to @{legacy.get('in_reply_to_screen_name')}"
+                        if legacy.get("in_reply_to_screen_name")
+                        else ""
+                    ),
+                    "is_target": is_target,
+                }
+            )
+        return rows
+
+    def _x_network_rows(self, target_code: str) -> list[dict]:
+        if not getattr(self, "_x_response_capture_ready", False):
+            return []
+        try:
+            payloads = self.start().execute_script(
+                r"""
+                const rows = Array.isArray(window.__midetaXResponses)
+                  ? window.__midetaXResponses.slice()
+                  : [];
+                window.__midetaXResponses = [];
+                return rows;
+                """
+            )
+        except WebDriverException:
+            return []
+        return self._x_payload_rows(payloads, target_code)
+
     def _load_conversation(
         self,
         target_code: str = "",
         url: str = "",
         max_comments: int = MAX_COMMENTS_PER_URL,
+        expected_comments: int | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[dict]:
         driver = self.start()
@@ -679,6 +849,7 @@ class CommentBrowserCollector:
         previous_height = None
         reported_count = -1
         locked_threads_url = ""
+        locked_x_url = ""
         if self.platform == "Threads":
             max_rounds = self.THREADS_MAX_SCROLL_ROUNDS
             current_url = str(getattr(driver, "current_url", "") or "")
@@ -689,6 +860,10 @@ class CommentBrowserCollector:
             max_rounds = self.FACEBOOK_MAX_SCROLL_ROUNDS
         elif self.platform == "X":
             max_rounds = self.X_MAX_SCROLL_ROUNDS
+            current_url = str(getattr(driver, "current_url", "") or "")
+            current_match = re.search(r"/status/(\d+)", current_url, re.I)
+            if current_match and current_match.group(1) == target_code:
+                locked_x_url = current_url
         else:
             max_rounds = self.OTHER_MAX_SCROLL_ROUNDS
 
@@ -718,10 +893,12 @@ class CommentBrowserCollector:
                     pass
             elif self.platform == "X":
                 try:
+                    added += self._merge_thread_rows(thread_rows, self._x_network_rows(target_code))
                     added += self._merge_thread_rows(thread_rows, self._x_dom_rows())
                 except WebDriverException:
                     pass
-            if report_progress() >= max_comments:
+            collection_target = min(max_comments, expected_comments) if expected_comments else max_comments
+            if report_progress() >= collection_target:
                 break
             try:
                 state = driver.execute_script(
@@ -738,10 +915,14 @@ class CommentBrowserCollector:
                       : null;
                     const pageMatch = decodeURIComponent(window.location.pathname || '')
                       .match(/\/@[^/]+\/post\/([^/?#]+)/i);
-                    const targetLocked = platform !== 'Threads' || Boolean(
-                      targetCode && pageMatch &&
-                      pageMatch[1].toLowerCase() === targetCode.toLowerCase()
-                    );
+                    const xPageMatch = decodeURIComponent(window.location.pathname || '')
+                      .match(/\/status\/(\d+)/i);
+                    const targetLocked = platform === 'Threads'
+                      ? Boolean(targetCode && pageMatch &&
+                          pageMatch[1].toLowerCase() === targetCode.toLowerCase())
+                      : platform === 'X'
+                      ? Boolean(targetCode && xPageMatch && xPageMatch[1] === targetCode)
+                      : true;
                     if (!targetLocked) {
                       return {
                         reachedEnd: true,
@@ -762,7 +943,9 @@ class CommentBrowserCollector:
                       'tampilkan balasan', 'lihat balasan', 'balasan lainnya',
                       'view previous comments', 'view more comments', 'see more comments', 'load more comments',
                       'lihat komentar sebelumnya', 'lihat komentar lainnya', 'muat komentar lainnya',
-                      'tampilkan komentar lainnya'
+                      'tampilkan komentar lainnya',
+                      'show probable spam', 'show hidden replies', 'show additional replies',
+                      'tampilkan kemungkinan spam', 'tampilkan balasan tersembunyi'
                     ];
                     const endLabels = ['related threads', 'thread terkait', 'threads terkait'];
                     const endCandidates = Array.from(document.querySelectorAll('div, span')).filter(node => {
@@ -778,12 +961,17 @@ class CommentBrowserCollector:
                     const end = endCandidates.find(node =>
                       node.getBoundingClientRect().top + window.scrollY === endTop
                     );
-                    const controls = Array.from(document.querySelectorAll('button, [role="button"]'));
+                    const controlRoot = platform === 'X'
+                      ? (document.querySelector('[data-testid="primaryColumn"]') || document.querySelector('main') || document)
+                      : document;
+                    const controls = Array.from(controlRoot.querySelectorAll('button, [role="button"]'));
                     const matchingLoaders = controls.filter(node => {
                       const text = (node.innerText || node.getAttribute('aria-label') || '').trim().toLowerCase();
                       const replyLoader =
                         /^(show|view|see|load|tampilkan|lihat|muat).*?(repl|balasan|comments?|komentar).*$/i.test(text) ||
                         /^\d[\d.,]*\s+(?:more\s+|lainnya\s+)?(?:replies|balasan|comments?|komentar)\b/i.test(text);
+                      const xHiddenLoader = platform === 'X' &&
+                        /^(show|view|see|tampilkan|lihat).*?(?:spam|hidden|tersembunyi)/i.test(text);
                       const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
                       const nodeTop = node.getBoundingClientRect().top + window.scrollY;
                       const insideTargetConversation = platform !== 'Threads' || (
@@ -792,7 +980,7 @@ class CommentBrowserCollector:
                       const postLink = node.closest('a[href*="/post/"]');
                       const isPostCard = node.matches('[data-pressable-container="true"]');
                       return visible && insideTargetConversation && !postLink && !isPostCard &&
-                        (labels.some(label => text.includes(label)) || replyLoader);
+                        (labels.some(label => text.includes(label)) || replyLoader || xHiddenLoader);
                     });
                     // Only activate the smallest matching controls. Parent
                     // pressable cards often contain the words "View replies"
@@ -855,7 +1043,12 @@ class CommentBrowserCollector:
                 )
             except WebDriverException:
                 break
-            time.sleep(1.1 if isinstance(state, dict) and state.get("clicked") else 0.7)
+            if isinstance(state, dict) and state.get("clicked"):
+                time.sleep(1.1)
+            elif self.platform == "X":
+                time.sleep(1.0)
+            else:
+                time.sleep(0.7)
 
             if self.platform == "Threads" and target_code:
                 try:
@@ -869,11 +1062,12 @@ class CommentBrowserCollector:
                     pass
             elif self.platform == "X":
                 try:
+                    added += self._merge_thread_rows(thread_rows, self._x_network_rows(target_code))
                     added += self._merge_thread_rows(thread_rows, self._x_dom_rows())
                 except WebDriverException:
                     pass
 
-            if report_progress() >= max_comments:
+            if report_progress() >= collection_target:
                 break
 
             state = state if isinstance(state, dict) else {"reachedEnd": bool(state)}
@@ -881,6 +1075,14 @@ class CommentBrowserCollector:
                 if locked_threads_url:
                     try:
                         driver.get(locked_threads_url)
+                        self._wait_for_page()
+                    except WebDriverException:
+                        pass
+                break
+            if self.platform == "X" and state.get("targetLocked") is False:
+                if locked_x_url:
+                    try:
+                        driver.get(locked_x_url)
                         self._wait_for_page()
                     except WebDriverException:
                         pass
@@ -902,8 +1104,14 @@ class CommentBrowserCollector:
                 break
             if self.platform == "Threads" and stable_rounds >= 12 and not clicked:
                 break
-            if idle_rounds >= self.IDLE_STABLE_ROUNDS:
+            idle_limit = self.X_IDLE_STABLE_ROUNDS if self.platform == "X" else self.IDLE_STABLE_ROUNDS
+            if idle_rounds >= idle_limit:
                 break
+        if self.platform == "X":
+            try:
+                self._merge_thread_rows(thread_rows, self._x_network_rows(target_code))
+            except WebDriverException:
+                pass
         rows = list(thread_rows.values())
         kept: list[dict] = []
         comment_count = 0
@@ -919,10 +1127,12 @@ class CommentBrowserCollector:
     def _x_dom_rows(self) -> list[dict]:
         return self.start().execute_script(
             r"""
-            const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
+            const conversation = document.querySelector('[data-testid="primaryColumn"]') ||
+              document.querySelector('main') || document;
+            const articles = Array.from(conversation.querySelectorAll('article[data-testid="tweet"]'));
             const targetTop = articles.length ? articles[0].getBoundingClientRect().top : Number.NEGATIVE_INFINITY;
             const endLabels = ['discover more', 'more tweets', 'relevant people', 'temukan lainnya', 'tweet lainnya'];
-            const endTops = Array.from(document.querySelectorAll('div, span'))
+            const endTops = Array.from(conversation.querySelectorAll('div, span'))
               .filter(node => {
                 const text = (node.textContent || '').trim().toLowerCase();
                 return endLabels.includes(text) && !Array.from(node.children).some(child =>
@@ -954,6 +1164,55 @@ class CommentBrowserCollector:
             });
             """
         )
+
+    def _prepare_x_comments(self) -> None:
+        """Switch an X conversation from Relevant to the latest reply view."""
+        driver = self.start()
+        try:
+            opened = driver.execute_script(
+                r"""
+                const controls = Array.from(document.querySelectorAll('button, [role="button"]'));
+                const sorter = controls.find(node => {
+                  const values = [node.innerText || '', node.getAttribute('aria-label') || '']
+                    .map(value => value.replace(/\s+/g, ' ').trim().toLowerCase())
+                    .filter(Boolean);
+                  const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
+                  return visible && values.some(value =>
+                    /^(?:relevant|relevan|top)(?:\s+(?:replies|balasan))?$/.test(value) ||
+                    /(?:timeline|urutan).*\b(?:relevant|relevan)\b/.test(value)
+                  );
+                });
+                if (!sorter) return false;
+                sorter.click();
+                return true;
+                """
+            )
+            if not opened:
+                return
+            time.sleep(0.5)
+            selected = driver.execute_script(
+                r"""
+                const choices = Array.from(document.querySelectorAll(
+                  '[role="menuitem"], [role="menuitemradio"], [role="option"], [role="radio"], button'
+                ));
+                const latest = choices.find(node => {
+                  const values = [node.innerText || '', node.getAttribute('aria-label') || '']
+                    .map(value => value.replace(/\s+/g, ' ').trim().toLowerCase())
+                    .filter(Boolean);
+                  const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
+                  return visible && values.some(value =>
+                    /^(?:latest|recent|newest|most recent|terbaru|paling baru)(?:\s+(?:replies|balasan))?$/.test(value)
+                  );
+                });
+                if (!latest) return false;
+                latest.click();
+                return true;
+                """
+            )
+            if selected:
+                time.sleep(1.2)
+        except WebDriverException:
+            return
 
     def _threads_dom_rows(self, target_code: str) -> list[dict]:
         return self.start().execute_script(
@@ -1294,13 +1553,18 @@ class CommentBrowserCollector:
                     continue
                 context = str(row.get("context") or "")
                 is_parent = not target_author or f"@{target_author}".casefold() in context.casefold()
+                comment_type = row.get("comment_type")
                 comments.append(PublicComment(
                     author=(row.get("author") or "").lstrip("@") or None,
                     comment=str(row["comment"]).strip(),
                     commented_at=row.get("date") or None,
                     likes=self._count(row.get("likes")),
                     reply_count=self._count(row.get("replies")),
-                    comment_type="parent" if is_parent else "reply",
+                    comment_type=(
+                        comment_type
+                        if comment_type in {"parent", "reply"}
+                        else "parent" if is_parent else "reply"
+                    ),
                     source_url=url,
                 ))
             return comments
@@ -1395,12 +1659,14 @@ class CommentBrowserCollector:
         url: str,
         *,
         max_comments: int = MAX_COMMENTS_PER_URL,
+        expected_comments: int | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> CommentCollection:
         try:
             return self._collect_once(
                 url,
                 max_comments=max_comments,
+                expected_comments=expected_comments,
                 progress_callback=progress_callback,
             )
         except WebDriverException as exc:
@@ -1410,6 +1676,7 @@ class CommentBrowserCollector:
                     return self._collect_once(
                         url,
                         max_comments=max_comments,
+                        expected_comments=expected_comments,
                         progress_callback=progress_callback,
                     )
                 except WebDriverException as retry_exc:
@@ -1428,10 +1695,13 @@ class CommentBrowserCollector:
         url: str,
         *,
         max_comments: int,
+        expected_comments: int | None,
         progress_callback: Callable[[int, int], None] | None,
     ) -> CommentCollection:
         connector = get_platform_connector(url, self.platform)
         driver = self.start()
+        if self.platform == "X":
+            self._install_x_response_capture()
         driver.get(url)
         self._wait_for_page()
         if self.platform == "Facebook" and re.search(
@@ -1455,6 +1725,8 @@ class CommentBrowserCollector:
             current_url = self._resolve_threads_permalink(driver, url)
         if self.platform == "Facebook":
             self._prepare_facebook_comments()
+        if self.platform == "X":
+            self._prepare_x_comments()
         if self.platform == "Threads":
             target_match = re.search(r"/post/([^/?#]+)", current_url, re.I)
         elif self.platform == "X":
@@ -1487,6 +1759,13 @@ class CommentBrowserCollector:
                 progress_callback=progress_callback,
             )
             if self.platform == "Facebook"
+            else self._load_conversation(
+                target_code,
+                max_comments=max_comments,
+                expected_comments=expected_comments,
+                progress_callback=progress_callback,
+            )
+            if self.platform == "X"
             else self._load_conversation(
                 target_code,
                 max_comments=max_comments,
@@ -1531,4 +1810,10 @@ class CommentBrowserCollector:
             platform=self.platform,
             comments=comments,
             status=FieldStatus.AVAILABLE,
+            reason=(
+                f"X menampilkan {len(comments):,} dari sekitar {expected_comments:,} balasan. "
+                "Sebagian balasan mungkin disembunyikan, dihapus, berasal dari akun privat, atau belum diberikan X ke sesi ini."
+                if self.platform == "X" and expected_comments and len(comments) < expected_comments
+                else None
+            ),
         )

@@ -20,15 +20,15 @@ ENRICHMENT_GUIDES = {
         "note": "Video privat, dibatasi usia, atau dibatasi wilayah dapat menghasilkan data yang tidak lengkap.",
     },
     "TikTok": {
-        "summary": "Untuk video dengan format tiktok.com/@akun/video/…. Enrichment memakai sesi TikTok yang sudah login.",
+        "summary": "Untuk video, foto, dan short URL TikTok. Enrichment berjalan tanpa membuka Chrome atau meminta login TikTok.",
         "steps": [
-            ("Salin URL video", "Gunakan tautan video, bukan hanya halaman profil akun."),
-            ("Siapkan sesi", "Buka Chrome TikTok dari MIDETA, login, lalu tekan Periksa Login."),
+            ("Salin URL posting", "Gunakan tautan video, foto, atau short URL dari tombol Share."),
+            ("Siapkan token", "Token Apify opsional membantu melengkapi views, followers, dan engagement."),
             ("Tempel tautan", "Masukkan satu atau beberapa URL TikTok, satu URL per baris."),
-            ("Jalankan proses", "MIDETA membuka video target untuk caption, views, dan engagement, lalu profil author untuk followers."),
+            ("Jalankan proses", "MIDETA mencocokkan ID posting dan mengambil data publik tanpa membuka browser TikTok."),
             ("Review & ekspor", "Periksa nilai 0 atau status tidak tersedia sebelum mengunduh hasil."),
         ],
-        "note": "Password diketik langsung di TikTok dan tidak dibaca MIDETA. Akun privat, verifikasi, atau pembatasan sementara tetap dapat membuat data tidak lengkap.",
+        "note": "Tanpa token, proses tetap berjalan dengan metadata publik yang tersedia. Posting privat, terhapus, atau dibatasi wilayah dapat menghasilkan data tidak lengkap.",
     },
     "Facebook": {
         "summary": "Pilih Fast untuk metadata publik atau Advanced untuk mencari Views Reel lewat sesi Facebook yang sudah login.",

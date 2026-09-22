@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import MagicMock, patch
 
 from selenium.common.exceptions import NoSuchWindowException
@@ -625,6 +626,235 @@ class CommentBrowserTests(unittest.TestCase):
         self.assertEqual([comment.comment_type for comment in comments], ["parent", "reply"])
         self.assertEqual(comments[0].likes, 15)
         self.assertEqual(comments[0].reply_count, 1)
+
+    def test_x_switches_relevant_filter_to_latest_replies(self):
+        collector = CommentBrowserCollector("X")
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.execute_script.side_effect = [True, True]
+        collector.driver = driver
+
+        with patch("src.comment_browser.time.sleep"):
+            collector._prepare_x_comments()
+
+        self.assertEqual(driver.execute_script.call_count, 2)
+        self.assertIn("relevant", driver.execute_script.call_args_list[0].args[0])
+        self.assertIn("latest", driver.execute_script.call_args_list[1].args[0])
+        self.assertIn("terbaru", driver.execute_script.call_args_list[1].args[0])
+
+    def test_x_loader_waits_for_delayed_replies_when_total_is_known(self):
+        collector = CommentBrowserCollector("X")
+        collector.X_MAX_SCROLL_ROUNDS = 10
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.execute_script.return_value = {
+            "reachedEnd": False,
+            "clicked": 0,
+            "scrollY": 100,
+            "height": 1_000,
+            "targetLocked": True,
+        }
+        collector.driver = driver
+        dom_reads = 0
+
+        def delayed_rows():
+            nonlocal dom_reads
+            dom_reads += 1
+            if dom_reads >= 17:
+                return [{"code": "101", "comment": "Balasan terlambat"}]
+            return []
+
+        with (
+            patch.object(collector, "_x_dom_rows", side_effect=delayed_rows),
+            patch("src.comment_browser.time.sleep"),
+        ):
+            rows = collector._load_conversation(
+                "100",
+                max_comments=2_000,
+                expected_comments=1,
+            )
+
+        self.assertEqual([row["comment"] for row in rows], ["Balasan terlambat"])
+        self.assertEqual(driver.execute_script.call_count, 8)
+
+    def test_x_dom_reader_scopes_end_markers_to_primary_column(self):
+        collector = CommentBrowserCollector("X")
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.execute_script.return_value = []
+        collector.driver = driver
+
+        collector._x_dom_rows()
+
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn('data-testid="primaryColumn"', script)
+        self.assertIn("conversation.querySelectorAll", script)
+
+    def test_x_captured_payload_keeps_all_replies_from_target_conversation(self):
+        payload = {
+            "data": {
+                "threaded_conversation_with_injections_v2": {
+                    "instructions": [
+                        {
+                            "entries": [
+                                {
+                                    "content": {
+                                        "itemContent": {
+                                            "tweet_results": {
+                                                "result": {
+                                                    "rest_id": "100",
+                                                    "legacy": {
+                                                        "conversation_id_str": "100",
+                                                        "full_text": "Posting target",
+                                                    },
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "content": {
+                                        "itemContent": {
+                                            "tweet_results": {
+                                                "result": {
+                                                    "rest_id": "101",
+                                                    "core": {
+                                                        "user_results": {
+                                                            "result": {
+                                                                "core": {"screen_name": "ayu"}
+                                                            }
+                                                        }
+                                                    },
+                                                    "legacy": {
+                                                        "conversation_id_str": "100",
+                                                        "in_reply_to_status_id_str": "100",
+                                                        "in_reply_to_screen_name": "pemilik",
+                                                        "full_text": "Balasan langsung",
+                                                        "favorite_count": 12,
+                                                        "reply_count": 1,
+                                                    },
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "content": {
+                                        "itemContent": {
+                                            "tweet_results": {
+                                                "result": {
+                                                    "rest_id": "102",
+                                                    "core": {
+                                                        "user_results": {
+                                                            "result": {
+                                                                "legacy": {"screen_name": "bima"}
+                                                            }
+                                                        }
+                                                    },
+                                                    "legacy": {
+                                                        "conversation_id_str": "100",
+                                                        "in_reply_to_status_id_str": "101",
+                                                        "full_text": "Balasan bertingkat",
+                                                        "favorite_count": 3,
+                                                    },
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "content": {
+                                        "itemContent": {
+                                            "tweet_results": {
+                                                "result": {
+                                                    "rest_id": "999",
+                                                    "legacy": {
+                                                        "conversation_id_str": "999",
+                                                        "in_reply_to_status_id_str": "999",
+                                                        "full_text": "Posting rekomendasi",
+                                                    },
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+
+        rows = CommentBrowserCollector._x_payload_rows(
+            [{"url": "https://x.com/i/api/graphql/query/TweetDetail", "body": json.dumps(payload)}],
+            "100",
+        )
+
+        self.assertEqual([row["code"] for row in rows], ["100", "101", "102"])
+        self.assertEqual([row["comment_type"] for row in rows[1:]], ["parent", "reply"])
+        self.assertEqual(rows[1]["likes"], 12)
+        self.assertEqual(rows[2]["author"], "bima")
+
+    def test_x_response_capture_is_installed_before_opening_post(self):
+        collector = CommentBrowserCollector("X")
+        url = "https://x.com/pemilik/status/100"
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.current_url = url
+        driver.page_source = "<html></html>"
+        collector.driver = driver
+        connector = MagicMock()
+        connector._platform_comments.return_value = []
+        events = []
+        driver.execute_cdp_cmd.side_effect = lambda *args, **kwargs: events.append("capture")
+        driver.get.side_effect = lambda *args, **kwargs: events.append("get")
+
+        with (
+            patch("src.comment_browser.get_platform_connector", return_value=connector),
+            patch.object(collector, "_wait_for_page"),
+            patch.object(collector, "_prepare_x_comments"),
+            patch.object(collector, "_load_conversation", return_value=[]),
+            patch.object(collector, "is_logged_in", return_value=True),
+        ):
+            collector.collect(url)
+
+        self.assertEqual(events[:2], ["capture", "get"])
+
+    def test_x_collection_uses_expected_total_and_reports_incomplete_visibility(self):
+        collector = CommentBrowserCollector("X")
+        url = "https://x.com/tempodotco/status/2100857368166711315"
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.current_url = url
+        driver.page_source = "<html></html>"
+        collector.driver = driver
+        connector = MagicMock()
+        connector._platform_comments.return_value = []
+        visible = PublicComment(author="ayu", comment="Balasan terlihat", source_url=url)
+
+        with (
+            patch("src.comment_browser.get_platform_connector", return_value=connector),
+            patch.object(collector, "_wait_for_page"),
+            patch.object(collector, "_prepare_x_comments") as prepare,
+            patch.object(collector, "_load_conversation", return_value=[{"code": "101"}]) as loader,
+            patch.object(collector, "_dom_comments", return_value=[visible]),
+        ):
+            result = collector.collect(url, expected_comments=46)
+
+        prepare.assert_called_once_with()
+        loader.assert_called_once_with(
+            "2100857368166711315",
+            max_comments=2_000,
+            expected_comments=46,
+            progress_callback=None,
+        )
+        self.assertEqual(len(result.comments), 1)
+        self.assertIn("1 dari sekitar 46 balasan", result.reason)
 
     def test_threads_dom_rows_are_converted_without_the_target_post(self):
         collector = CommentBrowserCollector("Threads")

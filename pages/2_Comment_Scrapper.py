@@ -60,8 +60,9 @@ def current_comment_browser(platform: str) -> CommentBrowserCollector:
     """Upgrade a cached browser object after a Streamlit hot reload."""
     browser = comment_browser_v5(platform)
     if (
-        getattr(browser, "RUNTIME_VERSION", 0) >= 18
+        getattr(browser, "RUNTIME_VERSION", 0) >= 22
         and "max_comments" in inspect.signature(browser.collect).parameters
+        and "expected_comments" in inspect.signature(browser.collect).parameters
     ):
         return browser
     refreshed_module = importlib.reload(comment_browser_module)
@@ -146,16 +147,23 @@ def collect_comment_url(
         connector = get_platform_connector(url, platform)
         preview = None
         expected_comments = None
-        if include_preview:
-            preview_result = connector.mock_enrichment(url) if request["mock_mode"] else connector.enrich(url)
-            if isinstance(preview_result.comments.value, int) and preview_result.comments.value > 0:
-                expected_comments = min(preview_result.comments.value, MAX_COMMENTS_PER_URL)
-            preview = {
-                "Platform": preview_result.platform,
-                "URL": preview_result.url,
-                "Author": preview_result.username.value or "Tidak tersedia",
-                "Caption": preview_result.caption.value or "Tidak tersedia",
-            }
+        if include_preview or (platform == "X" and not request["mock_mode"]):
+            try:
+                preview_result = connector.mock_enrichment(url) if request["mock_mode"] else connector.enrich(url)
+                if isinstance(preview_result.comments.value, int) and preview_result.comments.value > 0:
+                    expected_comments = min(preview_result.comments.value, MAX_COMMENTS_PER_URL)
+                if include_preview:
+                    preview = {
+                        "Platform": preview_result.platform,
+                        "URL": preview_result.url,
+                        "Author": preview_result.username.value or "Tidak tersedia",
+                        "Caption": preview_result.caption.value or "Tidak tersedia",
+                    }
+            except Exception:
+                # Metadata ringkas tidak boleh menghalangi browser mengambil
+                # komentar. Tanpa angka total, browser tetap berjalan sampai
+                # percakapan tidak memuat balasan baru lagi.
+                pass
         if request["mock_mode"]:
             collection = connector.mock_comments(url)
         elif active_browser is not None:
@@ -168,6 +176,7 @@ def collect_comment_url(
             collection = active_browser.collect(
                 url,
                 max_comments=MAX_COMMENTS_PER_URL,
+                expected_comments=expected_comments,
                 progress_callback=browser_progress,
             )
         else:
@@ -251,6 +260,15 @@ def store_collection(state: dict[str, Any], outcome: dict[str, Any]) -> None:
                     "Komentar": comment.comment,
                     "Waktu pengambilan": comment.collected_at.isoformat(),
                     "Data contoh": collection.is_mock,
+                }
+            )
+        if collection.reason:
+            state["issues"].append(
+                {
+                    "URL": collection.url,
+                    "Platform": collection.platform,
+                    "Status": "Belum lengkap",
+                    "Alasan": collection.reason,
                 }
             )
     else:

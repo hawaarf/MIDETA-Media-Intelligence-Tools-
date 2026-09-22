@@ -8,8 +8,8 @@ from typing import Callable
 from src.dates import parse_social_datetime
 from src.models import DataField, FieldStatus, SocialResult
 
-SOCIAL_BATCH_VERSION = 47
-COMMENT_BATCH_VERSION = 13
+SOCIAL_BATCH_VERSION = 48
+COMMENT_BATCH_VERSION = 15
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 FAILED_URL_MESSAGE = "URL tidak dapat diproses"

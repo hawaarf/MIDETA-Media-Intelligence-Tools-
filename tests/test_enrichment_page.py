@@ -67,7 +67,7 @@ class EnrichmentPageTests(unittest.TestCase):
         self.assertEqual([widget.label for widget in app.text_area], ["Semua URL media sosial"])
         self.assertIn("Mulai Enrichment All", [widget.label for widget in app.button])
 
-    def test_tiktok_enrichment_defaults_to_free_mode(self):
+    def test_tiktok_enrichment_uses_public_mode_without_chrome_controls(self):
         with (
             patch("src.database.get_social_job", return_value=None),
             patch("src.database.get_latest_social_job", return_value=None),
@@ -79,7 +79,10 @@ class EnrichmentPageTests(unittest.TestCase):
         button_labels = [widget.label for widget in app.button]
         self.assertIn("Simpan token", button_labels)
         self.assertIn("Hapus token", button_labels)
-        self.assertIn("Mulai TikTok Free Mode", button_labels)
+        self.assertIn("Mulai Enrichment TikTok", button_labels)
+        self.assertNotIn("Buka Chrome TikTok", button_labels)
+        self.assertNotIn("Periksa Login", button_labels)
+        self.assertNotIn("Tutup Chrome TikTok", button_labels)
 
     def test_facebook_offers_advanced_enrichment_with_login_controls(self):
         with (

@@ -62,9 +62,9 @@ Cara menyiapkan login Instagram:
 
 Password hanya diketik di Instagram. MIDETA tidak membaca atau menyimpannya.
 
-#### TikTok Free Mode
+#### TikTok tanpa Chrome
 
-Pilih **Free tanpa login** agar TikTok tidak dibuka satu per satu di Chrome. MIDETA lebih dulu memakai sumber publik TikTok dan, bila hasilnya dibatasi atau kosong, mencoba sumber publik cadangan yang tetap dicocokkan dengan ID posting. Token Apify bersifat opsional, tetapi membantu memperluas cakupan data dan peluang mendapatkan followers.
+TikTok selalu diproses tanpa membuka Chrome dan tanpa login TikTok. MIDETA lebih dulu memakai sumber publik TikTok dan, bila hasilnya dibatasi atau kosong, mencoba sumber publik cadangan yang tetap dicocokkan dengan ID posting. Token Apify bersifat opsional, tetapi membantu memperluas cakupan data dan peluang mendapatkan followers.
 
 Cara menyiapkannya:
 
@@ -72,11 +72,11 @@ Cara menyiapkannya:
 2. Buka **Settings → API & Integrations** di Apify dan salin API token.
 3. Pilih TikTok di halaman **Social Media Enrichment**.
 4. Tempel token pada kolom **Apify API token**, lalu klik **Simpan token**.
-5. Masukkan URL video, foto, atau short link lalu mulai TikTok Free Mode.
+5. Masukkan URL video, foto, atau short link lalu mulai enrichment TikTok.
 
 Token disimpan di folder privat pada komputer ini. Token tidak masuk ke Git, database MIDETA, atau file hasil. Tanpa token, MIDETA tetap mencoba tanggal, author, caption, views, likes, comments, shares, dan bookmark dari sumber publik yang tersedia. Followers atau kolom lain yang tidak diberikan sumber akan ditandai **Tidak tersedia**, bukan diisi dengan angka tebakan.
 
-Mode **Chrome login** masih tersedia sebagai cadangan. TikTok kadang memberi HTTP 403 ketika banyak URL dibuka berurutan. Jika itu terjadi, hentikan sesi browser dan gunakan Free Mode.
+MIDETA tidak menyediakan mode Chrome TikTok agar proses tidak terganggu HTTP 403, login berulang, atau perpindahan halaman yang dibatasi TikTok.
 
 #### Menjalankan beberapa platform
 
@@ -220,9 +220,9 @@ To set up Instagram login:
 
 Your password is entered only on Instagram. MIDETA does not read or store it.
 
-#### TikTok Free Mode
+#### TikTok without Chrome
 
-Choose **Free tanpa login** so MIDETA does not open every TikTok URL in Chrome. MIDETA first checks TikTok's public metadata and, when that result is restricted or empty, uses a public fallback that must match the target post ID. An Apify token is optional, but improves coverage and the chance of retrieving followers.
+TikTok is always processed without opening Chrome or requiring a TikTok login. MIDETA first checks TikTok's public metadata and, when that result is restricted or empty, uses a public fallback that must match the target post ID. An Apify token is optional, but improves coverage and the chance of retrieving followers.
 
 Setup:
 
@@ -230,11 +230,11 @@ Setup:
 2. Open **Settings → API & Integrations** in Apify and copy the API token.
 3. Select TikTok on the **Social Media Enrichment** page.
 4. Paste the token into **Apify API token**, then click **Simpan token**.
-5. Paste video, photo, or short URLs and start TikTok Free Mode.
+5. Paste video, photo, or short URLs and start TikTok enrichment.
 
 The token stays in a private folder on this computer. It is not added to Git, the MIDETA database, or exported files. Without a token, MIDETA still attempts to collect the date, author, caption, views, likes, comments, shares, and bookmarks from available public sources. Followers or other missing fields are marked **Tidak tersedia** instead of being filled with guessed numbers.
 
-**Chrome login** remains available as a fallback. TikTok may return HTTP 403 when several URLs are opened in sequence. If that happens, stop the browser session and use Free Mode.
+MIDETA does not provide a TikTok Chrome mode, avoiding repeated logins, browser navigation restrictions, and TikTok HTTP 403 pages.
 
 #### Running multiple platforms
 
@@ -307,7 +307,7 @@ app.py                     home page
 pages/                     Streamlit feature pages
 src/connectors/            platform data readers
 src/instagram_browser.py   logged-in Instagram enrichment
-src/tiktok_browser.py      logged-in TikTok fallback
+src/tiktok_browser.py      shared TikTok result model and parser helpers
 src/tiktok_free.py         no-login TikTok enrichment
 src/comment_browser.py     Facebook, Threads, and X comment collection
 src/batch.py               queues and resume support

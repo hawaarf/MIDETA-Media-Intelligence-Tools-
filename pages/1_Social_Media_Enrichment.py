@@ -20,7 +20,7 @@ from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, InstagramLoginRequired, build_instagram_browser_result
 from src.models import FieldStatus, SocialResult
 from src.social_urls import resolve_social_url
-from src.tiktok_browser import TikTokAccessDenied, TikTokBrowserCollector, TikTokBrowserError, TikTokLoginRequired, build_tiktok_browser_result
+from src.tiktok_browser import build_tiktok_browser_result
 import src.connectors.tiktok as tiktok_connector_module
 import src.tiktok_free as tiktok_free_module
 from src.ui import apply_theme, page_intro, render_footer, render_github_profile, render_platform_guide, status_label
@@ -86,15 +86,6 @@ PLACEHOLDERS = {
 @st.cache_resource(show_spinner=False)
 def instagram_browser() -> InstagramBrowserCollector:
     return InstagramBrowserCollector()
-
-
-@st.cache_resource(show_spinner=False)
-def tiktok_direct_browser_v4() -> TikTokBrowserCollector:
-    return TikTokBrowserCollector()
-
-
-def tiktok_browser() -> TikTokBrowserCollector:
-    return tiktok_direct_browser_v4()
 
 
 def tiktok_free_collector() -> TikTokFreeCollector:
@@ -179,93 +170,56 @@ def render_instagram_controls(slot: str) -> str:
 
 
 def render_tiktok_controls(slot: str) -> str:
-    mode_label = st.segmented_control(
-        "Mode enrichment TikTok",
-        ("Free tanpa login", "Chrome login"),
-        default="Free tanpa login",
-        help="Mode Free menghindari blokir 403 browser. Chrome login tetap tersedia sebagai cadangan.",
-        key=f"tiktok_enrichment_mode_{slot}",
+    st.caption(
+        "TikTok diproses tanpa membuka Chrome. Caption dan author dibaca dari metadata publik; views, followers, "
+        "likes, comments, shares, dan bookmark dilengkapi lewat Apify bila token tersedia."
+    )
+    saved = tiktok_free_collector().has_token()
+    if saved:
+        st.success("Token Apify sudah tersimpan di komputer ini.")
+    else:
+        st.info("Tanpa token, proses tetap berjalan dengan data publik yang tersedia.")
+    token_value = st.text_input(
+        "Apify API token",
+        type="password",
+        placeholder="Tempel token di sini lalu simpan",
+        help="Token disimpan hanya di folder privat MIDETA dan tidak masuk ke Git atau file hasil.",
+        key=f"apify_token_{slot}",
+    )
+    save_col, delete_col, account_col = st.columns(3)
+    if save_col.button(
+        "Simpan token",
+        key=f"save_apify_{slot}",
+        width="stretch",
+        disabled=not token_value.strip(),
+    ):
+        try:
+            tiktok_free_collector().save_token(token_value)
+            st.success("Token tersimpan. Enrichment TikTok siap digunakan.")
+            st.rerun()
+        except TikTokFreeError as exc:
+            st.error(str(exc))
+    if delete_col.button(
+        "Hapus token",
+        key=f"delete_apify_{slot}",
+        width="stretch",
+        disabled=not saved,
+    ):
+        try:
+            tiktok_free_collector().delete_token()
+            st.info("Token Apify sudah dihapus dari komputer ini.")
+            st.rerun()
+        except TikTokFreeError as exc:
+            st.error(str(exc))
+    account_col.link_button(
+        "Buat akun gratis",
+        "https://console.apify.com/sign-up",
         width="stretch",
     )
-    if mode_label == "Free tanpa login":
-        st.caption(
-            "Caption dan author dibaca tanpa login dari metadata resmi TikTok. Views, followers, likes, comments, "
-            "shares, dan bookmark diambil lewat kredit gratis Apify jika token sudah disimpan."
-        )
-        saved = tiktok_free_collector().has_token()
-        if saved:
-            st.success("Token Apify sudah tersimpan di komputer ini.")
-        else:
-            st.info("Tanpa token, proses tetap berjalan tetapi hanya caption dan author yang bisa tersedia.")
-        token_value = st.text_input(
-            "Apify API token",
-            type="password",
-            placeholder="Tempel token di sini lalu simpan",
-            help="Token disimpan hanya di folder privat MIDETA dan tidak masuk ke Git atau file hasil.",
-            key=f"apify_token_{slot}",
-        )
-        save_col, delete_col, account_col = st.columns(3)
-        if save_col.button(
-            "Simpan token",
-            key=f"save_apify_{slot}",
-            width="stretch",
-            disabled=not token_value.strip(),
-        ):
-            try:
-                tiktok_free_collector().save_token(token_value)
-                st.success("Token tersimpan. TikTok Free Mode siap digunakan.")
-                st.rerun()
-            except TikTokFreeError as exc:
-                st.error(str(exc))
-        if delete_col.button(
-            "Hapus token",
-            key=f"delete_apify_{slot}",
-            width="stretch",
-            disabled=not saved,
-        ):
-            try:
-                tiktok_free_collector().delete_token()
-                st.info("Token Apify sudah dihapus dari komputer ini.")
-                st.rerun()
-            except TikTokFreeError as exc:
-                st.error(str(exc))
-        account_col.link_button(
-            "Buat akun gratis",
-            "https://console.apify.com/sign-up",
-            width="stretch",
-        )
-        st.caption(
-            "Ambil token di Apify Console → Settings → API & Integrations. Kuota mengikuti kredit gratis akun Apify."
-        )
-        return "free"
-
     st.caption(
-        "Mode ini memakai Chrome khusus MIDETA yang sudah login. TikTok dapat membatasi perpindahan URL dan menampilkan HTTP 403, "
-        "jadi gunakan sebagai cadangan jika Free Mode belum mendapatkan suatu data."
+        "Ambil token di Apify Console → Settings → API & Integrations. Kuota mengikuti kredit gratis akun Apify."
     )
-    st.caption(
-        f"Setiap URL membuka video dan profil dalam kelompok {ENRICHMENT_BROWSER_CHUNK_SIZE} URL per tahap. "
-        "Password tetap diketik langsung di TikTok dan tidak dibaca MIDETA."
-    )
-    login_col, check_col, close_col = st.columns(3)
-    if login_col.button("Buka Chrome TikTok", key=f"open_tiktok_{slot}", width="stretch"):
-        try:
-            tiktok_browser().open_login()
-            st.info("Selesaikan login TikTok di jendela Chrome yang terbuka, lalu tekan Periksa Login.")
-        except TikTokBrowserError as exc:
-            st.error(str(exc))
-    if check_col.button("Periksa Login", key=f"check_tiktok_{slot}", width="stretch"):
-        try:
-            if tiktok_browser().is_logged_in():
-                st.success("TikTok sudah login dan siap digunakan untuk enrichment.")
-            else:
-                st.warning("Login TikTok belum terdeteksi. Selesaikan login di Chrome MIDETA.")
-        except TikTokBrowserError as exc:
-            st.error(str(exc))
-    if close_col.button("Tutup Chrome TikTok", key=f"close_tiktok_{slot}", width="stretch"):
-        tiktok_browser().close()
-        st.info("Chrome TikTok MIDETA sudah ditutup.")
-    return "advanced"
+    return "free"
 
 
 def render_facebook_controls(slot: str) -> str:
@@ -398,17 +352,6 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | No
         except InstagramBrowserError as exc:
             errors.append(str(exc))
     if requests_are_valid and any(
-        request["platform"] == "TikTok"
-        and request["enrichment_mode"] == "advanced"
-        and not request["mock_mode"]
-        for request in requests
-    ):
-        try:
-            if not tiktok_browser().is_logged_in():
-                errors.append("TikTok belum login. Buka Chrome TikTok dan selesaikan login sebelum memulai batch.")
-        except TikTokBrowserError as exc:
-            errors.append(str(exc))
-    if requests_are_valid and any(
         request["platform"] == "Facebook"
         and request["enrichment_mode"] == "advanced"
         and not request["mock_mode"]
@@ -433,7 +376,6 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | No
             mock_mode=request["mock_mode"],
             browser_mode=(
                 platform in {"Instagram", "Threads"}
-                or (platform == "TikTok" and request["enrichment_mode"] == "advanced")
                 or (platform == "Facebook" and request["enrichment_mode"] == "advanced")
             ),
             enrichment_mode=request["enrichment_mode"],
@@ -729,13 +671,13 @@ def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, An
 def collect_one_item(
     job: dict[str, Any],
     item: dict[str, Any],
-    active_browser: InstagramBrowserCollector | TikTokBrowserCollector | CommentBrowserCollector | None,
+    active_browser: InstagramBrowserCollector | CommentBrowserCollector | None,
     facebook_targets: dict[str, tuple[int, str]] | None = None,
 ) -> dict[str, Any]:
     url = item["url"]
     position = item["position"]
     try:
-        needs_browser_target = active_browser is not None and job["platform"] in {"Instagram", "TikTok", "Facebook"}
+        needs_browser_target = active_browser is not None and job["platform"] in {"Instagram", "Facebook"}
         processing_url = (
             resolve_social_url(url, expected_platform=job["platform"])
             if not job["mock_mode"] and needs_browser_target
@@ -768,34 +710,6 @@ def collect_one_item(
             except InstagramLoginRequired as exc:
                 return {"kind": "login_required", "reason": str(exc), "position": position, "url": url}
             except InstagramBrowserError as exc:
-                return {
-                    "kind": "failed",
-                    "position": position,
-                    "url": url,
-                    "error": {"URL": url, "Platform": job["platform"], "Alasan": str(exc)},
-                }
-        elif active_browser is not None and not job["mock_mode"] and job["platform"] == "TikTok":
-            try:
-                metrics = active_browser.collect(processing_url, None)
-                missing = []
-                if not metrics.caption:
-                    missing.append("Caption")
-                if metrics.views is None:
-                    missing.append("Views")
-                if metrics.followers is None:
-                    missing.append("Followers")
-                if missing:
-                    browser_issue = {
-                        "URL": url,
-                        "Platform": "TikTok",
-                        "Alasan": f"{', '.join(missing)} belum berhasil dibaca dari video atau profil target. Coba jalankan ulang setelah halaman TikTok normal.",
-                    }
-                result = build_tiktok_browser_result(url, metrics)
-            except TikTokLoginRequired as exc:
-                return {"kind": "login_required", "reason": str(exc), "position": position, "url": url}
-            except TikTokAccessDenied as exc:
-                return {"kind": "rate_limited", "reason": str(exc), "position": position, "url": url}
-            except TikTokBrowserError as exc:
                 return {
                     "kind": "failed",
                     "position": position,
@@ -852,7 +766,7 @@ def collect_one_item(
                         }
                 else:
                     facebook_targets[target_key] = (position, url)
-        elif not job["mock_mode"] and job["platform"] == "TikTok" and job["enrichment_mode"] == "free":
+        elif not job["mock_mode"] and job["platform"] == "TikTok":
             metrics = tiktok_free_collector().collect(processing_url)
             missing = []
             if not metrics.caption:
@@ -991,25 +905,22 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any]]) -> None
         active_browser = None
         needs_browser = (
             job["platform"] in {"Instagram", "Threads"}
-            or (job["platform"] == "TikTok" and job["enrichment_mode"] == "advanced")
             or (job["platform"] == "Facebook" and job["enrichment_mode"] == "advanced")
         )
         if needs_browser and not job["mock_mode"]:
             try:
                 if job["platform"] == "Instagram":
                     active_browser = instagram_browser()
-                elif job["platform"] == "TikTok":
-                    active_browser = tiktok_browser()
                 elif job["platform"] == "Facebook":
                     active_browser = facebook_enrichment_browser_v5()
                 else:
                     active_browser = threads_metadata_browser_v6()
-                if job["platform"] in {"Instagram", "TikTok", "Facebook"} and not active_browser.is_logged_in():
+                if job["platform"] in {"Instagram", "Facebook"} and not active_browser.is_logged_in():
                     set_social_job_status(job["id"], "paused")
                     activity.error(f"Sesi {job['platform']} berakhir. Login kembali, lalu lanjutkan proses.")
                     state_changed = True
                     continue
-            except (InstagramBrowserError, TikTokBrowserError, CommentBrowserError) as exc:
+            except (InstagramBrowserError, CommentBrowserError) as exc:
                 set_social_job_status(job["id"], "paused")
                 activity.error(str(exc))
                 state_changed = True
@@ -1237,7 +1148,7 @@ else:
             if enrichment_mode == "fast"
             else "Mulai Advanced Enrichment"
             if enrichment_mode == "advanced"
-            else "Mulai TikTok Free Mode"
+            else "Mulai Enrichment TikTok"
             if enrichment_mode == "free"
             else "Ambil Semua Metadata"
         )
