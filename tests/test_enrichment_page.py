@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -66,6 +69,12 @@ class EnrichmentPageTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual([widget.label for widget in app.text_area], ["Semua URL media sosial"])
         self.assertIn("Mulai Enrichment All", [widget.label for widget in app.button])
+        self.assertTrue(
+            any(
+                "Hasil CSV/XLSX tetap disusun sesuai urutan link" in caption.value
+                for caption in app.caption
+            )
+        )
 
     def test_tiktok_enrichment_uses_public_mode_without_chrome_controls(self):
         with (

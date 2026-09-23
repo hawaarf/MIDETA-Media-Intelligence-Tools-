@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Instagram enrichment through a dedicated, user-authenticated Chrome profile."""
 from __future__ import annotations
 

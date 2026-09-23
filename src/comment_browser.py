@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Comment collection through a dedicated Chrome profile."""
 from __future__ import annotations
 

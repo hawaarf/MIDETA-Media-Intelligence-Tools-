@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Shared date parsing for social-media posting timestamps."""
 from __future__ import annotations
 

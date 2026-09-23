@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Batch URL and tabular result helpers."""
 from __future__ import annotations
 from collections import defaultdict, deque
@@ -378,6 +381,13 @@ def compact_social_export_row(result: SocialResult) -> dict:
     row["Data yang tidak tersedia"] = (
         FAILED_URL_MESSAGE if failed else ", ".join(unavailable) if unavailable else "Lengkap"
     )
+    return row
+
+
+def compact_social_all_export_row(result: SocialResult) -> dict:
+    """Add an explicit error column to the combined enrichment export."""
+    row = compact_social_export_row(result)
+    row["Error"] = result.note if social_result_failed(result) else "Tidak ada"
     return row
 
 def rank_comment_rows(rows: list[dict]) -> list[dict]:

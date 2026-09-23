@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """TikTok enrichment through public oEmbed and an optional Apify free-tier token."""
 from __future__ import annotations
 

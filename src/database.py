@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """SQLite persistence for MIDETA analysis history."""
 from __future__ import annotations
 import json

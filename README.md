@@ -1,6 +1,10 @@
 # MIDETA
 
-MIDETA membantu merapikan metadata dan komentar dari posting media sosial. Aplikasi berjalan di komputer sendiri, hasilnya bisa dicek langsung lalu diunduh sebagai CSV atau XLSX.
+MIDETA membantu merapikan metadata media sosial, komentar publik, dan artikel media konvensional. Aplikasi berjalan di komputer sendiri, hasilnya bisa dicek langsung lalu diunduh sebagai CSV atau XLSX.
+
+> **Aman untuk dijalankan secara lokal.** MIDETA tidak meminta, membaca, atau menyimpan password. Login dilakukan langsung di situs resmi melalui Chrome khusus MIDETA. Cookie sesi browser dan token API opsional hanya tersimpan secara lokal di folder yang diabaikan Git; data tersebut tidak dimasukkan ke CSV/XLSX dan tidak ikut ter-push ke GitHub. Jangan menulis password atau token langsung di source code.
+
+> **Privacy-first local operation.** MIDETA never asks for, reads, or stores passwords. Authentication happens directly on the official website through MIDETA's dedicated Chrome profile. Browser-session cookies and optional API tokens remain in Git-ignored local folders; they are never included in CSV/XLSX exports or pushed to GitHub. Never hard-code passwords or tokens in the source code.
 
 [Baca dalam Bahasa Indonesia](#bahasa-indonesia) · [Read in English](#english)
 
@@ -8,19 +12,20 @@ MIDETA membantu merapikan metadata dan komentar dari posting media sosial. Aplik
 
 ### Yang bisa dilakukan
 
-MIDETA punya tiga bagian utama:
+MIDETA punya empat bagian utama:
 
 - **Social Media Enrichment** untuk mengambil tanggal posting, author, caption, followers, views, likes, comments, bookmark, shares, dan repost.
 - **Comment Scrapper** untuk mengambil komentar publik, membedakan komentar utama dan reply, lalu mengurutkannya berdasarkan engagement.
+- **Conventional Media Enrichment** untuk membersihkan artikel berita serta melengkapi tanggal, media, scope, tier, journalist, tone, dan quote mention.
 - **Riwayat Analisis** untuk membuka kembali hasil yang pernah diproses.
 
-Platform yang didukung: YouTube, TikTok, Facebook, Instagram, Threads, dan X.
+Platform media sosial yang didukung: YouTube, TikTok, Facebook, Instagram, Threads, dan X. Conventional Media Enrichment dapat menerima URL artikel dari berbagai situs berita publik.
 
 ### Social Media Enrichment
 
 Untuk satu platform, tempel satu URL per baris lalu mulai proses. Satu antrean dapat berisi sampai 1.000 URL.
 
-Kalau URL-nya berasal dari beberapa platform, pilih **Enrichment All**. Tempel semua URL dalam satu kotak tanpa memilah Facebook, Instagram, YouTube, TikTok, Threads, atau X. MIDETA mengenali platform secara otomatis, menjalankan antreannya dengan pembaca yang sesuai, lalu menampilkan satu tabel dan satu file hasil gabungan. Satu proses Enrichment All dapat berisi sampai 1.000 URL total.
+Kalau URL-nya berasal dari beberapa platform, pilih **Enrichment All**. Tempel semua URL dalam satu kotak tanpa memilah Facebook, Instagram, YouTube, TikTok, Threads, atau X. MIDETA mengenali platform secara otomatis dan memproses platform serta URL publik secara paralel. Hasil gabungan tetap disusun sesuai urutan input. URL yang gagal atau bukan tautan media sosial tetap mendapat satu baris dengan keterangan error. Satu proses Enrichment All dapat berisi sampai 1.000 URL total.
 
 MIDETA juga bisa membaca URL yang tercampur dengan tanggal atau teks hasil salin dari spreadsheet. Contohnya:
 
@@ -100,6 +105,52 @@ MIDETA dapat mengambil maksimal 2.000 komentar dari setiap URL. Progress bar men
 
 Comment Scrapper juga mendukung Split Screen dan Triple Screen, dengan hasil terpisah untuk setiap platform.
 
+### Conventional Media Enrichment
+
+Tempel maksimal 1.000 link artikel, satu link per baris. MIDETA memproses hingga 5 halaman publik secara paralel. Hasil CSV/XLSX tetap mengikuti urutan input, link berulang tetap dipertahankan, dan link yang gagal tidak akan menggeser baris lain.
+
+Alur penggunaan:
+
+1. Jika artikel memerlukan login, masukkan halaman login media lalu klik **Buka Sesi Artikel**.
+2. Login langsung pada situs media di Chrome MIDETA dan biarkan jendelanya terbuka.
+3. Tempel seluruh URL artikel, satu URL per baris.
+4. Klik **Mulai Enrichment**, periksa status setiap baris, lalu unduh CSV atau XLSX.
+
+MIDETA mencoba halaman publik terlebih dahulu. Artikel yang terhalang login, paywall, atau proteksi situs akan dicoba kembali melalui sesi Chrome secara berurutan agar satu sesi tidak dipakai bersamaan. Password hanya diketik pada situs media dan tidak dibaca MIDETA. Fitur ini tidak membutuhkan token Diffbot dan tidak menyimpan kredensial situs di source code.
+
+Kolom hasil:
+
+| Kolom | Isi |
+| --- | --- |
+| `date_publish` | Tanggal publikasi artikel, misalnya `Sep 23, 2026` |
+| `month` | Nama bulan publikasi |
+| `media_name` | Nama media yang dinormalisasi dan ditulis dengan huruf kapital |
+| `media_scope` | `National`, `Regional`, atau `Inter` |
+| `media_tier` | `Tier 1`, `Tier 2`, atau `Tier 3` |
+| `page_link` | URL asli sesuai baris input |
+| `title` | Judul artikel |
+| `content` | Isi artikel tanpa iklan, menu, rekomendasi, tombol share, dan elemen tidak relevan |
+| `journalist_name` | Nama penulis atau jurnalis jika tersedia |
+| `tone_article` | `Negative`, `Neutral`, atau `Positive` berdasarkan keseluruhan artikel |
+| `quote_mention` | Nama orang yang disebut, tanpa gelar umum dan dipisahkan dengan koma |
+
+Status kegagalan selalu dipertahankan pada baris URL asal:
+
+| Status | Arti |
+| --- | --- |
+| `[CHECK] article not available` | Artikel telah dihapus, takedown, atau halaman memang tidak tersedia |
+| `[CHECK] failed to process` | Halaman masih ada, tetapi kontennya tidak berhasil diekstrak |
+
+Klasifikasi scope, tier, tone, dan quote mention dibuat otomatis. Periksa kembali hasilnya apabila digunakan untuk laporan final atau mengikuti taksonomi internal perusahaan. MIDETA tidak melewati CAPTCHA, paywall, atau kontrol akses; pengguna tetap harus memiliki hak untuk membuka artikelnya.
+
+### Hak cipta dan atribusi
+
+MIDETA dibuat dan dikembangkan oleh **Hawarisma Rafanidya Singgih**. Source code memakai lisensi MIT; salinan atau bagian substansial dari software wajib mempertahankan pemberitahuan hak cipta dan izin yang ada di [LICENSE](LICENSE).
+
+File source memiliki header copyright dan SPDX. Test otomatis akan gagal jika header, nama pemilik pada lisensi, atau kredit pengembang di aplikasi terhapus secara tidak sengaja. `.github/CODEOWNERS` juga menetapkan `@hawaarf` sebagai pemilik seluruh repository. Agar perubahan pada repository utama tidak dapat digabung tanpa persetujuan pemilik, aktifkan GitHub Ruleset atau branch protection untuk branch utama dan nyalakan **Require review from Code Owners**.
+
+Perlindungan tersebut menjaga repository utama dan mendeteksi penghapusan tidak sengaja. Source code publik tetap dapat di-fork dan diubah oleh orang lain; tidak ada watermark source code yang secara teknis mustahil dihapus. Kewajiban atribusi berasal dari lisensi dan pemberitahuan hak cipta.
+
 ### Catatan hasil
 
 - Angka engagement adalah snapshot saat URL diperiksa dan bisa berubah sesudahnya.
@@ -148,10 +199,22 @@ Setelah itu buka [http://localhost:8501](http://localhost:8501).
 
 ```text
 app.py                     halaman utama
-pages/                     halaman fitur Streamlit
+LICENSE                    lisensi dan nama pemegang hak cipta
+ATTRIBUTION.md             atribusi pembuat MIDETA
+SECURITY.md                aturan keamanan dan kredensial
+.github/CODEOWNERS         kepemilikan perubahan repository
+pages/1_Social_Media_Enrichment.py
+                           enrichment media sosial
+pages/2_Comment_Scrapper.py
+                           pengambilan komentar
+pages/3_Riwayat_Analisis.py
+                           riwayat hasil lokal
+pages/4_Conventional_Media_Enrichment.py
+                           enrichment artikel media konvensional
 src/connectors/            pembaca data tiap platform
 src/instagram_browser.py   enrichment Instagram dengan login
 src/comment_browser.py     pengambilan komentar Facebook, Threads, dan X
+src/conventional_media.py  enrichment dan sesi login artikel berita
 src/batch.py               antrean dan pemulihan proses
 src/database.py            penyimpanan riwayat lokal
 src/exporters.py           pembuatan CSV dan XLSX
@@ -162,23 +225,24 @@ tests/                     automated tests
 
 ## English
 
-MIDETA cleans up post metadata and comments from social media. It runs on your own computer, lets you review the results, and exports them as CSV or XLSX.
+MIDETA cleans up social-media metadata, public comments, and conventional-media articles. It runs on your own computer, lets you review the results, and exports them as CSV or XLSX.
 
 ### What it does
 
-MIDETA has three main sections:
+MIDETA has four main sections:
 
 - **Social Media Enrichment** collects the post date, author, caption, followers, views, likes, comments, bookmarks, shares, and reposts.
 - **Comment Scrapper** collects public comments, separates parent comments from replies, and ranks them by engagement.
+- **Conventional Media Enrichment** cleans news articles and adds publication, media, journalist, tone, and quoted-person fields.
 - **Analysis History** keeps earlier results available for review.
 
-Supported platforms: YouTube, TikTok, Facebook, Instagram, Threads, and X.
+Supported social platforms: YouTube, TikTok, Facebook, Instagram, Threads, and X. Conventional Media Enrichment accepts article URLs from a broad range of public news websites.
 
 ### Social Media Enrichment
 
 For a single platform, paste one URL per line and start the run. A queue can contain up to 1,000 URLs.
 
-For a mixed list, choose **Enrichment All**. Paste Facebook, Instagram, YouTube, TikTok, Threads, and X URLs into the same box. MIDETA detects each platform, sends every URL to the right collector, and returns one combined table and download. One Enrichment All run can contain up to 1,000 URLs in total.
+For a mixed list, choose **Enrichment All**. Paste Facebook, Instagram, YouTube, TikTok, Threads, and X URLs into the same box. MIDETA detects each platform and processes platforms and public URLs concurrently. The combined export is restored to the original input order. Failed or unsupported URLs keep their own rows with an error message. One Enrichment All run can contain up to 1,000 URLs in total.
 
 URLs copied together with spreadsheet text also work. For example:
 
@@ -256,6 +320,52 @@ MIDETA can collect up to 2,000 comments from each URL. The progress bar shows ho
 
 Comment Scrapper also supports Split Screen and Triple Screen, with separate results for every platform.
 
+### Conventional Media Enrichment
+
+Paste up to 1,000 article URLs, one per line. MIDETA processes up to 5 public pages concurrently. CSV/XLSX output keeps the original input order, preserves duplicate links, and retains failed URLs so later rows never shift.
+
+Workflow:
+
+1. If an article requires authentication, enter the publisher's login page and click **Buka Sesi Artikel**.
+2. Log in directly on the publisher website in MIDETA's Chrome window and leave it open.
+3. Paste all article URLs, one URL per line.
+4. Click **Mulai Enrichment**, review each row's status, then download CSV or XLSX.
+
+MIDETA tries the public page first. Articles blocked by authentication, a paywall, or site protection are retried sequentially through the active Chrome session so the same session is not used concurrently. Passwords are entered only on the publisher website and are not read by MIDETA. This feature does not require a Diffbot token and does not store website credentials in source code.
+
+Output columns:
+
+| Column | Content |
+| --- | --- |
+| `date_publish` | Article publication date, for example `Sep 23, 2026` |
+| `month` | Full publication month name |
+| `media_name` | Normalized uppercase media name |
+| `media_scope` | `National`, `Regional`, or `Inter` |
+| `media_tier` | `Tier 1`, `Tier 2`, or `Tier 3` |
+| `page_link` | Original URL from the corresponding input row |
+| `title` | Article title |
+| `content` | Article body without ads, navigation, recommendations, share controls, or unrelated page elements |
+| `journalist_name` | Author or journalist name when available |
+| `tone_article` | `Negative`, `Neutral`, or `Positive`, based on the full article |
+| `quote_mention` | Mentioned people without common honorifics, separated by commas |
+
+Failure markers remain on the original URL row:
+
+| Marker | Meaning |
+| --- | --- |
+| `[CHECK] article not available` | The article was removed, taken down, or the page is genuinely unavailable |
+| `[CHECK] failed to process` | The page still exists, but its content could not be extracted |
+
+Scope, tier, tone, and quote-mention values are classified automatically. Review them before final reporting or when applying an internal corporate taxonomy. MIDETA does not bypass CAPTCHAs, paywalls, or access controls; the user must still be authorized to view the article.
+
+### Copyright and attribution
+
+MIDETA was created and developed by **Hawarisma Rafanidya Singgih**. The source code is licensed under the MIT License; copies or substantial portions of the software must retain the copyright and permission notice in [LICENSE](LICENSE).
+
+Source files carry copyright and SPDX headers. Automated tests fail if a header, the license owner, or the in-app developer credit is removed accidentally. `.github/CODEOWNERS` also assigns the entire repository to `@hawaarf`. To prevent changes from being merged into the primary repository without owner approval, enable a GitHub Ruleset or branch protection on the default branch and turn on **Require review from Code Owners**.
+
+These controls protect the primary repository and catch accidental removal. Public source code can still be forked and modified; no source-code watermark can be made technically impossible to remove. Attribution obligations come from the license and copyright notice.
+
 ### Notes about the results
 
 - Engagement is a snapshot and may change after the run.
@@ -304,12 +414,24 @@ Then open [http://localhost:8501](http://localhost:8501).
 
 ```text
 app.py                     home page
-pages/                     Streamlit feature pages
+LICENSE                    license and copyright owner
+ATTRIBUTION.md             MIDETA creator attribution
+SECURITY.md                security and credential rules
+.github/CODEOWNERS         repository change ownership
+pages/1_Social_Media_Enrichment.py
+                           social-media enrichment
+pages/2_Comment_Scrapper.py
+                           comment collection
+pages/3_Riwayat_Analisis.py
+                           local result history
+pages/4_Conventional_Media_Enrichment.py
+                           conventional-media article enrichment
 src/connectors/            platform data readers
 src/instagram_browser.py   logged-in Instagram enrichment
 src/tiktok_browser.py      shared TikTok result model and parser helpers
 src/tiktok_free.py         no-login TikTok enrichment
 src/comment_browser.py     Facebook, Threads, and X comment collection
+src/conventional_media.py  news article enrichment and login session
 src/batch.py               queues and resume support
 src/database.py            local history storage
 src/exporters.py           CSV and XLSX generation

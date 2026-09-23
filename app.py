@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Premium landing page for MIDETA."""
 import streamlit as st
 from src.config import MIDETA_LOGO_PATH, PAGE_TITLE
@@ -15,14 +18,14 @@ with hero_text:
     st.markdown('<p class="hero-copy">Pilih fitur, tempel URL, jalankan proses, lalu unduh hasilnya.</p>', unsafe_allow_html=True)
     st.markdown('<div class="platform-strip"><span>YouTube</span><span>TikTok</span><span>Facebook</span><span>Instagram</span><span>Threads</span><span>X</span></div>', unsafe_allow_html=True)
     first, second = st.columns(2)
-    first.page_link("pages/1_Social_Media_Enrichment.py", label="Enrich Metadata", icon=":material/database:", width="stretch")
-    second.page_link("pages/2_Comment_Scrapper.py", label="Ambil Komentar", icon=":material/forum:", width="stretch")
+    first.page_link("pages/1_Social_Media_Enrichment.py", label="Enrich Sosial Media", icon=":material/database:", width="stretch")
+    second.page_link("pages/4_Conventional_Media_Enrichment.py", label="Enrich Artikel", icon=":material/newspaper:", width="stretch")
 with hero_visual:
     st.markdown("""<div class="preview-shell"><div class="preview-top"><span></span><span></span><span></span><b>ALUR MIDETA</b></div><div class="preview-heading"><small>3 LANGKAH</small><strong>Tempel. Jalankan. Unduh.</strong><p>URL tetap berurutan agar hasil mudah dicocokkan.</p></div><div class="workflow-track"><div><span>01</span><b>Tempel URL</b><small>Satu per baris</small></div><i></i><div><span>02</span><b>Jalankan</b><small>Pilih fitur</small></div><i></i><div><span>03</span><b>Unduh</b><small>CSV atau XLSX</small></div></div><div class="signal"><span class="pulse"></span><div><small>STATUS</small><b>Siap digunakan</b></div><strong>SIAP</strong></div></div>""", unsafe_allow_html=True)
 
 st.markdown('<div class="section-anchor"></div><div class="section-label">PILIH FITUR</div><h2>Apa yang ingin dikerjakan?</h2>', unsafe_allow_html=True)
-features = [("01", "Social Media Enrichment", "Metadata posting dan engagement.", "pages/1_Social_Media_Enrichment.py", "EN", "Buka Enrichment"), ("02", "Comment Scrapper", "Komentar, reply, dan engagement.", "pages/2_Comment_Scrapper.py", "CO", "Buka Comment Scrapper"), ("03", "Riwayat Analisis", "Hasil yang pernah dikumpulkan.", "pages/3_Riwayat_Analisis.py", "HI", "Buka Riwayat")]
-columns = st.columns(3)
+features = [("01", "Social Media Enrichment", "Metadata posting dan engagement.", "pages/1_Social_Media_Enrichment.py", "EN", "Buka Enrichment"), ("02", "Comment Scrapper", "Komentar, reply, dan engagement.", "pages/2_Comment_Scrapper.py", "CO", "Buka Comment Scrapper"), ("03", "Riwayat Analisis", "Hasil yang pernah dikumpulkan.", "pages/3_Riwayat_Analisis.py", "HI", "Buka Riwayat"), ("04", "Conventional Media", "Artikel bersih, tone, dan quote mention.", "pages/4_Conventional_Media_Enrichment.py", "CM", "Buka Artikel")]
+columns = st.columns(4)
 for column, (number, title, description, page, icon, button_label) in zip(columns, features):
     with column:
         st.markdown(f'<div class="feature-card"><div class="feature-icon"><span>{icon}</span></div><span class="number">{number}</span><h3>{title}</h3><p>{description}</p></div>', unsafe_allow_html=True)

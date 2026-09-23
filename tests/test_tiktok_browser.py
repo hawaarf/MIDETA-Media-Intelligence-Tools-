@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Typed domain models shared by services and pages."""
 from __future__ import annotations
 from datetime import datetime

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """URL validation and SSRF safeguards."""
 from __future__ import annotations
 import ipaddress

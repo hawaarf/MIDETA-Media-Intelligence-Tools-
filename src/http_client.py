@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Conservative public-page fetcher with redirect revalidation."""
 from __future__ import annotations
 import requests
@@ -9,11 +12,11 @@ USER_AGENT = "Mozilla/5.0 (compatible; MIDETA/1.0; local media intelligence)"
 class CollectionError(RuntimeError):
     pass
 
-def fetch_public_html(url: str) -> tuple[str, str]:
+def fetch_public_html(url: str, *, user_agent: str = USER_AGENT) -> tuple[str, str]:
     current = validate_public_url(url)
     for _ in range(MAX_REDIRECTS + 1):
         try:
-            response = requests.get(current, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}, timeout=REQUEST_TIMEOUT_SECONDS, allow_redirects=False, stream=True)
+            response = requests.get(current, headers={"User-Agent": user_agent, "Accept": "text/html,application/xhtml+xml"}, timeout=REQUEST_TIMEOUT_SECONDS, allow_redirects=False, stream=True)
         except requests.RequestException as exc:
             raise CollectionError(f"Halaman tidak dapat dihubungi: {exc}") from exc
         if response.is_redirect or response.is_permanent_redirect:

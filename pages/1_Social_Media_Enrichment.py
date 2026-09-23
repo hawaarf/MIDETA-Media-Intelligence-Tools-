@@ -1,6 +1,9 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """MIDETA Social Media Enrichment batch page."""
 import importlib
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Empty, Queue
 import re
 import time
@@ -10,9 +13,9 @@ import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
 
-from src.batch import SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_social_export_row, failed_social_result, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, social_job_results, social_result_row
+from src.batch import SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_social_all_export_row, compact_social_export_row, failed_social_result, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, social_job_results, social_result_row
 import src.comment_browser as comment_browser_module
-from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
+from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MAX_PARALLEL_PUBLIC_URLS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, detect_platform, get_platform_connector
 from src.connectors.instagram import InstagramConnector
 from src.database import add_history, create_social_job, get_latest_social_job, get_social_job, next_social_job_items, record_social_job_item, set_social_job_status
@@ -596,7 +599,7 @@ def render_all_job_results(
         for key in list(row):
             if key.startswith("Status "):
                 row[key] = status_label(row[key])
-    export_rows = [compact_social_export_row(result) for result in results]
+    export_rows = [compact_social_all_export_row(result) for result in results]
     st.dataframe(pd.DataFrame(export_rows).astype(str), width="stretch", hide_index=True)
     with st.expander("Lihat status setiap data"):
         detail_frame = pd.DataFrame(detail_rows)
@@ -850,17 +853,38 @@ def collect_one_item(
 def collect_job_chunk(task: dict[str, Any], output: Queue) -> None:
     job = task["job"]
     facebook_targets = facebook_targets_from_job(job) if job["platform"] == "Facebook" else None
+
+    def collect(item: dict[str, Any]) -> dict[str, Any]:
+        return collect_one_item(
+            job,
+            item,
+            task["active_browser"],
+            facebook_targets=facebook_targets,
+        )
+
     try:
-        for item in task["chunk"]:
-            outcome = collect_one_item(
-                job,
-                item,
-                task["active_browser"],
-                facebook_targets=facebook_targets,
-            )
-            output.put((job["id"], outcome))
-            if outcome["kind"] in {"rate_limited", "login_required"}:
-                break
+        # Satu driver Chrome tidak aman dipakai beberapa thread sekaligus.
+        # URL publik tidak memiliki batasan tersebut, jadi biarkan hasil masuk
+        # sesuai waktu selesai; posisi aslinya tetap disimpan di database dan
+        # dipakai kembali saat tabel/CSV gabungan disusun.
+        if (
+            not task.get("parallel_urls")
+            or task["active_browser"] is not None
+            or len(task["chunk"]) <= 1
+        ):
+            for item in task["chunk"]:
+                outcome = collect(item)
+                output.put((job["id"], outcome))
+                if outcome["kind"] in {"rate_limited", "login_required"}:
+                    break
+        else:
+            with ThreadPoolExecutor(
+                max_workers=min(len(task["chunk"]), MAX_PARALLEL_PUBLIC_URLS),
+                thread_name_prefix=f"mideta-{job['platform'].lower()}-url",
+            ) as executor:
+                futures = [executor.submit(collect, item) for item in task["chunk"]]
+                for future in as_completed(futures):
+                    output.put((job["id"], future.result()))
     finally:
         output.put((job["id"], None))
 
@@ -899,7 +923,11 @@ def persist_outcome(job: dict[str, Any], outcome: dict[str, Any], activity: Any)
     return True
 
 
-def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any, Any | None]]) -> None:
+def run_active_jobs(
+    job_panels: list[tuple[dict[str, Any] | None, Any, Any | None]],
+    *,
+    process_all_pending: bool = False,
+) -> None:
     tasks: list[dict[str, Any]] = []
     state_changed = False
     seen_jobs: set[int] = set()
@@ -930,7 +958,8 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any, Any | Non
                 activity.error(str(exc))
                 state_changed = True
                 continue
-        chunk = next_social_job_items(job["id"], job_chunk_size(job))
+        fetch_limit = job["pending"] if process_all_pending else job_chunk_size(job)
+        chunk = next_social_job_items(job["id"], fetch_limit)
         if not chunk:
             set_social_job_status(job["id"], "completed")
             state_changed = True
@@ -946,6 +975,7 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any, Any | Non
                 "progress": progress,
                 "active_browser": active_browser,
                 "chunk": chunk,
+                "parallel_urls": process_all_pending,
             }
         )
 
@@ -969,7 +999,9 @@ def run_active_jobs(job_panels: list[tuple[dict[str, Any] | None, Any, Any | Non
                 text=f"{job['platform']}: memproses URL {job['processed'] + 1:,} dari {job['total']:,}…",
             )
     with ThreadPoolExecutor(
-        max_workers=min(len(tasks), MAX_PARALLEL_PLATFORMS),
+        # Enrichment All boleh memulai seluruh platform sekaligus. Split dan
+        # Triple Screen tetap otomatis terbatas oleh jumlah panelnya.
+        max_workers=len(tasks),
         thread_name_prefix="mideta-platform",
     ) as executor:
         for task in tasks:
@@ -1042,7 +1074,9 @@ job_panels: list[tuple[dict[str, Any] | None, Any, Any | None]] = []
 if layout_mode == "Enrichment All":
     st.caption(
         "Tempel URL YouTube, TikTok, Facebook, Instagram, Threads, dan X dalam satu kotak. "
-        "MIDETA akan mengenali platformnya, memproses setiap baris termasuk URL berulang, lalu menggabungkan hasil sesuai urutan input."
+        "MIDETA memproses platform dan URL publik secara paralel tanpa menunggu urutan input. "
+        f"Maksimal {MAX_ENRICHMENT_URLS:,} URL. Hasil CSV/XLSX tetap disusun sesuai urutan link yang ditempel; "
+        "URL berulang, gagal, atau tidak dikenali tetap mendapat satu baris."
     )
     with st.expander("Pengaturan Instagram jika daftar berisi URL Instagram"):
         instagram_mode = render_instagram_controls("all")
@@ -1076,8 +1110,8 @@ if layout_mode == "Enrichment All":
             grouped_urls, unsupported_urls = group_detected_urls(all_urls)
             st.session_state["social_all_unsupported"] = unsupported_urls
             st.session_state["social_all_order"] = all_urls
+            st.session_state.pop("social_all_jobs", None)
             if not grouped_urls:
-                st.session_state.pop("social_all_jobs", None)
                 st.error("Tidak ada URL dari platform yang didukung.")
             else:
                 all_requests = [
@@ -1227,5 +1261,8 @@ else:
         )
     job_panels.append(render_job_panel(selected_platform, "single"))
 
-run_active_jobs(job_panels)
+run_active_jobs(
+    job_panels,
+    process_all_pending=layout_mode == "Enrichment All",
+)
 render_footer()

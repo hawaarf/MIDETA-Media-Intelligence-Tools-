@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """MIDETA local analysis history page."""
 from datetime import date, timedelta
 import pandas as pd
@@ -14,8 +17,8 @@ page_intro("03", "Riwayat Analisis", "Temukan kembali dan kelola hasil yang ters
 
 filters = st.columns([2, 1, 1, 1, 1])
 search = filters[0].text_input("Cari", placeholder="Cari URL atau isi hasil")
-feature_value = filters[1].selectbox("Fitur", ["Semua", "Social Media Enrichment", "Comment Scrapper"])
-platform_value = filters[2].selectbox("Platform", ["Semua", "YouTube", "TikTok", "Facebook", "Instagram", "Threads", "X"])
+feature_value = filters[1].selectbox("Fitur", ["Semua", "Social Media Enrichment", "Comment Scrapper", "Conventional Media Enrichment"])
+platform_value = filters[2].selectbox("Platform", ["Semua", "YouTube", "TikTok", "Facebook", "Instagram", "Threads", "X", "Conventional Media"])
 start = filters[3].date_input("Dari", value=date.today() - timedelta(days=30))
 end = filters[4].date_input("Sampai", value=date.today())
 if start > end:

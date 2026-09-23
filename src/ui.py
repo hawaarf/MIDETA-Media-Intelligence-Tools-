@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Reusable Streamlit presentation helpers."""
 from __future__ import annotations
 import base64
@@ -186,7 +189,7 @@ def render_github_profile() -> None:
     )
 
 def render_brand_header() -> None:
-    brand, enrichment, comments, history = st.columns([4.8, 1.45, 1.45, 1.2], vertical_alignment="center")
+    brand, enrichment, conventional, comments, history = st.columns([4.2, 1.25, 1.25, 1.25, 1.05], vertical_alignment="center")
     brand.markdown(
         f"""
         <div class="brand-lockup">
@@ -198,8 +201,14 @@ def render_brand_header() -> None:
     )
     enrichment.page_link(
         "pages/1_Social_Media_Enrichment.py",
-        label="Enrichment",
+        label="Sosial",
         icon=":material/database:",
+        width="stretch",
+    )
+    conventional.page_link(
+        "pages/4_Conventional_Media_Enrichment.py",
+        label="Artikel",
+        icon=":material/newspaper:",
         width="stretch",
     )
     comments.page_link(

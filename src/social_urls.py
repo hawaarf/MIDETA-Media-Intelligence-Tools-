@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Social-media URL aliases and safe short-link resolution."""
 from __future__ import annotations
 

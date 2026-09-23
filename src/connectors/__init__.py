@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 """Platform connector registry."""
 from src.connectors.base import BaseConnector
 from src.connectors.facebook import FacebookConnector

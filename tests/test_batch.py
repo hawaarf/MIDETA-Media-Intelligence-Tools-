@@ -1,5 +1,8 @@
+# Copyright (c) 2026 Hawarisma Rafanidya Singgih
+# SPDX-License-Identifier: MIT
+
 import unittest
-from src.batch import FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_comment_export_rows, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, rank_comment_rows, social_job_results, social_result_row
+from src.batch import FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_comment_export_rows, compact_social_all_export_row, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, rank_comment_rows, social_job_results, social_result_row
 from src.models import DataField, FieldStatus
 from src.connectors import get_connector
 
@@ -36,6 +39,13 @@ class BatchTests(unittest.TestCase):
             parse_url_list(value, preserve_repeated_rows=True),
             [url, url, url],
         )
+
+    def test_parse_url_list_accepts_one_thousand_enrichment_rows(self):
+        urls = [f"https://x.com/akun/status/{index}" for index in range(1_000)]
+
+        parsed = parse_url_list("\n".join(urls), preserve_repeated_rows=True)
+
+        self.assertEqual(parsed, urls)
 
     def test_combined_results_keep_repeated_urls_in_original_input_order(self):
         instagram_url = "https://www.instagram.com/p/ABC/"
@@ -272,4 +282,30 @@ class BatchTests(unittest.TestCase):
 
         self.assertEqual(row["URL"], "https://example.com/post/1")
         self.assertEqual(row["Platform"], "Tidak dikenali")
+        self.assertEqual(row["Caption"], FAILED_URL_MESSAGE)
+        self.assertEqual(row["Data yang tidak tersedia"], FAILED_URL_MESSAGE)
         self.assertTrue(result.note.startswith(FAILED_URL_MESSAGE))
+
+    def test_combined_export_restores_input_order_after_out_of_order_completion(self):
+        youtube_url = "https://youtu.be/first"
+        unknown_url = "https://example.com/not-social"
+        x_url = "https://x.com/akun/status/last"
+        youtube = get_connector(youtube_url).mock_enrichment(youtube_url)
+        unknown = failed_social_result(unknown_url, "Tidak dikenali", "Platform belum didukung")
+        x_result = get_connector(x_url).mock_enrichment(x_url)
+
+        # Simulasikan URL terakhir selesai lebih dulu dan URL pertama selesai
+        # paling akhir. Export harus tetap mengikuti urutan input.
+        ordered = order_social_results_by_input(
+            [x_result, unknown, youtube],
+            [youtube_url, unknown_url, x_url],
+        )
+        exported = [compact_social_all_export_row(result) for result in ordered]
+
+        self.assertEqual(
+            [row["URL"] for row in exported],
+            [youtube_url, unknown_url, x_url],
+        )
+        self.assertEqual(exported[1]["Caption"], FAILED_URL_MESSAGE)
+        self.assertIn("Platform belum didukung", exported[1]["Error"])
+        self.assertEqual(exported[0]["Error"], "Tidak ada")
