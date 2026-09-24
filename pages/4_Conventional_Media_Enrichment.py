@@ -140,7 +140,8 @@ raw_urls = st.text_area(
 )
 st.caption(
     "MIDETA membersihkan iklan, menu, rekomendasi, dan elemen halaman lain dari isi artikel. "
-    "Media scope dan tier ditentukan dari domain media; tone dan quote mention dibaca dari keseluruhan artikel."
+    "Media scope dan tier ditentukan dari domain media; tone, quote mention, dan jenis penyebutan "
+    "direct/indirect dibaca dari keseluruhan artikel."
 )
 
 if st.button(

@@ -16,7 +16,7 @@ MIDETA punya empat bagian utama:
 
 - **Social Media Enrichment** untuk mengambil tanggal posting, author, caption, followers, views, likes, comments, bookmark, shares, dan repost.
 - **Comment Scrapper** untuk mengambil komentar publik, membedakan komentar utama dan reply, lalu mengurutkannya berdasarkan engagement.
-- **Conventional Media Enrichment** untuk membersihkan artikel berita serta melengkapi tanggal, media, scope, tier, journalist, tone, dan quote mention.
+- **Conventional Media Enrichment** untuk membersihkan artikel berita serta melengkapi tanggal, media, scope, tier, journalist, tone, quote mention, dan jenis penyebutan direct/indirect.
 - **Riwayat Analisis** untuk membuka kembali hasil yang pernah diproses.
 
 Platform media sosial yang didukung: YouTube, TikTok, Facebook, Instagram, Threads, dan X. Conventional Media Enrichment dapat menerima URL artikel dari berbagai situs berita publik.
@@ -133,6 +133,7 @@ Kolom hasil:
 | `journalist_name` | Nama penulis atau jurnalis jika tersedia |
 | `tone_article` | `Negative`, `Neutral`, atau `Positive` berdasarkan keseluruhan artikel |
 | `quote_mention` | Nama orang yang disebut, tanpa gelar umum dan dipisahkan dengan koma |
+| `type_mention` | Nama yang sama dengan detail `(direct)` bila berbicara/dikutip atau `(indirect)` bila hanya disebut |
 
 Status kegagalan selalu dipertahankan pada baris URL asal:
 
@@ -233,7 +234,7 @@ MIDETA has four main sections:
 
 - **Social Media Enrichment** collects the post date, author, caption, followers, views, likes, comments, bookmarks, shares, and reposts.
 - **Comment Scrapper** collects public comments, separates parent comments from replies, and ranks them by engagement.
-- **Conventional Media Enrichment** cleans news articles and adds publication, media, journalist, tone, and quoted-person fields.
+- **Conventional Media Enrichment** cleans news articles and adds publication, media, journalist, tone, quoted-person, and direct/indirect mention fields.
 - **Analysis History** keeps earlier results available for review.
 
 Supported social platforms: YouTube, TikTok, Facebook, Instagram, Threads, and X. Conventional Media Enrichment accepts article URLs from a broad range of public news websites.
@@ -348,6 +349,7 @@ Output columns:
 | `journalist_name` | Author or journalist name when available |
 | `tone_article` | `Negative`, `Neutral`, or `Positive`, based on the full article |
 | `quote_mention` | Mentioned people without common honorifics, separated by commas |
+| `type_mention` | The same names annotated as `(direct)` when speaking/quoted or `(indirect)` when only mentioned |
 
 Failure markers remain on the original URL row:
 
