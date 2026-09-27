@@ -6,6 +6,9 @@ import unittest
 from src.conventional_media import (
     ARTICLE_COLUMNS,
     CHECK_ARTICLE_NOT_AVAILABLE,
+    CHECK_FAILED_TO_PROCESS,
+    SWA_CRAWLING_NOTICE,
+    _failed_result,
     classify_tone,
     enrich_article_html,
     media_identity,
@@ -144,6 +147,10 @@ class ConventionalMediaTests(unittest.TestCase):
             "news-text",
             "paragraph",
             "warp-desc-news-detail",
+            "berita_content_sub",
+            "news-detail-content",
+            "bodyArticleWrapper",
+            "c-detail read",
             "article",
             "content",
         )
@@ -153,6 +160,17 @@ class ConventionalMediaTests(unittest.TestCase):
                 html = (
                     "<html lang='id'><head><title>Judul Berita Utama Hari Ini</title></head>"
                     f"<body><div class='{wrapper}'><p>{paragraph}</p></div></body></html>"
+                )
+                result = enrich_article_html("https://contohmedia.com/berita", html)
+
+                self.assertEqual(result.status, "completed")
+                self.assertIn("Isi berita utama", result.content)
+
+        for wrapper_id in ("berita_content_sub", "sub_content", "berita_panel"):
+            with self.subTest(wrapper_id=wrapper_id):
+                html = (
+                    "<html lang='id'><head><title>Judul Berita Utama Hari Ini</title></head>"
+                    f"<body><div id='{wrapper_id}'><p>{paragraph}</p></div></body></html>"
                 )
                 result = enrich_article_html("https://contohmedia.com/berita", html)
 
@@ -179,13 +197,17 @@ class ConventionalMediaTests(unittest.TestCase):
     def test_role_and_action_sentence_extracts_only_person_name(self):
         content = (
             "Direktur Utama GoTo Hans Patuwo menyoroti pertumbuhan layanan keuangan digital. "
-            "Menteri Perhubungan (Menhub) Dudy Purwagandhi memastikan layanan tetap berjalan."
+            "Menteri Perhubungan (Menhub) Dudy Purwagandhi memastikan layanan tetap berjalan. "
+            "Deputi Bidang Usaha Kecil Kementerian UMKM Temmy Satya Permana memberikan penjelasan."
         )
 
-        self.assertEqual(quote_mentions(content, {}), "Hans Patuwo, Dudy Purwagandhi")
+        self.assertEqual(
+            quote_mentions(content, {}),
+            "Hans Patuwo, Dudy Purwagandhi, Temmy Satya Permana",
+        )
         self.assertEqual(
             type_mentions(content, {}),
-            "Hans Patuwo (indirect), Dudy Purwagandhi (indirect)",
+            "Hans Patuwo (indirect), Dudy Purwagandhi (indirect), Temmy Satya Permana (indirect)",
         )
 
     def test_quote_mentions_only_keeps_people_not_parties_or_organizations(self):
@@ -273,6 +295,172 @@ class ConventionalMediaTests(unittest.TestCase):
         self.assertNotIn("baca juga", result.content.casefold())
         self.assertNotIn("Kesaksian Eks Pejabat", result.quote_mention)
 
+    def test_content_stops_before_next_article_and_publisher_footer(self):
+        paragraph = " ".join(
+            ["Isi berita utama menjelaskan program dan dampaknya secara lengkap bagi pembaca."] * 8
+        )
+        html = f"""
+        <html lang="id"><head><title>Program Utama untuk Masyarakat</title></head><body>
+          <article>
+            <p>{paragraph}</p>
+            <p>Penutup berita yang masih relevan. Artikel Selanjutnya: Promo produk lain.</p>
+            <p>Pewarta: Nama Redaksi Copyright © Penerbit.</p>
+            <p>Paragraf artikel lain yang terlihat valid tetapi tidak boleh ikut.</p>
+          </article>
+        </body></html>
+        """
+
+        result = enrich_article_html("https://contohmedia.com/program-utama", html)
+
+        self.assertEqual(result.status, "completed")
+        self.assertIn("Penutup berita yang masih relevan", result.content)
+        self.assertNotIn("Artikel Selanjutnya", result.content)
+        self.assertNotIn("Pewarta", result.content)
+        self.assertNotIn("Promo produk lain", result.content)
+        self.assertNotIn("Paragraf artikel lain", result.content)
+
+    def test_photo_caption_section_after_article_is_excluded(self):
+        paragraph = " ".join(
+            ["Isi berita utama menjelaskan program dan dampaknya secara lengkap bagi pembaca."] * 8
+        )
+        html = f"""
+        <html><head><title>Program Utama untuk Masyarakat</title></head><body>
+          <div id="sub_content">
+            <p>{paragraph}</p>
+            <p>Penutup isi artikel yang masih relevan.</p>
+            <p>Teks foto :</p>
+            <p>1. Nama Acak dalam dokumentasi acara perusahaan.</p>
+            <p>2. Orang Lain berdiri bersama peserta kegiatan.</p>
+          </div>
+        </body></html>
+        """
+
+        result = enrich_article_html("https://contohmedia.com/program-utama", html)
+
+        self.assertEqual(result.status, "completed")
+        self.assertIn("Penutup isi artikel", result.content)
+        self.assertNotIn("Nama Acak", result.content)
+        self.assertNotIn("Orang Lain", result.content)
+
+    def test_promotional_access_instructions_and_signature_are_excluded(self):
+        paragraph = " ".join(
+            ["Isi berita utama menjelaskan program dan dampaknya secara lengkap bagi pembaca."] * 8
+        )
+        html = f"""
+        <html><head><title>Program Utama untuk Masyarakat</title></head><body>
+          <article>
+            <p>{paragraph}</p>
+            <p>Portal Program dapat diakses melalui https://contoh.invalid dan pendaftaran tersedia.</p>
+            <p>Informasi pembelajaran bagi peserta tersedia melalui aplikasi dan kanal resmi.</p>
+            <p>Penutup isi artikel tetap disimpan. ( nama redaksi )</p>
+          </article>
+        </body></html>
+        """
+
+        result = enrich_article_html("https://contohmedia.com/program-utama", html)
+
+        self.assertEqual(result.status, "completed")
+        self.assertNotIn("Portal Program", result.content)
+        self.assertNotIn("Informasi pembelajaran", result.content)
+        self.assertIn("Penutup isi artikel tetap disimpan.", result.content)
+        self.assertNotIn("nama redaksi", result.content)
+
+    def test_content_stops_before_read_full_article_link(self):
+        paragraph = " ".join(
+            ["Isi berita utama menjelaskan program dan dampaknya secara lengkap bagi pembaca."] * 8
+        )
+        html = f"""
+        <html lang="id"><head><title>Program Utama untuk Masyarakat</title></head><body>
+          <article>
+            <p>{paragraph}</p>
+            <p>Penutup berita tetap relevan. Read full article on Another Publisher</p>
+          </article>
+        </body></html>
+        """
+
+        result = enrich_article_html("https://contohmedia.com/program-utama", html)
+
+        self.assertEqual(result.status, "completed")
+        self.assertIn("Penutup berita tetap relevan", result.content)
+        self.assertNotIn("Read full article", result.content)
+        self.assertNotIn("Another Publisher", result.content)
+
+    def test_related_links_only_page_is_not_treated_as_article(self):
+        shell = " ".join(
+            [
+                "Campaign Strategi Perusahaan Perkuat Ekosistem Mitra.",
+                "Related",
+                "Berita pertama tentang layanan digital.",
+                "Berita kedua tentang bisnis regional.",
+                "Berita ketiga tentang program perusahaan.",
+                "Latest News",
+                "Berita keempat yang tidak terkait dengan URL.",
+            ]
+            * 3
+        )
+        html = f"""
+        <html><head><title>Campaign Strategi Perusahaan</title></head>
+          <body><main><p>{shell}</p></main></body>
+        </html>
+        """
+
+        result = enrich_article_html("https://contohmedia.com/campaign-strategi", html)
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.content, CHECK_FAILED_TO_PROCESS)
+
+    def test_people_in_quotes_and_captions_are_names_only(self):
+        content = (
+            "Menteri Usaha Mikro, Kecil, dan Menengah Maman Abdurrahman mengatakan program dilanjutkan. "
+            "Shofwim Shofwan, Mitra Instruktur; Dr. Hendrian, S.E., M.Si., Wakil Rektor Bidang Riset; "
+            "dan Prof. Dr. Ali Muktiyanto, S.E., M.Si., Rektor Universitas Terbuka, mengatakan "
+            "pendidikan harus mudah diakses."
+        )
+
+        self.assertEqual(
+            quote_mentions(content, {}),
+            "Maman Abdurrahman, Shofwim Shofwan, Hendrian, Ali Muktiyanto",
+        )
+        self.assertEqual(
+            type_mentions(content, {}),
+            "Maman Abdurrahman (direct), Shofwim Shofwan (indirect), "
+            "Hendrian (indirect), Ali Muktiyanto (direct)",
+        )
+
+    def test_swa_keeps_metadata_but_respects_crawling_notice(self):
+        paragraph = " ".join(["Teks larangan otomatis dari penerbit dan bukan isi artikel."] * 8)
+        html = f"""
+        <html lang="id"><head>
+          <meta property="og:title" content="Judul Artikel SWA">
+          <meta property="article:published_time" content="2026-09-25T10:00:00+07:00">
+        </head><body><article><p>{paragraph}</p></article></body></html>
+        """
+
+        result = enrich_article_html("https://swa.co.id/read/123/judul-artikel-swa", html)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.content, SWA_CRAWLING_NOTICE)
+        self.assertEqual(result.title, "Judul Artikel SWA")
+        self.assertEqual(result.quote_mention, "")
+
+    def test_structured_article_body_wins_over_long_page_footer(self):
+        body = " ".join(["Isi berita terstruktur tetap relevan dan menjelaskan fakta utama."] * 9)
+        footer = " ".join(["Daftar berita lain dan promosi situs penerbit."] * 30)
+        html = f"""
+        <html><head><title>Berita Terstruktur Hari Ini</title>
+          <script type="application/ld+json">{{
+            "@context": "https://schema.org", "@type": "NewsArticle",
+            "headline": "Berita Terstruktur Hari Ini", "articleBody": "{body}"
+          }}</script>
+        </head><body><main><p>{body}</p><p>{footer}</p></main></body></html>
+        """
+
+        result = enrich_article_html("https://contohmedia.com/berita-terstruktur-hari-ini", html)
+
+        self.assertEqual(result.status, "completed")
+        self.assertIn("Isi berita terstruktur", result.content)
+        self.assertNotIn("Daftar berita lain", result.content)
+
     def test_tone_uses_full_article_text(self):
         self.assertEqual(
             classify_tone(
@@ -297,6 +485,107 @@ class ConventionalMediaTests(unittest.TestCase):
         self.assertEqual(result.title, "Program Baru untuk Warga")
         self.assertEqual(result.date_publish, "Jul 28, 2026")
         self.assertEqual(result.month, "July")
+
+    def test_timestamped_syndication_url_overrides_wrong_page_date(self):
+        paragraph = " ".join(
+            ["Isi artikel menjelaskan perlindungan pekerja platform secara lengkap dan akurat."] * 8
+        )
+        html = f"""
+        <html><head>
+          <meta property="article:published_time" content="2026-07-01T08:00:00+07:00">
+          <title>Perlindungan Pekerja Platform</title>
+        </head><body><article><p>{paragraph}</p></article></body></html>
+        """
+
+        result = enrich_article_html(
+            "http://antarapress.com/info/t-2608221600.html",
+            html,
+        )
+
+        self.assertEqual(result.date_publish, "Aug 22, 2026")
+        self.assertEqual(result.month, "August")
+
+    def test_antara_header_date_overrides_recycled_structured_date(self):
+        paragraph = " ".join(
+            ["Isi artikel membahas perlindungan pekerja dan daya saing secara berimbang."] * 8
+        )
+        html = f"""
+        <html><head>
+          <meta itemprop="datePublished" content="Sun, 27 Sep 2026 19:43:40 +0700">
+          <title>Perlindungan Pekerja dan Daya Saing</title>
+        </head><body><main>
+          <time datetime="Thu, 27 Aug 2026 08:53:43 +0700" itemprop="dateModified">
+            Kamis, 27 Agustus 2026 08:53 WIB
+          </time>
+          <article><p>{paragraph}</p></article>
+        </main></body></html>
+        """
+
+        result = enrich_article_html(
+            "https://sulteng.antaranews.com/berita/391011/perlindungan-pekerja",
+            html,
+        )
+
+        self.assertEqual(result.date_publish, "Aug 27, 2026")
+
+    def test_failed_article_keeps_detectable_publish_date(self):
+        html = """
+        <html><head>
+          <meta property="article:published_time" content="2026-08-12T09:00:00+07:00">
+          <title>Artikel Memerlukan Pemeriksaan</title>
+        </head><body><main>Konten tidak dimuat.</main></body></html>
+        """
+
+        result = enrich_article_html("https://contohmedia.com/artikel", html)
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.date_publish, "Aug 12, 2026")
+        self.assertEqual(result.month, "August")
+
+    def test_transport_failure_still_uses_date_encoded_in_url(self):
+        result = _failed_result(
+            "https://ekonomi.bisnis.com/read/20260824/12/1998600/judul-artikel",
+            CHECK_FAILED_TO_PROCESS,
+            "Halaman tidak dapat dihubungi.",
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.date_publish, "Aug 24, 2026")
+        self.assertEqual(result.month, "August")
+
+    def test_json_ld_article_is_matched_to_requested_url(self):
+        wrong_body = " ".join(["Isi rekomendasi yang bukan artikel target pengguna."] * 9)
+        right_body = " ".join(["Isi artikel target membahas kebijakan pekerja digital."] * 9)
+        html = f"""
+        <html><head><script type="application/ld+json">[
+          {{"@type":"NewsArticle","url":"https://contohmedia.com/rekomendasi",
+            "headline":"Artikel Rekomendasi","datePublished":"2026-09-29","articleBody":"{wrong_body}"}},
+          {{"@type":"NewsArticle","url":"https://contohmedia.com/artikel-target",
+            "headline":"Artikel Target","datePublished":"2026-08-27","articleBody":"{right_body}"}}
+        ]</script></head><body><article><p>{right_body}</p></article></body></html>
+        """
+
+        result = enrich_article_html("https://contohmedia.com/artikel-target", html)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.title, "Artikel Target")
+        self.assertEqual(result.date_publish, "Aug 27, 2026")
+
+    def test_obviously_stale_metadata_yields_to_contextual_article_date(self):
+        lead = "Menteri membahas perlindungan pekerja platform di Jakarta, Jumat (14/8/2026). "
+        paragraph = lead + " ".join(
+            ["Kebijakan tersebut dijelaskan secara lengkap untuk menjaga hak para pekerja digital."] * 8
+        )
+        html = f"""
+        <html><head>
+          <meta property="article:published_time" content="2026-02-13T11:00:09+07:00">
+          <title>Perlindungan Pekerja Platform Digital</title>
+        </head><body><article><p>{paragraph}</p></article></body></html>
+        """
+
+        result = enrich_article_html("https://matauang.co.id/detail/587052/artikel", html)
+
+        self.assertEqual(result.date_publish, "Aug 14, 2026")
 
     def test_recycled_page_is_marked_failed_instead_of_returning_wrong_article(self):
         paragraph = " ".join(

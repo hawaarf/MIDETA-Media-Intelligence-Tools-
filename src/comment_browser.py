@@ -32,10 +32,10 @@ class CommentBrowserLoginRequired(CommentBrowserError):
 
 
 class CommentBrowserCollector:
-    RUNTIME_VERSION = 22
-    THREADS_MAX_SCROLL_ROUNDS = 240
-    FACEBOOK_MAX_SCROLL_ROUNDS = 240
-    X_MAX_SCROLL_ROUNDS = 240
+    RUNTIME_VERSION = 23
+    THREADS_MAX_SCROLL_ROUNDS = 1_600
+    FACEBOOK_MAX_SCROLL_ROUNDS = 1_600
+    X_MAX_SCROLL_ROUNDS = 1_600
     X_IDLE_STABLE_ROUNDS = 16
     OTHER_MAX_SCROLL_ROUNDS = 30
     END_STABLE_ROUNDS = 3
@@ -85,6 +85,29 @@ class CommentBrowserCollector:
             return 0
         match = re.search(r"\d[\d.,]*\s*(?:k|m|b|rb|ribu|jt|juta)?", str(value), re.I)
         return BaseConnector._human_count(match.group(0)) if match else 0
+
+    @staticmethod
+    def _clean_comment_text(value) -> str:
+        """Remove collapsed-text controls while retaining the complete comment."""
+        text = str(value or "").strip()
+        return re.sub(
+            r"\s*(?:\.{3}|…)?\s*(?:see more|read more|lihat selengkapnya|baca selengkapnya|tampilkan selengkapnya|selengkapnya)\s*$",
+            "",
+            text,
+            flags=re.I,
+        ).strip()
+
+    @classmethod
+    def _comments_are_variants(cls, first, second) -> bool:
+        """Recognize a collapsed preview and its later expanded full text."""
+        left = " ".join(cls._clean_comment_text(first).split()).casefold().rstrip(". …")
+        right = " ".join(cls._clean_comment_text(second).split()).casefold().rstrip(". …")
+        if not left or not right:
+            return False
+        if left == right:
+            return True
+        shorter, longer = sorted((left, right), key=len)
+        return len(shorter) >= 18 and longer.startswith(shorter)
 
     @staticmethod
     def _clean_facebook_author(value) -> tuple[str, str]:
@@ -653,18 +676,27 @@ class CommentBrowserCollector:
         )
         time.sleep(1.2)
 
-    @staticmethod
-    def _merge_thread_rows(stored: dict[str, dict], rows: list[dict]) -> int:
+    @classmethod
+    def _merge_thread_rows(cls, stored: dict[str, dict], rows: list[dict]) -> int:
         added = 0
         for row in rows:
             code = str(row.get("code") or "").strip()
             if not code:
                 continue
             if code not in stored:
-                stored[code] = row
+                stored[code] = dict(row)
+                if row.get("comment"):
+                    stored[code]["comment"] = cls._clean_comment_text(row.get("comment"))
                 added += 1
                 continue
             updates = {key: value for key, value in row.items() if value not in (None, "")}
+            incoming_comment = cls._clean_comment_text(updates.get("comment"))
+            existing_comment = cls._clean_comment_text(stored[code].get("comment"))
+            if incoming_comment:
+                if existing_comment and len(incoming_comment) < len(existing_comment):
+                    updates.pop("comment", None)
+                else:
+                    updates["comment"] = incoming_comment
             if stored[code].get("comment_type") == "reply" and updates.get("comment_type") == "parent":
                 updates.pop("comment_type")
             stored[code].update(updates)
@@ -991,7 +1023,43 @@ class CommentBrowserCollector:
                     const leafLoaders = matchingLoaders.filter(node => !matchingLoaders.some(other =>
                       other !== node && node.contains(other)
                     ));
+                    const textExpansionLabel = /^(?:see more|read more|lihat selengkapnya|baca selengkapnya|tampilkan selengkapnya|selengkapnya)$/i;
+                    const xArticles = platform === 'X'
+                      ? Array.from(controlRoot.querySelectorAll('article[data-testid="tweet"]'))
+                      : [];
+                    const xTargetArticle = platform === 'X'
+                      ? (xArticles.find(article => targetCode && article.querySelector(`a[href*="/status/${targetCode}"]`)) || xArticles[0])
+                      : null;
+                    const textExpanders = controls.filter(node => {
+                      const text = (node.innerText || node.getAttribute('aria-label') || '')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                      const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
+                      const nodeTop = node.getBoundingClientRect().top + window.scrollY;
+                      const insideTargetConversation = platform !== 'Threads' || (
+                        nodeTop > targetTop && nodeTop < endTop
+                      );
+                      const facebookArticle = node.closest('[role="article"]');
+                      const facebookComment = platform !== 'Facebook' || Boolean(
+                        facebookArticle && (
+                          /^(comment|reply) by\b|^(komentar|balasan) (oleh|dari)\b/i.test(
+                            facebookArticle.getAttribute('aria-label') || ''
+                          ) || facebookArticle.querySelector('a[href*="comment_id="]')
+                        )
+                      );
+                      const xArticle = node.closest('article[data-testid="tweet"]');
+                      const xComment = platform !== 'X' || Boolean(xArticle && xArticle !== xTargetArticle);
+                      return visible && textExpansionLabel.test(text) && insideTargetConversation &&
+                        facebookComment && xComment && !node.closest('a[href]');
+                    });
+                    const leafTextExpanders = textExpanders.filter(node => !textExpanders.some(other =>
+                      other !== node && node.contains(other)
+                    ));
                     let clicked = 0;
+                    for (const node of leafTextExpanders) {
+                      node.click();
+                      clicked += 1;
+                    }
                     for (const node of leafLoaders) {
                       node.click();
                       clicked += 1;
@@ -1405,7 +1473,7 @@ class CommentBrowserCollector:
             const sourceUrl = arguments[0];
             const roleArticles = Array.from(document.querySelectorAll('[role="article"]'));
             const commentLabel = /^(comment|reply) by\b|^(komentar|balasan) (oleh|dari)\b/i;
-            const uiText = /^(like|suka|reply|balas|share|bagikan|follow|ikuti|see more|lihat selengkapnya|edited|diedit)$/i;
+            const uiText = /^(like|suka|reply|balas|share|bagikan|follow|ikuti|see more|read more|lihat selengkapnya|baca selengkapnya|tampilkan selengkapnya|selengkapnya|edited|diedit)$/i;
             const relativeDate = /^(?:just now|baru saja|yesterday|kemarin|(?:\d+\s*|se)(?:sec|secs|second|seconds|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|detik|menit|jam|hari|minggu)(?:\s+(?:ago|lalu|yang lalu))?)$/i;
             const cleanAuthor = value => (value || '')
               .replace(/\s+/g, ' ')
@@ -1559,7 +1627,7 @@ class CommentBrowserCollector:
                 comment_type = row.get("comment_type")
                 comments.append(PublicComment(
                     author=(row.get("author") or "").lstrip("@") or None,
-                    comment=str(row["comment"]).strip(),
+                    comment=self._clean_comment_text(row["comment"]),
                     commented_at=row.get("date") or None,
                     likes=self._count(row.get("likes")),
                     reply_count=self._count(row.get("replies")),
@@ -1588,7 +1656,7 @@ class CommentBrowserCollector:
                 )
                 comments.append(PublicComment(
                     author=author or None,
-                    comment=str(row["comment"]).strip(),
+                    comment=self._clean_comment_text(row["comment"]),
                     commented_at=commented_at,
                     likes=self._count(row.get("likes")),
                     reply_count=self._count(row.get("replies")),
@@ -1612,7 +1680,7 @@ class CommentBrowserCollector:
                 continue
             comments.append(PublicComment(
                 author=(row.get("author") or "").lstrip("@") or None,
-                comment=str(row["comment"]).strip(),
+                comment=self._clean_comment_text(row["comment"]),
                 commented_at=row.get("date") or None,
                 likes=self._count(row.get("likes")),
                 reply_count=self._count(row.get("replies")),
@@ -1621,8 +1689,8 @@ class CommentBrowserCollector:
             ))
         return comments
 
-    @staticmethod
-    def _merge_comments(*groups: list[PublicComment]) -> list[PublicComment]:
+    @classmethod
+    def _merge_comments(cls, *groups: list[PublicComment]) -> list[PublicComment]:
         merged: list[PublicComment] = []
         positions: dict[tuple[str, str], int] = {}
         text_positions: dict[str, list[int]] = {}
@@ -1636,9 +1704,14 @@ class CommentBrowserCollector:
             target.reply_count = max(int(target.reply_count or 0), int(incoming.reply_count or 0))
             if incoming.comment_type == "reply":
                 target.comment_type = "reply"
+            incoming_text = cls._clean_comment_text(incoming.comment)
+            target_text = cls._clean_comment_text(target.comment)
+            if len(incoming_text) > len(target_text):
+                target.comment = incoming_text
 
         for group in groups:
             for comment in group:
+                comment.comment = cls._clean_comment_text(comment.comment)
                 text = " ".join(str(comment.comment or "").split()).casefold()
                 author = str(comment.author or "").strip().lstrip("@").casefold()
                 if not text:
@@ -1648,6 +1721,13 @@ class CommentBrowserCollector:
                     duplicate_position = text_positions[text][0]
                 if duplicate_position is None and author:
                     duplicate_position = positions.get(("", text))
+                if duplicate_position is None:
+                    for candidate_position, candidate in enumerate(merged):
+                        candidate_author = str(candidate.author or "").strip().lstrip("@").casefold()
+                        authors_match = not author or not candidate_author or author == candidate_author
+                        if authors_match and cls._comments_are_variants(candidate.comment, comment.comment):
+                            duplicate_position = candidate_position
+                            break
                 if duplicate_position is not None:
                     enrich(merged[duplicate_position], comment)
                     continue

@@ -103,8 +103,18 @@ class BatchTests(unittest.TestCase):
     def test_comment_ranking_uses_likes_and_replies(self):
         rows = [{"Komentar": "A", "Likes": 12, "Jumlah reply": 0}, {"Komentar": "B", "Likes": 8, "Jumlah reply": 4}, {"Komentar": "C", "Likes": None, "Jumlah reply": 1}]
         ranked = rank_comment_rows(rows)
-        self.assertEqual([row["Komentar"] for row in ranked], ["B", "A", "C"])
+        self.assertEqual([row["Komentar"] for row in ranked], ["A", "B", "C"])
         self.assertEqual([row["Rank"] for row in ranked], [1, 2, 3])
+
+    def test_comment_ranking_uses_replies_when_likes_are_equal(self):
+        rows = [
+            {"Komentar": "Sedikit reply", "Likes": 10, "Jumlah reply": 1},
+            {"Komentar": "Banyak reply", "Likes": 10, "Jumlah reply": 8},
+        ]
+
+        ranked = rank_comment_rows(rows)
+
+        self.assertEqual([row["Komentar"] for row in ranked], ["Banyak reply", "Sedikit reply"])
 
     def test_comment_export_matches_reference_columns_and_date(self):
         rows = rank_comment_rows([
@@ -118,11 +128,13 @@ class BatchTests(unittest.TestCase):
             }
         ])
         exported = compact_comment_export_rows(rows)
-        self.assertEqual(list(exported[0]), ["index", "date", "author", "type", "comment", "like"])
+        self.assertEqual(list(exported[0]), ["index", "date", "author", "type", "comment", "like", "reply", "tone"])
         self.assertEqual(exported[0]["date"], "Aug 20, 2026")
         self.assertEqual(exported[0]["author"], "ayu")
         self.assertEqual(exported[0]["comment"], "Baris pertama baris kedua")
         self.assertEqual(exported[0]["like"], 11)
+        self.assertEqual(exported[0]["reply"], 2)
+        self.assertIn(exported[0]["tone"], {"Positive", "Negative"})
 
     def test_comment_date_keeps_reference_format(self):
         self.assertEqual(format_comment_date("Aug 20, 2026"), "Aug 20, 2026")

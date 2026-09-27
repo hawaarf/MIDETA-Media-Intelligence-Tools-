@@ -15,6 +15,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import unquote, urljoin, urlparse
+from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup, Tag
 from selenium import webdriver
@@ -47,6 +48,7 @@ ARTICLE_COLUMNS = (
 )
 CHECK_ARTICLE_NOT_AVAILABLE = "[CHECK] article not available"
 CHECK_FAILED_TO_PROCESS = "[CHECK] failed to process"
+SWA_CRAWLING_NOTICE = "dilarang craweling"
 CONVENTIONAL_PROFILE_DIR = DATA_DIR / "browser_profiles" / "conventional_media"
 ARTICLE_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -301,14 +303,60 @@ def _json_ld_nodes(soup: BeautifulSoup) -> list[dict[str, Any]]:
     return nodes
 
 
-def _article_node(nodes: list[dict[str, Any]]) -> dict[str, Any]:
+def _article_node(nodes: list[dict[str, Any]], expected_url: str = "") -> dict[str, Any]:
+    """Choose the article node that belongs to the submitted URL.
+
+    News sites often include JSON-LD for recommendations after the primary
+    story. Taking the first ``NewsArticle`` can therefore attach another
+    article's date to the requested row.
+    """
     article_types = {"article", "newsarticle", "reportagenewsarticle", "analysisnewsarticle"}
+    articles: list[dict[str, Any]] = []
     for node in nodes:
         node_type = node.get("@type")
         types = node_type if isinstance(node_type, list) else [node_type]
         if any(str(item or "").casefold() in article_types for item in types):
-            return node
-    return {}
+            articles.append(node)
+    if not articles:
+        return {}
+
+    expected = urlparse(expected_url)
+    expected_host = (expected.hostname or "").casefold().removeprefix("www.")
+    expected_path = unquote(expected.path).rstrip("/")
+
+    def node_urls(node: dict[str, Any]) -> list[str]:
+        values: list[Any] = [node.get("url"), node.get("@id"), node.get("mainEntityOfPage")]
+        urls: list[str] = []
+        for value in values:
+            if isinstance(value, dict):
+                value = value.get("@id") or value.get("url")
+            if isinstance(value, str) and value.strip():
+                urls.append(value.strip())
+        return urls
+
+    def score(node: dict[str, Any]) -> int:
+        value = 0
+        for candidate_url in node_urls(node):
+            parsed = urlparse(candidate_url)
+            candidate_host = (parsed.hostname or "").casefold().removeprefix("www.")
+            candidate_path = unquote(parsed.path).rstrip("/")
+            if expected_path and candidate_path == expected_path:
+                value += 100
+            elif expected_path and (
+                candidate_path.endswith(expected_path) or expected_path.endswith(candidate_path)
+            ):
+                value += 60
+            if expected_host and candidate_host == expected_host:
+                value += 10
+        if _plain_text(node.get("articleBody")):
+            value += 15
+        if _plain_text(node.get("headline") or node.get("name")):
+            value += 5
+        if node.get("datePublished"):
+            value += 2
+        return value
+
+    return max(articles, key=score)
 
 
 def _meta(soup: BeautifulSoup, *selectors: str) -> str:
@@ -339,8 +387,17 @@ def _author_text(value: Any) -> str:
     return ", ".join(names)
 
 
+def _format_publish_date(parsed: datetime) -> tuple[str, str]:
+    if parsed.tzinfo is not None:
+        try:
+            parsed = parsed.astimezone(ZoneInfo("Asia/Jakarta"))
+        except (KeyError, ValueError):
+            pass
+    return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year}", parsed.strftime("%B")
+
+
 def _parse_publish_date(value: Any) -> tuple[str, str]:
-    text = str(value or "").strip()
+    text = html_lib.unescape(str(value or "")).strip().lstrip("<")
     if not text or re.search(r"(?:^null\b|substitution for tag|^[-+]?\d{2}:\d{2}$)", text, re.I):
         return "", ""
     parsed: datetime | None = None
@@ -360,31 +417,159 @@ def _parse_publish_date(value: Any) -> tuple[str, str]:
                 except ValueError:
                     continue
     if parsed is None:
-        return "", ""
-    return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year}", parsed.strftime("%B")
+        month_pattern = "|".join(sorted(MONTH_NAMES, key=len, reverse=True))
+        match = re.search(rf"\b(\d{{1,2}})\s+({month_pattern})\s+(20\d{{2}})\b", text, re.I)
+        if match:
+            parsed = datetime(
+                int(match.group(3)),
+                MONTH_NAMES[match.group(2).casefold()],
+                int(match.group(1)),
+            )
+        if parsed is None:
+            match = re.search(r"\b(0?[1-9]|[12]\d|3[01])[/-](0?[1-9]|1[0-2])[/-](20\d{2})\b", text)
+            if match:
+                try:
+                    parsed = datetime(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+                except ValueError:
+                    parsed = None
+        if parsed is None:
+            match = re.search(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b", text)
+            if match:
+                try:
+                    parsed = datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                except ValueError:
+                    parsed = None
+    return _format_publish_date(parsed) if parsed is not None else ("", "")
 
 
 MONTH_NAMES = {
     "januari": 1, "january": 1, "februari": 2, "february": 2,
     "maret": 3, "march": 3, "april": 4, "mei": 5, "may": 5,
-    "juni": 6, "june": 6, "juli": 7, "july": 7, "agustus": 8,
+    "juni": 6, "june": 6, "juli": 7, "july": 7, "agu": 8, "agt": 8, "agustus": 8,
     "august": 8, "september": 9, "oktober": 10, "october": 10,
-    "november": 11, "desember": 12, "december": 12,
+    "november": 11, "des": 12, "desember": 12, "december": 12,
 }
+
+
+def _url_publish_date(url: str) -> tuple[str, str]:
+    """Read only unambiguous calendar dates encoded in an article URL."""
+    path = unquote(urlparse(url).path)
+    patterns = (
+        # Syndication URLs: /info/t-2608221600.html -> 22 Aug 2026.
+        (r"/info/t-(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{4}(?:\.html)?(?:/|$)", "yymmdd"),
+        # Bisnis-style URLs: /read/20260813/9/...
+        (r"/read/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:/|$)", "yyyymmdd"),
+        (r"/(20\d{2})/(0?[1-9]|1[0-2])/(0?[1-9]|[12]\d|3[01])(?:/|$)", "yyyymmdd"),
+    )
+    for pattern, kind in patterns:
+        match = re.search(pattern, path, re.I)
+        if not match:
+            continue
+        year = 2000 + int(match.group(1)) if kind == "yymmdd" else int(match.group(1))
+        try:
+            return _format_publish_date(datetime(year, int(match.group(2)), int(match.group(3))))
+        except ValueError:
+            continue
+    return "", ""
+
+
+def _visible_publish_date(soup: BeautifulSoup, *, include_modified: bool = False) -> tuple[str, str]:
+    selectors = [
+        'time[itemprop="datePublished"][datetime]',
+        'time.published[datetime]',
+        'time.entry-date[datetime]',
+        '.blog-date',
+        '.date-cont',
+        '.published-date',
+        '.publish-date',
+        '.article-date',
+        '.post-date',
+        '.entry-date',
+        '.news-date',
+        '.detail-date',
+        '[class*="date-publish"]',
+        '[class*="publish-date"]',
+    ]
+    if include_modified:
+        selectors.insert(0, 'time[itemprop="dateModified"][datetime]')
+    for selector in selectors:
+        for element in soup.select(selector):
+            parsed = _parse_publish_date(
+                element.get("datetime") or element.get("content") or element.get_text(" ", strip=True)
+            )
+            if parsed[0]:
+                return parsed
+    return "", ""
+
+
+def _date_distance(first: tuple[str, str], second: tuple[str, str]) -> int | None:
+    if not first[0] or not second[0]:
+        return None
+    try:
+        first_date = datetime.strptime(first[0], "%b %d, %Y")
+        second_date = datetime.strptime(second[0], "%b %d, %Y")
+    except ValueError:
+        return None
+    return abs((first_date - second_date).days)
+
+
+def _extract_publish_date(
+    soup: BeautifulSoup,
+    article: dict[str, Any],
+    url: str,
+    contextual_text: str,
+) -> tuple[str, str]:
+    """Resolve publication date from strongest to weakest article evidence."""
+    encoded = _url_publish_date(url)
+    if encoded[0]:
+        return encoded
+
+    host = (urlparse(url).hostname or "").casefold().removeprefix("www.")
+    # ANTARA currently exposes a recycled datePublished value in JSON-LD on
+    # some regional pages while the article header time remains correct.
+    visible = _visible_publish_date(soup, include_modified=host.endswith("antaranews.com"))
+    if visible[0]:
+        return visible
+
+    structured_values = (
+        article.get("datePublished"),
+        _meta(soup, 'meta[property="article:published_time"]'),
+        _meta(soup, 'meta[name="pubdate"]'),
+        _meta(soup, 'meta[name="publishdate"]'),
+        _meta(soup, 'meta[itemprop="datePublished"]'),
+        _meta(soup, 'meta[property="og:published_time"]'),
+    )
+    structured = next(
+        (parsed for value in structured_values if (parsed := _parse_publish_date(value))[0]),
+        ("", ""),
+    )
+    contextual = _parse_publish_date(re.sub(r"\s+", " ", contextual_text or "")[:1600])
+    distance = _date_distance(structured, contextual)
+    if contextual[0] and (not structured[0] or (distance is not None and distance >= 45)):
+        return contextual
+    if structured[0]:
+        return structured
+
+    for weak_value in (
+        article.get("dateCreated"),
+        _meta(soup, 'meta[name="date"]'),
+    ):
+        parsed = _parse_publish_date(weak_value)
+        if parsed[0]:
+            return parsed
+    return "", ""
 
 
 def _fallback_publish_date(url: str, page_text: str) -> tuple[str, str]:
     """Read a visible article date, then fall back to an explicit URL date."""
+    encoded = _url_publish_date(url)
+    if encoded[0]:
+        return encoded
     sample = re.sub(r"\s+", " ", str(page_text or ""))[:3000]
     month_pattern = "|".join(sorted(MONTH_NAMES, key=len, reverse=True))
     match = re.search(rf"\b(\d{{1,2}})\s+({month_pattern})\s+(20\d{{2}})\b", sample, re.I)
     if match:
         parsed = datetime(int(match.group(3)), MONTH_NAMES[match.group(2).casefold()], int(match.group(1)))
-        return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year}", parsed.strftime("%B")
-    path = urlparse(url).path
-    match = re.search(r"/(20\d{2})/(0?[1-9]|1[0-2])/(0?[1-9]|[12]\d|3[01])(?:/|$)", path)
-    if match:
-        parsed = datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
         return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year}", parsed.strftime("%B")
     return "", ""
 
@@ -401,6 +586,12 @@ IRRELEVANT_TEXT_RE = re.compile(
     r"recommended(?: articles?)?|bagikan artikel|share this article|subscribe|berlangganan|follow us)\b",
     re.I,
 )
+PROMOTIONAL_SENTENCE_RE = re.compile(
+    r"\b(?:portal\s+\S+\s+dapat\s+diakses\s+melalui|pendaftaran\s+program\b|"
+    r"informasi\s+pembelajaran\b.*?\btersedia\s+melalui\b).*?"
+    r"(?:\.(?=\s+[A-ZÀ-ÖØ-Ý“])|\.$|$)",
+    re.I | re.S,
+)
 IRRELEVANT_INLINE_RE = re.compile(
     r"\b(?:baca juga|simak juga|lihat juga|artikel terkait|berita terkait|rekomendasi|"
     r"pilihan editor|baca selengkapnya|lebih lanjut\s+(?:klik\s+)?di sini|"
@@ -408,11 +599,33 @@ IRRELEVANT_INLINE_RE = re.compile(
     r"recommended(?: articles?)?)\b\s*:?,?",
     re.I,
 )
+IRRELEVANT_TAIL_RE = re.compile(
+    r"\b(?:berlangganan\s+selanjutnya|baca\s+artikel\s+selanjutnya|artikel\s+selanjutnya|"
+    r"baca\s+berita\s+lainnya|berita\s+lainnya|artikel\s+lainnya|memuat\s+berita\s+terbaru|"
+    r"isi\s+komentar\s+sepenuhnya\s+adalah\s+tanggung\s+jawab|"
+    r"pewarta\s*:|copyright\s*[©\u00a9]|dilarang\s+keras\s+mengambil\s+konten|"
+    r"dilarang\s+mengambil\s+dan/atau\s+menayangkan\s+ulang|"
+    r"disclaimer\s*:\s*this\s+article\s+was\s+automatically\s+rewritten|"
+    r"follow\s+channel\s+telegram|cek\s+berita\s+dan\s+artikel\s+lainnya|"
+    r"temukan\s+berita\s+terkini|dapatkan\s+update\s+berita|nyaman\s+tanpa\s+iklan|"
+    r"cek\s+berita\s+teknologi|mau\s+berita\s+menarik\s+lainnya|"
+    r"update\s+berita\s+dan\s+artikel|silakan\s+baca\s+konten\s+menarik\s+lainnya|"
+    r"read\s+full\s+article(?:\s+on\b)?|teks\s+foto\s*:|"
+    r"tag\s*:|sumber\s*:\s*berita\s+bisnis\s+hari\s+terbaru)(?=\s|[:|–—.!?-]|$)",
+    re.I,
+)
 
 
 def _strip_irrelevant_tail(value: str) -> str:
     """Remove inline recommendations while retaining surrounding article text."""
     text = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n|•")
+    text = PROMOTIONAL_SENTENCE_RE.sub(" ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    # Publisher footers and next-article modules are terminal: everything
+    # after the first marker belongs to navigation, legal copy, or another
+    # story rather than to the submitted article.
+    if marker := IRRELEVANT_TAIL_RE.search(text):
+        text = text[:marker.start()].rstrip(" ;|:–—-.")
     # Structured article bodies can contain several inline cards in one long
     # text node. Remove every card, rather than leaving the second one behind.
     while marker := IRRELEVANT_INLINE_RE.search(text):
@@ -423,6 +636,13 @@ def _strip_irrelevant_tail(value: str) -> str:
         boundary = re.search(r"[.!?](?:\s+|$)", recommendation)
         suffix = recommendation[boundary.end():].strip() if boundary else ""
         text = " ".join(part for part in (prefix, suffix) if part)
+    # Lowercase parenthetical signatures and production notes at the very end
+    # belong to the byline/credit, not the article body.
+    text = re.sub(
+        r"\s*\(\s*[a-zà-öø-ÿ][a-zà-öø-ÿ .'’-]{2,50}\s*\)\s*$",
+        "",
+        text,
+    ).rstrip()
     return text
 
 
@@ -444,20 +664,39 @@ def _clean_candidate(candidate: Tag) -> str:
     parts: list[str] = []
     seen: set[str] = set()
     for raw in raw_parts:
+        terminal_marker = IRRELEVANT_TAIL_RE.search(re.sub(r"\s+", " ", raw))
         text = _strip_irrelevant_tail(raw)
         if len(text) < 25 or IRRELEVANT_TEXT_RE.search(text):
+            if terminal_marker:
+                break
             continue
         key = text.casefold()
         if key in seen:
+            if terminal_marker:
+                break
             continue
         seen.add(key)
         parts.append(text)
+        if terminal_marker:
+            break
     return "\n\n".join(parts)
 
 
 def _extract_dom_content(soup: BeautifulSoup) -> str:
     selectors = (
         "[itemprop='articleBody']",
+        "#berita_content_sub",
+        "#sub_content",
+        "#berita_panel",
+        ".berita_content_sub",
+        ".sub_content",
+        ".news-detail-content",
+        ".news-detail",
+        ".berita_panel",
+        ".c-detail.read",
+        ".bodyArticleWrapper",
+        ".mainBody",
+        ".owl-carousel .item",
         ".entry-body",
         ".artikel-body",
         ".blog-item-body",
@@ -491,8 +730,8 @@ def _extract_dom_content(soup: BeautifulSoup) -> str:
         "main",
         ".content",
     )
-    candidates: list[str] = []
     for selector in selectors:
+        candidates: list[str] = []
         for element in soup.select(selector):
             # Parse a copy so cleanup does not mutate the source for another selector.
             copied = BeautifulSoup(str(element), "lxml").find()
@@ -500,7 +739,13 @@ def _extract_dom_content(soup: BeautifulSoup) -> str:
                 text = _clean_candidate(copied)
                 if text:
                     candidates.append(text)
-    return max(candidates, key=lambda item: len(item.split()), default="")
+        # Selectors are ordered from article-specific to generic. Returning
+        # the first usable wrapper prevents a large page/footer container from
+        # winning only because it contains more words.
+        usable = [item for item in candidates if len(item.split()) >= 35]
+        if usable:
+            return max(usable, key=lambda item: len(item.split()))
+    return ""
 
 
 def _clean_content(text: str) -> str:
@@ -509,14 +754,21 @@ def _clean_content(text: str) -> str:
     paragraphs: list[str] = []
     seen: set[str] = set()
     for raw in re.split(r"[\r\n]+", str(text or "")):
+        terminal_marker = IRRELEVANT_TAIL_RE.search(re.sub(r"\s+", " ", raw))
         cleaned = _strip_irrelevant_tail(raw).strip(" ;|")
         if not cleaned or IRRELEVANT_TEXT_RE.search(cleaned):
+            if terminal_marker:
+                break
             continue
         key = cleaned.casefold()
         if key in seen:
+            if terminal_marker:
+                break
             continue
         seen.add(key)
         paragraphs.append(cleaned)
+        if terminal_marker:
+            break
     return "\n\n".join(paragraphs)
 
 
@@ -532,6 +784,10 @@ BLOCKED_MARKERS = (
     "berlangganan untuk membaca", "register now to unlock premium content",
     "unlock premium content", "already registered? log in",
 )
+NAVIGATION_ONLY_RE = re.compile(
+    r"\b(?:related|latest\s+news|berita\s+terkait|artikel\s+terkait|foto\s+lainnya)\b",
+    re.I,
+)
 
 
 def _page_state(title: str, body_text: str, content: str) -> str:
@@ -541,6 +797,11 @@ def _page_state(title: str, body_text: str, content: str) -> str:
     if any(marker in sample for marker in BLOCKED_MARKERS):
         return "blocked"
     if len(content.split()) < 35:
+        return "failed"
+    # Some JavaScript-first publishers return only the headline and a short
+    # carousel of related links to non-browser clients. Do not mislabel that
+    # navigation shell as successfully extracted article copy.
+    if len(content.split()) < 120 and NAVIGATION_ONLY_RE.search(content):
         return "failed"
     return "available"
 
@@ -628,44 +889,57 @@ PERSON_TITLES_RE = re.compile(
     r"wakil menteri|gubernur (?:sumatera utara|sumut)|gubernur|gubsu|"
     r"(?:north sumatra )?governor|wakil gubernur|bupati|"
     r"wali kota|walikota|direktur utama|direktur|komisaris utama|komisaris|ceo|chief executive officer|"
+    r"president director|president of|country manager|country head|head of|chief of|founder|co-founder|"
+    r"rektor|wakil rektor|dekan|asisten deputi|deputi|pemilik|pelaku usaha|"
+    r"mitra pengemudi|mitra merchant|mitra instruktur|mitra penerima beasiswa|mitra naik kelas|mitra|"
     r"hakim ketua|hakim anggota|majelis hakim|hakim|kapuspenkum kejagung|kapuspenkum|"
     r"ketua umum|ketua|sekretaris|juru bicara pt dki jakarta|juru bicara|jubir|kepala|"
     r"koordinator aksi|koordinator|direktur utama (?:pt )?(?:goto(?: gojek tokopedia)?|gojek)|"
     r"kabid humas|dirlantas|kapolres|kapolda|polda metro jaya|metro jaya|jaya|"
     r"kombes pol|kombes|kompol|akbp|iptu|aiptu|bripka|prof(?:esor)?|dr|dokter|ir|"
-    r"dpr ri|dprd dki|dpr|dprd|kspsi|kasbi|agn)\.?\s+)+"
+    r"dpr ri|dprd dki|dpr|dprd|kspsi|kasbi|agn|prof(?:esor)?|dr|ir)\.?\s+)+"
 )
-NAME_PATTERN = r"[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:\s+(?:[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’-]+)){1,4}"
-ATTRIBUTION_PATTERNS = (
-    re.compile(
-        rf"(?P<name>{NAME_PATTERN})\s*,?\s*(?i:mengatakan|menyatakan|menjelaskan|menuturkan|"
-        rf"mengungkapkan|menegaskan|menyampaikan|menjawab|berkomentar|ujar|ungkap|tutur|"
-        rf"sebut|tambah|papar|jelas|imbuh|said|says|stated|explained|told)\b",
-    ),
-    re.compile(
-        rf"\b(?i:kata|ujar|menurut|ungkap|tutur|sebut|tambah|papar|jelas|imbuh|"
-        rf"according to)\s+(?P<name>{NAME_PATTERN})",
-    ),
+PERSON_TOKEN = r"(?:[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,}|[A-Z]\.)"
+PERSON_SEQUENCE = rf"{PERSON_TOKEN}(?:\s+{PERSON_TOKEN}){{0,11}}"
+CAPITAL_SEQUENCE_RE = re.compile(PERSON_SEQUENCE)
+SPEECH_AFTER_NAME_RE = re.compile(
+    r"\b(?:mengatakan|menyatakan|menjelaskan|menuturkan|mengungkapkan|menegaskan|"
+    r"menyampaikan|menyebutkan|menjawab|berkomentar|said|says|stated|explained|told)\b",
+    re.I,
 )
-MENTION_ACTION_PATTERNS = (
-    re.compile(
-        rf"(?P<name>{NAME_PATTERN})\s+(?:(?i:has|have|had|is|was)\s+)?"
-        rf"(?i:mendorong|memastikan|menilai|mengapresiasi|menyoroti|"
-        rf"meminta|mendukung|meninjau|memimpin|menghadiri|mengumumkan|meresmikan|menyebut|"
-        rf"menegaskan|backs|backed|supports|supported|urges|urged|asks|asked|ensures|"
-        rf"highlighted|announced)\b"
-    ),
+SPEECH_BEFORE_NAME_RE = re.compile(
+    r"\b(?:kata|ujar|menurut|ungkap|tutur|sebut|tambah|papar|jelas|imbuh|according\s+to)\b",
+    re.I,
 )
-SINGLE_NAME_ATTRIBUTION_PATTERNS = (
-    re.compile(
-        r"\b(?P<name>[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’-]{2,})\s+(?i:mengatakan|menyatakan|"
-        r"menjelaskan|menuturkan|mengungkapkan|menegaskan|menyampaikan|ujar|ungkap|tutur|"
-        r"sebut|tambah|papar|jelas|imbuh|said|says|stated|explained|told)\b"
-    ),
-    re.compile(
-        r"\b(?i:kata|ujar|menurut|ungkap|tutur|sebut|tambah|papar|jelas|imbuh)\s+"
-        r"(?P<name>[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’-]{2,})\b"
-    ),
+MENTION_ACTION_RE = re.compile(
+    r"\b(?:mendorong|memastikan|menilai|mengapresiasi|menyoroti|meminta|mendukung|"
+    r"meninjau|memimpin|menghadiri|mengumumkan|meresmikan|menyebut|backs|backed|"
+    r"supports|supported|urges|urged|asks|asked|ensures|highlighted|announced)\b",
+    re.I,
+)
+PERSON_ROLE_PATTERN = (
+    r"(?:ceo|chief\s+(?:executive\s+officer|of|marketing|public|partnership)|"
+    r"president(?:\s+director|\s+of)?|country\s+(?:manager|head|marketing)|"
+    r"head\s+of|founder|co-founder|menteri|wakil\s+menteri|deputi|asisten\s+deputi|"
+    r"rektor|wakil\s+rektor|dekan|direktur(?:\s+utama)?|komisaris(?:\s+utama)?|"
+    r"gubernur|wakil\s+gubernur|bupati|wali\s*kota|ketua(?:\s+umum)?|sekretaris|"
+    r"juru\s+bicara|koordinator|pemilik|pelaku\s+usaha|"
+    r"mitra(?:\s+(?:pengemudi|merchant|instruktur|penerima\s+beasiswa|naik\s+kelas))?)"
+)
+PERSON_ROLE_RE = re.compile(rf"\b{PERSON_ROLE_PATTERN}\b", re.I)
+FORMAL_ROLE_RE = re.compile(
+    r"\b(?:ceo|chief\s+(?:executive\s+officer|of|marketing|public|partnership)|"
+    r"president(?:\s+director|\s+of)?|country\s+(?:manager|head|marketing)|head\s+of|"
+    r"founder|co-founder|menteri|wakil\s+menteri|deputi|asisten\s+deputi|rektor|"
+    r"wakil\s+rektor|dekan|direktur(?:\s+utama)?|komisaris(?:\s+utama)?|gubernur|"
+    r"wakil\s+gubernur|bupati|wali\s*kota|ketua(?:\s+umum)?|sekretaris|juru\s+bicara|"
+    r"koordinator|pemilik)\b",
+    re.I,
+)
+ACADEMIC_SUFFIX_PATTERN = r"(?:S\.?E\.?|S\.?H\.?|M\.?H\.?|M\.?B\.?A\.?|M\.?Si\.?|L{2}\.?M\.?|Ph\.?D\.?)"
+PERSON_BEFORE_ROLE_RE = re.compile(
+    rf"(?P<name>{PERSON_SEQUENCE})(?:\s*,\s*(?i:{ACADEMIC_SUFFIX_PATTERN}))*\s*,\s*"
+    rf"(?P<role>(?i:{PERSON_ROLE_PATTERN}))\b"
 )
 PERSON_NAME_ALIASES = {
     "bobby": "Bobby Nasution",
@@ -679,11 +953,18 @@ PERSON_NAME_ALIASES = {
     "sumatera utara muhammad bobby afif nasution": "Bobby Nasution",
     "utara muhammad bobby afif nasution": "Bobby Nasution",
     "gubsu bobby nasution": "Bobby Nasution",
+    "ali mukti-yanto": "Ali Muktiyanto",
 }
 
 
 def _clean_person_name(value: str) -> str:
     name = re.sub(r"\s+", " ", str(value or "")).strip(" ,.;:-")
+    name = re.sub(
+        r"(?i)^(?:(?:prof|dr|ir)\.?\s+)+|(?:,?\s+(?:S\.?E\.?|S\.?H\.?|M\.?H\.?|"
+        r"M\.?B\.?A\.?|M\.?Si\.?|L{2}\.?M\.?|Ph\.?D\.?))+$",
+        "",
+        name,
+    ).strip(" ,.;:-")
     name = PERSON_TITLES_RE.sub("", name).strip(" ,.;:-")
     name = re.sub(
         r"(?i)^(?:pt\s+)?(?:goto(?:\s+gojek\s+tokopedia)?|gojek)\s+",
@@ -705,16 +986,25 @@ def _clean_person_name(value: str) -> str:
     non_person_words = {
         "aksi", "alasan", "anak", "asosiasi", "badan", "berita", "buruh", "company", "dana", "dampak",
         "bpjs", "country", "demokrat", "direktur", "dirlantas", "dpr", "dprd", "federasi",
-        "foundation", "gerindra", "gojek", "goto", "governor", "gubernur", "gubsu",
+        "foundation", "gerindra", "gojek", "goto", "governor", "gubernur", "gubsu", "grab", "grabacademy",
         "anggota", "eks", "golkar", "hakim", "hanura", "hukum", "indonesia", "instansi", "jalan", "jaya",
-        "kejagung", "kebijakan", "kementerian", "koalisi", "kombes", "komisi", "konfederasi",
+        "kejagung", "kebijakan", "kementerian", "koalisi", "kombes", "komisi", "konfederasi", "kecil",
         "kapuspenkum", "kepesertaan", "kesehatan", "ketua", "krakatau", "lembaga",
-        "mahkamah", "majelis", "manajemen", "manager", "massa", "maxim", "media", "metro",
+        "mahkamah", "majelis", "manajemen", "manager", "massa", "maxim", "media", "menengah", "menteri", "merchant", "metro", "mikro", "mitra",
         "ministry", "nasdem", "negara", "organisasi", "pejabat", "perkuat", "putusan",
         "partai", "pekerja", "pemerintah", "perindo", "perjuangan", "perseroan", "perusahaan", "polisi",
-        "polda", "penopang", "redaksi", "republik", "rasuna", "ruu", "saham", "serikat", "sumber", "tim", "tuntutan",
+        "polda", "penopang", "redaksi", "rektor", "republik", "rasuna", "ruu", "saham", "serikat", "sumber", "tim", "tuntutan",
         "kesaksian",
-        "union", "utama", "yayasan",
+        "union", "universitas", "usaha", "utama", "yayasan", "terbuka", "senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu",
+        "buka", "lebih", "banyak", "pilihan", "kelas", "chief", "executive", "officer", "head", "president",
+        "padepokan", "pencak", "silat", "tmii", "ekosistem", "berkelanjutan", "menyambut", "hut", "peluang", "tanpa", "batas",
+        "pengemudi", "driver", "instructor", "partners", "partner", "scholarships", "grabcar", "traktir", "resource", "center",
+        "bonus", "hari", "raya", "kerja", "sama", "pengembangan", "ketenagakerjaan", "penerima", "beasiswa",
+        "pembinaan", "penyelenggaraan", "pelatihan", "vokasi", "transportasi", "peraturan", "taman", "mini", "benih", "baik",
+        "tahun", "penjara", "zona", "bisnis", "melalui", "selamanya", "bersatu", "sambut", "kota", "makassar", "medium", "enterprises",
+        "jawa", "tengah", "barat", "timur", "utara", "selatan", "bali", "solo", "surabaya", "jakarta", "bandung",
+        "foto", "daily", "mie", "aceh", "nyata", "kompas", "rp", "citra", "edukasi", "perawatan", "luka",
+        "bidang", "riset", "peningkatan", "produktivitas", "serta", "senada", "justru", "menurutnya", "pertama", "kedua",
     }
     name_words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ]+", name.casefold())
     if (
@@ -724,6 +1014,52 @@ def _clean_person_name(value: str) -> str:
     ):
         return ""
     return name
+
+
+def _best_person_name(fragment: str, *, from_end: bool) -> str:
+    """Return the most plausible full name next to a role or attribution."""
+    normalized = re.sub(
+        r"(?i)\b(?:prof|dr|ir|S\.?E|S\.?H|M\.?H|M\.?B\.?A|M\.?Si|L{2}\.?M|Ph\.?D)\.?\b",
+        " ",
+        fragment,
+    )
+    chunks = list(CAPITAL_SEQUENCE_RE.finditer(normalized))
+    if from_end:
+        chunks.reverse()
+    for chunk in chunks:
+        tokens = re.findall(PERSON_TOKEN, chunk.group(0))
+        max_size = min(5, len(tokens))
+        for size in range(max_size, 1, -1):
+            selected = tokens[-size:] if from_end else tokens[:size]
+            name = _clean_person_name(" ".join(selected))
+            if len(name.split()) >= 2:
+                return name
+    for chunk in chunks:
+        tokens = re.findall(PERSON_TOKEN, chunk.group(0))
+        if not tokens:
+            continue
+        name = _clean_person_name(tokens[-1] if from_end else tokens[0])
+        if name:
+            return name
+    return ""
+
+
+def _clause_before(text: str, position: int, limit: int = 220) -> str:
+    start = max(0, position - limit)
+    fragment = text[start:position]
+    fragment = re.sub(
+        r"(?i)\b(?:prof|dr|ir|S\.?E|S\.?H|M\.?H|M\.?B\.?A|M\.?Si|L{2}\.?M|Ph\.?D)\.?",
+        lambda match: match.group(0).replace(".", ""),
+        fragment,
+    )
+    boundary = max(fragment.rfind(mark) for mark in (".", "!", "?", "\n", ";"))
+    return fragment[boundary + 1:]
+
+
+def _clause_after(text: str, position: int, limit: int = 180) -> str:
+    fragment = text[position:position + limit]
+    boundaries = [index for mark in (".", "!", "?", "\n", ";") if (index := fragment.find(mark)) >= 0]
+    return fragment[:min(boundaries)] if boundaries else fragment
 
 
 def _same_person_name(first: str, second: str) -> bool:
@@ -744,59 +1080,77 @@ def _same_person_name(first: str, second: str) -> bool:
 
 
 def _mention_details(content: str, article_node: dict[str, Any], title: str = "") -> list[tuple[str, str]]:
-    candidates: list[str] = []
+    candidates: list[tuple[int, str, str, bool]] = []
     for key in ("mentions", "about"):
         values = article_node.get(key, [])
         values = values if isinstance(values, list) else [values]
         for item in values:
             if isinstance(item, dict) and str(item.get("@type") or "").casefold() == "person":
-                candidates.append(_plain_text(item))
-    direct_candidates = [
-        _clean_person_name(match.group("name"))
-        for pattern in ATTRIBUTION_PATTERNS
-        for match in pattern.finditer(content)
-    ]
-    single_direct_candidates = [
-        _clean_person_name(match.group("name"))
-        for pattern in SINGLE_NAME_ATTRIBUTION_PATTERNS
-        for match in pattern.finditer(content)
-    ]
-    action_candidates = [
-        _clean_person_name(match.group("name"))
-        for pattern in MENTION_ACTION_PATTERNS
-        for match in pattern.finditer(f"{title}. {content}")
-    ]
-    candidates.extend(action_candidates)
-    candidates.extend(direct_candidates)
-    candidates.extend(single_direct_candidates)
-    direct_names = [name for name in direct_candidates if name]
-    direct_aliases = [name for name in single_direct_candidates if name]
+                candidates.append((-1, _plain_text(item), "indirect", True))
+
+    # Names followed by a role are highly reliable and also capture people in
+    # photo captions. They are indirect unless an attribution below proves
+    # that the same person is quoted.
+    for match in PERSON_BEFORE_ROLE_RE.finditer(content):
+        role = match.group("role").casefold()
+        trusted_single = not role.startswith("mitra")
+        candidates.append(
+            (match.start(), _best_person_name(match.group("name"), from_end=True), "indirect", trusted_single)
+        )
+
+    # Some captions and leads put the role first without an attribution verb,
+    # e.g. "Chief Executive Officer Grab Indonesia Neneng Goenadi dalam ...".
+    for match in FORMAL_ROLE_RE.finditer(content):
+        fragment = content[match.start():match.start() + 180]
+        fragment = re.split(
+            r"(?i)\b(?:mengatakan|menyatakan|menjelaskan|menuturkan|mengungkapkan|"
+            r"menegaskan|menyampaikan|menyebutkan|menjawab|berkomentar|dalam|bersama|"
+            r"turut|saat|pada|yang|said|says|stated|explained|told)\b|[;.!?\n]",
+            fragment,
+            maxsplit=1,
+        )[0]
+        candidates.append((match.start(), _best_person_name(fragment, from_end=True), "indirect", False))
+
+    for match in SPEECH_AFTER_NAME_RE.finditer(content):
+        candidates.append((match.start(), _best_person_name(_clause_before(content, match.start()), from_end=True), "direct", False))
+    for match in SPEECH_BEFORE_NAME_RE.finditer(content):
+        candidates.append((match.start(), _best_person_name(_clause_after(content, match.end()), from_end=False), "direct", False))
+    for match in MENTION_ACTION_RE.finditer(f"{title}. {content}"):
+        candidates.append((match.start(), _best_person_name(_clause_before(f"{title}. {content}", match.start()), from_end=True), "indirect", False))
+
+    prepared: list[tuple[int, str, str, bool]] = []
+    for position, raw_name, mention_type, trusted_single in candidates:
+        name = _clean_person_name(raw_name)
+        if name and len(name.split()) <= 5:
+            prepared.append((position, name, mention_type, trusted_single))
+
+    full_names = [name for _, name, _, _ in prepared if len(name.split()) >= 2]
+
+    def canonical_name(name: str, trusted_single: bool) -> str:
+        if len(name.split()) >= 2:
+            matches = [full for full in full_names if _same_person_name(name, full)]
+            return max(matches, key=lambda item: len(item.split()), default=name)
+        matches = [full for full in full_names if name.casefold() in full.casefold().split()]
+        if matches:
+            return max(matches, key=lambda item: len(item.split()))
+        return name if trusted_single else ""
 
     cleaned: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    blocked_words = {"Pemerintah Indonesia", "Republik Indonesia", "Perseroan Terbatas"}
-    for candidate in candidates:
-        name = _clean_person_name(candidate)
-        if not name or name in blocked_words or len(name.split()) > 5:
+    for _, raw_name, mention_type, trusted_single in sorted(prepared, key=lambda item: item[0]):
+        name = canonical_name(raw_name, trusted_single)
+        if not name:
             continue
-        key = name.casefold()
-        mention_type = "direct" if (
-            any(_same_person_name(name, direct) for direct in direct_names)
-            or any(alias.casefold() in name.casefold().split() for alias in direct_aliases)
-        ) else "indirect"
         matched_index = next(
             (index for index, (saved_name, _) in enumerate(cleaned) if _same_person_name(name, saved_name)),
             None,
         )
-        if matched_index is not None:
-            saved_name, saved_type = cleaned[matched_index]
-            preferred_name = name if len(name.split()) > len(saved_name.split()) else saved_name
-            preferred_type = "direct" if "direct" in (mention_type, saved_type) else "indirect"
-            cleaned[matched_index] = (preferred_name, preferred_type)
-            continue
-        if key not in seen:
-            seen.add(key)
+        if matched_index is None:
             cleaned.append((name, mention_type))
+            continue
+        saved_name, saved_type = cleaned[matched_index]
+        preferred_name = name if len(name.split()) > len(saved_name.split()) else saved_name
+        preferred_type = "direct" if "direct" in (mention_type, saved_type) else "indirect"
+        cleaned[matched_index] = (preferred_name, preferred_type)
     return cleaned
 
 
@@ -811,10 +1165,23 @@ def type_mentions(content: str, article_node: dict[str, Any], title: str = "") -
     )
 
 
-def _failed_result(url: str, marker: str, reason: str = "") -> ArticleResult:
-    media_name, media_scope, media_tier = media_identity(url)
+def _failed_result(
+    url: str,
+    marker: str,
+    reason: str = "",
+    *,
+    date_publish: str = "",
+    month: str = "",
+    identity_url: str = "",
+) -> ArticleResult:
+    effective_url = identity_url or url
+    media_name, media_scope, media_tier = media_identity(effective_url)
+    if not date_publish:
+        date_publish, month = _url_publish_date(effective_url)
     return ArticleResult(
         source_url=url,
+        date_publish=date_publish,
+        month=month,
         media_name=media_name,
         media_scope=media_scope,
         media_tier=media_tier,
@@ -829,9 +1196,11 @@ def enrich_article_html(source_url: str, html: str, resolved_url: str | None = N
     """Extract one article from loaded HTML while retaining the submitted URL."""
     effective_url = resolved_url or source_url
     media_name, media_scope, media_tier = media_identity(effective_url)
+    host = (urlparse(effective_url).hostname or "").casefold().removeprefix("www.")
+    is_swa = host == "swa.co.id" or host.endswith(".swa.co.id")
     soup = BeautifulSoup(html or "", "lxml")
     nodes = _json_ld_nodes(soup)
-    article = _article_node(nodes)
+    article = _article_node(nodes, effective_url)
     language = str(
         article.get("inLanguage")
         or (soup.html.get("lang") if soup.html else "")
@@ -843,49 +1212,73 @@ def enrich_article_html(source_url: str, html: str, resolved_url: str | None = N
         soup, 'meta[property="og:title"]', 'meta[name="twitter:title"]'
     )
     if not title:
-        title = _meta(soup, "article h1", ".entry-title", ".post-title", "h1")
+        title = _meta(
+            soup,
+            "#sub_content h1",
+            ".news-detail-content h1",
+            ".entry-content h1",
+            "article h1",
+            ".entry-title",
+            ".post-title",
+            "h1",
+        )
     if not title and soup.title:
         title = soup.title.get_text(" ", strip=True)
     title = _clean_title(title, media_name)
 
     structured_content = _clean_content(_plain_text(article.get("articleBody")))
     dom_content = _extract_dom_content(soup)
-    content = max(
-        (structured_content, dom_content),
-        key=lambda item: len(item.split()),
-    )
+    if is_swa:
+        # SWA explicitly prohibits automated crawling in the returned page.
+        # Keep the row and its public metadata, but never export that notice as
+        # if it were article copy or attempt to work around the restriction.
+        content = SWA_CRAWLING_NOTICE
+    else:
+        content = structured_content if len(structured_content.split()) >= 35 else dom_content
     body_text = soup.get_text(" ", strip=True)
-    state = _page_state(title, body_text, content)
-    if state == "unavailable":
-        return _failed_result(source_url, CHECK_ARTICLE_NOT_AVAILABLE, "Halaman artikel tidak tersedia atau telah dihapus.")
-    if state != "available":
-        return _failed_result(source_url, CHECK_FAILED_TO_PROCESS, "Isi artikel tidak dapat dipisahkan dari halaman.")
-    if not _url_matches_article(effective_url, title, content):
-        return _failed_result(
-            source_url,
-            CHECK_FAILED_TO_PROCESS,
-            "Konten halaman tidak sesuai dengan URL artikel. Halaman kemungkinan telah diganti penerbit.",
-        )
-
-    published = (
-        article.get("datePublished")
-        or article.get("dateCreated")
-        or _meta(
-            soup,
-            'meta[property="article:published_time"]',
-            'meta[name="pubdate"]',
-            'meta[name="publishdate"]',
-            'meta[name="date"]',
-            'meta[itemprop="datePublished"]',
-            'meta[property="og:published_time"]',
-            '.blog-date',
-            '.date-cont',
-            'time.entry-date[datetime]',
-            'time.published[datetime]',
-            'time[datetime]',
-        )
+    date_publish, month = _extract_publish_date(
+        soup,
+        article,
+        effective_url,
+        "",
     )
-    date_publish, month = _parse_publish_date(published)
+    if not is_swa:
+        state = _page_state(title, body_text, content)
+        if state == "unavailable":
+            return _failed_result(
+                source_url,
+                CHECK_ARTICLE_NOT_AVAILABLE,
+                "Halaman artikel tidak tersedia atau telah dihapus.",
+                date_publish=date_publish,
+                month=month,
+                identity_url=effective_url,
+            )
+        if state != "available":
+            return _failed_result(
+                source_url,
+                CHECK_FAILED_TO_PROCESS,
+                "Isi artikel tidak dapat dipisahkan dari halaman.",
+                date_publish=date_publish,
+                month=month,
+                identity_url=effective_url,
+            )
+        if not _url_matches_article(effective_url, title, content):
+            return _failed_result(
+                source_url,
+                CHECK_FAILED_TO_PROCESS,
+                "Konten halaman tidak sesuai dengan URL artikel. Halaman kemungkinan telah diganti penerbit.",
+                date_publish=date_publish,
+                month=month,
+                identity_url=effective_url,
+            )
+        contextual_date, contextual_month = _extract_publish_date(
+            soup,
+            article,
+            effective_url,
+            f"{title} {content}",
+        )
+        if contextual_date:
+            date_publish, month = contextual_date, contextual_month
     if not date_publish:
         date_publish, month = _fallback_publish_date(effective_url, f"{title} {content}")
     journalist = _author_text(article.get("author")) or _meta(
@@ -902,9 +1295,9 @@ def enrich_article_html(source_url: str, html: str, resolved_url: str | None = N
         title=title,
         content=content,
         journalist=_author_text(journalist),
-        tone=classify_tone(title, content),
-        quote_mention=quote_mentions(content, article, title),
-        type_mention=type_mentions(content, article, title),
+        tone=classify_tone(title, content) if not is_swa else "",
+        quote_mention=quote_mentions(content, article, title) if not is_swa else "",
+        type_mention=type_mentions(content, article, title) if not is_swa else "",
     )
 
 
@@ -922,20 +1315,22 @@ def _enrich_public_article_unlocked(url: str) -> ArticleResult:
         result = enrich_article_html(url, html, resolved_url)
         if result.status == "failed" and result.reason.startswith("Isi artikel"):
             # Some publishers intermittently return a shell page while their
-            # article cache is warming. One bounded retry is enough; rows are
-            # still preserved as failed when the second response is unchanged.
-            time.sleep(0.4)
-            try:
-                fresh_html, fresh_resolved_url = fetch_public_html(
-                    url,
-                    user_agent=ARTICLE_USER_AGENT,
-                )
-                fresh_result = enrich_article_html(url, fresh_html, fresh_resolved_url)
-                if fresh_result.status != "failed":
-                    return fresh_result
-                html, resolved_url, result = fresh_html, fresh_resolved_url, fresh_result
-            except CollectionError:
-                pass
+            # article cache is warming or one backend serves an empty shell.
+            # Use a small bounded backoff; failed rows remain in place when all
+            # attempts return the same unusable response.
+            for retry_delay in (0.4, 0.8):
+                time.sleep(retry_delay)
+                try:
+                    fresh_html, fresh_resolved_url = fetch_public_html(
+                        url,
+                        user_agent=ARTICLE_USER_AGENT,
+                    )
+                    fresh_result = enrich_article_html(url, fresh_html, fresh_resolved_url)
+                    if fresh_result.status != "failed":
+                        return fresh_result
+                    html, resolved_url, result = fresh_html, fresh_resolved_url, fresh_result
+                except CollectionError:
+                    continue
         parsed = urlparse(resolved_url)
         if (
             result.status == "failed"

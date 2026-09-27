@@ -55,15 +55,15 @@ PLACEHOLDERS = {
 
 
 @st.cache_resource(show_spinner=False)
-def comment_browser_v5(platform: str) -> CommentBrowserCollector:
+def comment_browser_v6(platform: str) -> CommentBrowserCollector:
     return CommentBrowserCollector(platform)
 
 
 def current_comment_browser(platform: str) -> CommentBrowserCollector:
     """Upgrade a cached browser object after a Streamlit hot reload."""
-    browser = comment_browser_v5(platform)
+    browser = comment_browser_v6(platform)
     if (
-        getattr(browser, "RUNTIME_VERSION", 0) >= 22
+        getattr(browser, "RUNTIME_VERSION", 0) >= 23
         and "max_comments" in inspect.signature(browser.collect).parameters
         and "expected_comments" in inspect.signature(browser.collect).parameters
     ):
@@ -432,13 +432,13 @@ def render_comment_result(platform: str, slot: str) -> None:
         export_rows = compact_comment_export_rows(rows)
         st.dataframe(pd.DataFrame(export_rows), width="stretch", hide_index=True)
         with st.expander("Lihat sumber dan ranking"):
-            detail_columns = ["Rank", "Platform", "URL", "Jumlah reply", "Skor engagement", "Waktu pengambilan"]
+            detail_columns = ["Rank", "Platform", "URL", "Likes", "Jumlah reply", "Tone", "Skor engagement", "Waktu pengambilan"]
             st.dataframe(
                 pd.DataFrame(rows).reindex(columns=detail_columns).fillna("Tidak tersedia"),
                 width="stretch",
                 hide_index=True,
             )
-        st.caption("Ranking dihitung dari jumlah like ditambah dua kali jumlah reply.")
+        st.caption("Ranking mengutamakan jumlah like; jumlah reply menjadi pembanding berikutnya.")
         csv_col, xlsx_col = st.columns(2)
         filename = platform.lower().replace(" ", "_")
         csv_col.download_button(

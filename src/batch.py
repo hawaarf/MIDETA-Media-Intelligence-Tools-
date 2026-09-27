@@ -10,9 +10,10 @@ from typing import Callable
 
 from src.dates import parse_social_datetime
 from src.models import DataField, FieldStatus, SocialResult
+from src.sentiment import classify_comment_tone
 
 SOCIAL_BATCH_VERSION = 48
-COMMENT_BATCH_VERSION = 15
+COMMENT_BATCH_VERSION = 16
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 FAILED_URL_MESSAGE = "URL tidak dapat diproses"
@@ -391,17 +392,22 @@ def compact_social_all_export_row(result: SocialResult) -> dict:
     return row
 
 def rank_comment_rows(rows: list[dict]) -> list[dict]:
-    """Rank globally by likes and replies, favoring active conversations."""
+    """Rank globally by likes first, with replies as the tie-breaker."""
     def value(row: dict, key: str) -> int:
         raw = row.get(key)
         try:
             return int(raw) if raw is not None else 0
         except (TypeError, ValueError):
             return 0
-    ranked = sorted(rows, key=lambda row: (value(row, "Likes") + 2 * value(row, "Jumlah reply"), value(row, "Jumlah reply"), value(row, "Likes")), reverse=True)
+    ranked = sorted(
+        rows,
+        key=lambda row: (value(row, "Likes"), value(row, "Jumlah reply")),
+        reverse=True,
+    )
     for index, row in enumerate(ranked, 1):
         row["Rank"] = index
-        row["Skor engagement"] = value(row, "Likes") + 2 * value(row, "Jumlah reply")
+        row["Skor engagement"] = value(row, "Likes") + value(row, "Jumlah reply")
+        row["Tone"] = classify_comment_tone(row.get("Komentar"))
     return ranked
 
 
@@ -415,6 +421,10 @@ def compact_comment_export_rows(rows: list[dict]) -> list[dict]:
             likes = int(row.get("Likes") or 0)
         except (TypeError, ValueError):
             likes = 0
+        try:
+            replies = int(row.get("Jumlah reply") or 0)
+        except (TypeError, ValueError):
+            replies = 0
         export_rows.append(
             {
                 "index": int(row.get("Rank") or position),
@@ -423,6 +433,8 @@ def compact_comment_export_rows(rows: list[dict]) -> list[dict]:
                 "type": row.get("Tipe") or "parent",
                 "comment": comment,
                 "like": likes,
+                "reply": replies,
+                "tone": row.get("Tone") or classify_comment_tone(comment),
             }
         )
     return export_rows

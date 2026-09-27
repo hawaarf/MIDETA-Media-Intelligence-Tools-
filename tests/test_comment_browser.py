@@ -131,7 +131,7 @@ class CommentBrowserTests(unittest.TestCase):
         activate.assert_called_once_with(driver, permalink, "Target123")
         loader.assert_called_once_with(
             "Target123",
-            max_comments=2_000,
+            max_comments=10_000,
             progress_callback=None,
         )
         dom_comments.assert_called_once_with(permalink, [{"code": "Target123"}])
@@ -202,6 +202,8 @@ class CommentBrowserTests(unittest.TestCase):
         self.assertEqual(script_call.args[2], "Target123")
         self.assertIn("insideTargetConversation", script_call.args[0])
         self.assertIn("leafLoaders", script_call.args[0])
+        self.assertIn("leafTextExpanders", script_call.args[0])
+        self.assertIn("baca selengkapnya", script_call.args[0])
         self.assertNotIn("targetAnchor ||", script_call.args[0])
         self.assertEqual(
             [row["comment_type"] for row in result if row.get("comment")],
@@ -436,6 +438,44 @@ class CommentBrowserTests(unittest.TestCase):
         self.assertEqual(stored["1002"]["comment_type"], "reply")
         self.assertEqual(stored["1002"]["likes"], "2 reactions")
 
+    def test_expanded_comment_replaces_its_short_preview(self):
+        stored = {
+            "1002": {
+                "code": "1002",
+                "comment": "Komentar panjang yang masih terpotong... Baca selengkapnya",
+            }
+        }
+
+        CommentBrowserCollector._merge_thread_rows(
+            stored,
+            [{"code": "1002", "comment": "Komentar panjang yang masih terpotong dan sekarang terbaca seluruhnya."}],
+        )
+
+        self.assertEqual(
+            stored["1002"]["comment"],
+            "Komentar panjang yang masih terpotong dan sekarang terbaca seluruhnya.",
+        )
+
+    def test_public_preview_and_expanded_dom_comment_are_merged(self):
+        preview = PublicComment(
+            author="Ayu",
+            comment="Komentar ini cukup panjang... See more",
+            likes=1,
+            source_url="https://example.com/post",
+        )
+        expanded = PublicComment(
+            author="Ayu",
+            comment="Komentar ini cukup panjang dan akhirnya terbaca sampai selesai.",
+            likes=5,
+            source_url="https://example.com/post",
+        )
+
+        merged = CommentBrowserCollector._merge_comments([preview], [expanded])
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].comment, expanded.comment)
+        self.assertEqual(merged[0].likes, 5)
+
     def test_facebook_collection_merges_public_payload_and_loaded_dom_comments(self):
         collector = CommentBrowserCollector("Facebook")
         url = "https://www.facebook.com/100057414910274/posts/1558872422703240"
@@ -462,7 +502,7 @@ class CommentBrowserTests(unittest.TestCase):
         loader.assert_called_once_with(
             "",
             url,
-            max_comments=2_000,
+            max_comments=10_000,
             progress_callback=None,
         )
         dom_comments.assert_called_once_with(url, [{"code": "1002"}])
@@ -499,7 +539,7 @@ class CommentBrowserTests(unittest.TestCase):
         loader.assert_called_once_with(
             "",
             permalink,
-            max_comments=2_000,
+            max_comments=10_000,
             progress_callback=None,
         )
         self.assertEqual(result.url, permalink)
@@ -577,7 +617,7 @@ class CommentBrowserTests(unittest.TestCase):
         # rounds confirm that the visible conversation is exhausted.
         self.assertEqual(driver.execute_script.call_count, 13)
 
-    def test_browser_collection_stops_at_two_thousand_comments_and_reports_progress(self):
+    def test_browser_collection_stops_at_ten_thousand_comments_and_reports_progress(self):
         collector = CommentBrowserCollector("Threads")
         driver = MagicMock()
         driver.window_handles = ["window"]
@@ -585,19 +625,19 @@ class CommentBrowserTests(unittest.TestCase):
         snapshot = [{"code": "Target123", "is_target": True}]
         snapshot.extend(
             {"code": f"Comment{index}", "comment": f"Komentar {index}"}
-            for index in range(2_050)
+            for index in range(10_050)
         )
         progress = []
 
         with patch.object(collector, "_threads_dom_rows", return_value=snapshot):
             rows = collector._load_conversation(
                 "Target123",
-                max_comments=2_000,
+                max_comments=10_000,
                 progress_callback=lambda count, limit: progress.append((count, limit)),
             )
 
-        self.assertEqual(sum(bool(row.get("comment")) for row in rows), 2_000)
-        self.assertEqual(progress[-1], (2_000, 2_000))
+        self.assertEqual(sum(bool(row.get("comment")) for row in rows), 10_000)
+        self.assertEqual(progress[-1], (10_000, 10_000))
         driver.execute_script.assert_not_called()
 
     def test_x_dom_rows_are_converted_without_the_target_status(self):
@@ -852,7 +892,7 @@ class CommentBrowserTests(unittest.TestCase):
         prepare.assert_called_once_with()
         loader.assert_called_once_with(
             "2100857368166711315",
-            max_comments=2_000,
+            max_comments=10_000,
             expected_comments=46,
             progress_callback=None,
         )
@@ -985,7 +1025,7 @@ class CommentBrowserTests(unittest.TestCase):
 
         loader.assert_called_once_with(
             "Target123",
-            max_comments=2_000,
+            max_comments=10_000,
             progress_callback=None,
         )
         dom_comments.assert_called_once_with(driver.current_url, collected_rows)
