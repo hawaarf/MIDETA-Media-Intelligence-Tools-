@@ -12,11 +12,25 @@ from src.dates import parse_social_datetime
 from src.models import DataField, FieldStatus, SocialResult
 from src.sentiment import classify_comment_tone
 
-SOCIAL_BATCH_VERSION = 48
+SOCIAL_BATCH_VERSION = 49
 COMMENT_BATCH_VERSION = 16
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 FAILED_URL_MESSAGE = "URL tidak dapat diproses"
+CHECK_VALUE = "Cek"
+
+# These numeric fields may legitimately have no visible counter when the value
+# is zero. Unsupported, blocked, failed, and login-only fields are handled as
+# unreadable instead and are exported as ``Cek``.
+SOCIAL_COUNT_FIELDS = {
+    "Followers",
+    "Views",
+    "Likes",
+    "Comments",
+    "Save atau bookmark",
+    "Shares",
+    "Reposts",
+}
 
 
 def batch_progress_fraction(
@@ -279,7 +293,14 @@ def social_job_results(job: dict) -> list[SocialResult]:
         ordered: list[SocialResult] = []
         for item in items:
             if item.get("result"):
-                ordered.append(SocialResult.model_validate(item["result"]))
+                result = SocialResult.model_validate(item["result"])
+                # Connectors may follow a short/share URL and return its final
+                # canonical URL. The job item is the user's original row, so it
+                # remains the stable identity used by the UI and downloads.
+                source_url = str(item.get("url") or "").strip()
+                if source_url:
+                    result.url = source_url
+                ordered.append(result)
                 continue
             if item.get("status") != "failed":
                 continue
@@ -322,6 +343,54 @@ def social_result_failed(result: SocialResult) -> bool:
     return all(field.status == FieldStatus.FAILED for field in fields)
 
 
+def social_result_unreadable(result: SocialResult) -> bool:
+    """Return whether no enrichment field could be read for this URL."""
+    fields = (
+        result.username,
+        result.caption,
+        result.posted_at,
+        result.followers,
+        result.likes,
+        result.comments,
+        result.shares,
+        result.views,
+        result.bookmarks,
+        result.reposts,
+    )
+    return not any(
+        field.status == FieldStatus.AVAILABLE and field.value not in (None, "")
+        for field in fields
+    )
+
+
+def social_field_export_value(
+    label: str,
+    field: DataField,
+    *,
+    result_unreadable: bool,
+):
+    """Render one social field without confusing missing data with zero.
+
+    A fully unreadable URL and explicit read failures become ``Cek``. For a
+    partially readable post, an absent public numeric counter is treated as a
+    real zero. Unsupported or blocked counters remain ``Cek``.
+    """
+    if result_unreadable:
+        return CHECK_VALUE
+
+    value = field.value
+    if value not in (None, ""):
+        if label == "Tanggal posting":
+            value = format_posting_date(value)
+        if isinstance(value, str):
+            value = re.sub(r"\s+", " ", value).strip()
+        return value
+
+    if label in SOCIAL_COUNT_FIELDS and field.status == FieldStatus.NOT_PUBLIC:
+        return 0
+    return CHECK_VALUE
+
+
 def social_result_row(result: SocialResult) -> dict:
     fields = {
         "Tanggal posting": result.posted_at,
@@ -336,9 +405,13 @@ def social_result_row(result: SocialResult) -> dict:
         "Reposts": result.reposts,
     }
     row = {"URL": result.url, "Platform": result.platform, "Waktu pengambilan": result.collected_at.isoformat(), "Data contoh": result.is_mock, "Catatan": result.note}
-    failed = social_result_failed(result)
+    unreadable = social_result_unreadable(result)
     for label, field in fields.items():
-        row[label] = FAILED_URL_MESSAGE if failed else field.value
+        row[label] = social_field_export_value(
+            label,
+            field,
+            result_unreadable=unreadable,
+        )
         row[f"Status {label}"] = str(field.status)
     return row
 
@@ -361,26 +434,25 @@ def compact_social_export_row(result: SocialResult) -> dict:
         ("Shares", result.shares),
         ("Reposts", result.reposts),
     )
-    unavailable: list[str] = []
+    needs_check: list[str] = []
     row = {"Platform": result.platform, "URL": result.url}
-    failed = social_result_failed(result)
+    unreadable = social_result_unreadable(result)
     for label, field in fields:
-        if failed:
-            row[label] = FAILED_URL_MESSAGE
-            continue
-        if field.value in (None, ""):
-            row[label] = "Tidak tersedia"
-            unavailable.append(label)
-            continue
-        value = field.value
-        if label == "Tanggal posting":
-            value = format_posting_date(value)
-        if isinstance(value, str):
-            value = re.sub(r"\s+", " ", value).strip()
+        value = social_field_export_value(
+            label,
+            field,
+            result_unreadable=unreadable,
+        )
+        if value == CHECK_VALUE and field.value in (None, ""):
+            needs_check.append(label)
         row[label] = value
     row["Waktu pengambilan"] = result.collected_at.strftime("%Y-%m-%d %H:%M:%S")
     row["Data yang tidak tersedia"] = (
-        FAILED_URL_MESSAGE if failed else ", ".join(unavailable) if unavailable else "Lengkap"
+        f"{CHECK_VALUE}: {FAILED_URL_MESSAGE}"
+        if unreadable
+        else f"{CHECK_VALUE}: {', '.join(needs_check)}"
+        if needs_check
+        else "Lengkap"
     )
     return row
 
@@ -388,7 +460,11 @@ def compact_social_export_row(result: SocialResult) -> dict:
 def compact_social_all_export_row(result: SocialResult) -> dict:
     """Add an explicit error column to the combined enrichment export."""
     row = compact_social_export_row(result)
-    row["Error"] = result.note if social_result_failed(result) else "Tidak ada"
+    row["Error"] = (
+        result.note or FAILED_URL_MESSAGE
+        if social_result_unreadable(result)
+        else "Tidak ada"
+    )
     return row
 
 def rank_comment_rows(rows: list[dict]) -> list[dict]:

@@ -12,11 +12,13 @@ MIDETA membantu merapikan metadata media sosial, komentar publik, dan artikel me
 
 ### Yang bisa dilakukan
 
-MIDETA punya empat bagian utama:
+MIDETA punya enam bagian utama:
 
 - **Social Media Enrichment** untuk mengambil tanggal posting, author, caption, followers, views, likes, comments, bookmark, shares, dan repost.
 - **Comment Scrapper** untuk mengambil komentar publik, membedakan komentar utama dan reply, lalu mengurutkannya berdasarkan engagement.
 - **Conventional Media Enrichment** untuk membersihkan artikel berita serta melengkapi tanggal, media, scope, tier, journalist, tone, quote mention, dan jenis penyebutan direct/indirect.
+- **Modified Link** untuk mengubah short/share link menjadi permalink posting yang bersih tanpa menjalankan enrichment.
+- **Followers Checker** untuk memperbarui jumlah followers banyak akun dalam satu tabel mapping dan menyimpan URL profil setiap platform.
 - **Riwayat Analisis** untuk membuka kembali hasil yang pernah diproses.
 
 Platform media sosial yang didukung: YouTube, TikTok, Facebook, Instagram, Threads, dan X. Conventional Media Enrichment dapat menerima URL artikel dari berbagai situs berita publik.
@@ -41,7 +43,7 @@ URL pendek dan URL hasil tombol **Share** juga bisa langsung ditempel. Ini menca
 
 Facebook menyediakan dua mode. **Fast** membaca metadata publik tanpa login. **Advanced** memakai Chrome Facebook yang sudah login, membuka post target dan profil author, lalu mencari Reel dengan ID yang sama pada halaman Reels untuk melengkapi followers/friends dan views.
 
-Gunakan **Advanced** bila views tidak muncul pada mode Fast. MIDETA tidak mengambil angka dari kartu Reel lain: jika Reel target tidak ditemukan atau Facebook tidak menampilkan angkanya, kolom Views ditulis **Tidak tersedia**. Untuk memakainya, pilih Advanced, klik **Buka Chrome Facebook**, login langsung di Facebook, lalu klik **Periksa Login** sebelum memulai antrean.
+Gunakan **Advanced** bila views tidak muncul pada mode Fast. MIDETA tidak mengambil angka dari kartu Reel lain: jika Reel target tidak ditemukan atau Facebook tidak menampilkan angkanya, kolom Views ditulis **Cek**. Untuk memakainya, pilih Advanced, klik **Buka Chrome Facebook**, login langsung di Facebook, lalu klik **Periksa Login** sebelum memulai antrean.
 
 #### Pilihan mode Instagram
 
@@ -54,7 +56,7 @@ Fast dan Advanced sama-sama memakai Chrome khusus MIDETA yang sudah login ke Ins
 
 Fast tidak membuka profil author. Advanced membuka posting dan profil, sehingga waktunya lebih lama tetapi pemeriksaannya lebih lengkap.
 
-Instagram tidak menampilkan views untuk semua jenis posting. Foto dan carousel akan ditulis **Tidak tersedia**, bukan dipaksa menjadi `0`. Untuk video atau Reels, MIDETA mengambil views dari posting yang sesuai. Angka likes, comments, shares, dan repost juga dicocokkan ke posting target agar tidak tertukar dengan slide carousel atau posting lain.
+Instagram tidak menampilkan views untuk semua jenis posting. Foto dan carousel akan ditulis **Cek** bila nilainya tidak dapat dibaca. Untuk video atau Reels, MIDETA mengambil views dari posting yang sesuai. Angka likes, comments, shares, dan repost juga dicocokkan ke posting target agar tidak tertukar dengan slide carousel atau posting lain.
 
 Cara menyiapkan login Instagram:
 
@@ -79,13 +81,30 @@ Cara menyiapkannya:
 4. Tempel token pada kolom **Apify API token**, lalu klik **Simpan token**.
 5. Masukkan URL video, foto, atau short link lalu mulai enrichment TikTok.
 
-Token disimpan di folder privat pada komputer ini. Token tidak masuk ke Git, database MIDETA, atau file hasil. Tanpa token, MIDETA tetap mencoba tanggal, author, caption, views, likes, comments, shares, dan bookmark dari sumber publik yang tersedia. Followers atau kolom lain yang tidak diberikan sumber akan ditandai **Tidak tersedia**, bukan diisi dengan angka tebakan.
+Token disimpan di folder privat pada komputer ini. Token tidak masuk ke Git, database MIDETA, atau file hasil. Tanpa token, MIDETA tetap mencoba tanggal, author, caption, views, likes, comments, shares, dan bookmark dari sumber publik yang tersedia. Followers atau kolom lain yang tidak dapat dibaca akan ditandai **Cek**, bukan diisi dengan angka tebakan.
 
 MIDETA tidak menyediakan mode Chrome TikTok agar proses tidak terganggu HTTP 403, login berulang, atau perpindahan halaman yang dibatasi TikTok.
 
 #### Menjalankan beberapa platform
 
 Gunakan **Satu platform**, **Split Screen**, atau **Triple Screen** jika ingin mengatur setiap platform secara terpisah. Setiap panel punya input, antrean, progres, hasil, dan tombol unduh sendiri. Maksimal tiga platform dapat dijalankan dalam satu tampilan tanpa mencampur hasil antarplatform. Gunakan **Enrichment All** jika ingin memasukkan URL campuran dan mengunduh satu hasil gabungan.
+
+### Modified Link
+
+Modified Link adalah fitur terpisah dari enrichment. Tempel URL campuran dari YouTube, TikTok, Facebook, Instagram, Threads, atau X untuk:
+
+- mengarahkan short link dan URL `/share/` ke posting aslinya;
+- menghapus parameter tracking yang tidak diperlukan;
+- menyeragamkan domain dan bentuk permalink; dan
+- mempertahankan urutan serta URL berulang pada hasil salin, CSV, dan XLSX.
+
+URL asli tetap disimpan pada kolom `Original Link`. Jika tujuan share link belum dapat ditemukan, barisnya tidak dihapus dan `Modified Link` ditulis **URL tidak dapat dimodifikasi**.
+
+### Followers Checker
+
+Followers Checker mendukung Instagram, Facebook, TikTok, Threads, X, YouTube, serta LinkedIn. Login dilakukan terpisah untuk platform yang dipakai, langsung di Chrome khusus MIDETA. Password tidak dibaca aplikasi dan sesi yang sudah aktif dapat dipakai kembali. Baris kosong yang sengaja diletakkan di antara URL dipertahankan sebagai baris `space` pada tabel dan file hasil agar posisi data tidak bergeser; baris kosong di awal atau akhir input diabaikan.
+
+Tempel satu URL profil per baris seperti pada Social Media Enrichment. MIDETA mengenali platform secara otomatis dan menghasilkan kolom `Platform`, `Account Name`, `URL`, dan `Followers`. Urutan input dan URL berulang tetap dipertahankan. URL posting, akun yang gagal dibuka, dan akun yang belum login tetap memperoleh baris hasil dengan status yang jelas. Hasil dapat diunduh sebagai CSV atau XLSX.
 
 ### Comment Scrapper
 
@@ -99,7 +118,7 @@ Pilih platform dan masukkan URL posting yang ingin diperiksa. Hasil komentar ber
 
 Facebook, Threads, dan X memakai Chrome khusus MIDETA karena komentarnya baru dimuat saat halaman dibuka. Sebelum pengambilan pertama, klik **Buka Sesi**, login di Chrome MIDETA, lalu klik **Periksa Login**. Sesi akan dipakai kembali sampai kedaluwarsa atau logout.
 
-Enrichment Threads mencoba halaman publik terlebih dahulu. Jika Threads mengembalikan halaman kosong atau `invalid_post` untuk post yang sebenarnya masih ada, MIDETA otomatis memakai Sesi Threads yang sama sebagai fallback. Login satu kali diperlukan hanya untuk post yang dibatasi seperti ini; nilai yang benar-benar tidak tampil tetap ditulis **Tidak tersedia**.
+Enrichment Threads mencoba halaman publik terlebih dahulu. Jika Threads mengembalikan halaman kosong atau `invalid_post` untuk post yang sebenarnya masih ada, MIDETA otomatis memakai Sesi Threads yang sama sebagai fallback. Login satu kali diperlukan hanya untuk post yang dibatasi seperti ini; nilai yang tidak dapat dibaca ditulis **Cek**.
 
 MIDETA dapat mengambil maksimal 2.000 komentar dari setiap URL. Progress bar menampilkan jumlah yang sudah ditemukan selama halaman di-scroll dan reply dibuka. Platform tetap dapat menyembunyikan atau membatasi sebagian komentar.
 
@@ -158,7 +177,8 @@ Perlindungan tersebut menjaga repository utama dan mendeteksi penghapusan tidak 
 - MIDETA mencocokkan data dengan posting target. Data dari rekomendasi, caption, atau posting lain tidak dipakai sebagai engagement.
 - Jika Facebook tidak menampilkan followers tetapi menampilkan friends, jumlah friends dipakai sebagai pengganti.
 - Bookmark Facebook Reels hanya diisi bila Facebook benar-benar menampilkan angkanya.
-- Data yang memang tidak diberikan platform ditulis **Tidak tersedia**. Nilai `0` hanya dipakai jika platform menyatakan angkanya nol.
+- Setiap URL tetap memiliki satu baris dan urutannya selalu mengikuti input, termasuk URL yang gagal diproses.
+- Counter engagement yang memang tidak ada ditulis `0`; data yang tidak dapat dibaca, diblokir, atau tidak didukung ditulis **Cek**.
 - URL yang gagal total tetap berada pada urutan input dan ditulis **URL tidak dapat diproses**, sehingga baris hasil tidak bergeser.
 - Postingan privat, sesi login kedaluwarsa, CAPTCHA, perubahan tampilan platform, dan rate limit dapat membuat sebagian data tidak terbaca.
 
@@ -212,7 +232,12 @@ pages/3_Riwayat_Analisis.py
                            riwayat hasil lokal
 pages/4_Conventional_Media_Enrichment.py
                            enrichment artikel media konvensional
+pages/5_Modified_Link.py
+                           pembersih short/share link media sosial
+pages/6_Followers_Checker.py
+                           pemeriksa followers dan mapping URL profil
 src/connectors/            pembaca data tiap platform
+src/follower_browser.py    sesi login dan pembaca followers profil
 src/instagram_browser.py   enrichment Instagram dengan login
 src/comment_browser.py     pengambilan komentar Facebook, Threads, dan X
 src/conventional_media.py  enrichment dan sesi login artikel berita
@@ -230,11 +255,13 @@ MIDETA cleans up social-media metadata, public comments, and conventional-media 
 
 ### What it does
 
-MIDETA has four main sections:
+MIDETA has six main sections:
 
 - **Social Media Enrichment** collects the post date, author, caption, followers, views, likes, comments, bookmarks, shares, and reposts.
 - **Comment Scrapper** collects public comments, separates parent comments from replies, and ranks them by engagement.
 - **Conventional Media Enrichment** cleans news articles and adds publication, media, journalist, tone, quoted-person, and direct/indirect mention fields.
+- **Modified Link** converts short/share URLs into clean post permalinks without running enrichment.
+- **Followers Checker** refreshes follower totals for multiple accounts while retaining each platform profile URL.
 - **Analysis History** keeps earlier results available for review.
 
 Supported social platforms: YouTube, TikTok, Facebook, Instagram, Threads, and X. Conventional Media Enrichment accepts article URLs from a broad range of public news websites.
@@ -259,7 +286,7 @@ Short links and links copied from a platform's **Share** button can be pasted di
 
 Facebook has two modes. **Fast** reads public metadata without login. **Advanced** uses a logged-in MIDETA Chrome profile, opens the target post and author profile, then finds the Reel with the same ID on the profile's Reels page to complete followers/friends and views.
 
-Use **Advanced** when views are missing in Fast mode. MIDETA never borrows a number from another Reel card: if the target Reel cannot be found or Facebook does not expose its count, Views is marked **Tidak tersedia**. Select Advanced, click **Buka Chrome Facebook**, log in directly on Facebook, then click **Periksa Login** before starting the queue.
+Use **Advanced** when views are missing in Fast mode. MIDETA never borrows a number from another Reel card: if the target Reel cannot be found or Facebook does not expose its count, Views is marked **Cek**. Select Advanced, click **Buka Chrome Facebook**, log in directly on Facebook, then click **Periksa Login** before starting the queue.
 
 #### Instagram modes
 
@@ -272,7 +299,7 @@ Fast and Advanced both use a dedicated MIDETA Chrome profile logged in to Instag
 
 Fast does not open the author's profile. Advanced checks both the post and profile, so it takes longer but returns more complete data.
 
-Instagram does not publish views for every post type. Photos and carousels are marked **Tidak tersedia** instead of being forced to `0`. For videos and Reels, MIDETA looks for views that belong to the target post. Likes, comments, shares, and reposts are also matched to that post so carousel slides or nearby posts do not get mixed in.
+Instagram does not publish views for every post type. Photos and carousels are marked **Cek** when the value cannot be read. For videos and Reels, MIDETA looks for views that belong to the target post. Likes, comments, shares, and reposts are also matched to that post so carousel slides or nearby posts do not get mixed in.
 
 To set up Instagram login:
 
@@ -297,13 +324,23 @@ Setup:
 4. Paste the token into **Apify API token**, then click **Simpan token**.
 5. Paste video, photo, or short URLs and start TikTok enrichment.
 
-The token stays in a private folder on this computer. It is not added to Git, the MIDETA database, or exported files. Without a token, MIDETA still attempts to collect the date, author, caption, views, likes, comments, shares, and bookmarks from available public sources. Followers or other missing fields are marked **Tidak tersedia** instead of being filled with guessed numbers.
+The token stays in a private folder on this computer. It is not added to Git, the MIDETA database, or exported files. Without a token, MIDETA still attempts to collect the date, author, caption, views, likes, comments, shares, and bookmarks from available public sources. Followers or other unreadable fields are marked **Cek** instead of being filled with guessed numbers.
 
 MIDETA does not provide a TikTok Chrome mode, avoiding repeated logins, browser navigation restrictions, and TikTok HTTP 403 pages.
 
 #### Running multiple platforms
 
 Choose **Satu platform**, **Split Screen**, or **Triple Screen** when you want to manage each platform separately. Every panel has its own input, queue, progress, results, and download buttons. Up to three platforms can run in one view without mixing their results. Choose **Enrichment All** for a mixed URL list and one combined download.
+
+### Modified Link
+
+Modified Link is separate from enrichment. Paste a mixed list of YouTube, TikTok, Facebook, Instagram, Threads, or X URLs to resolve short/share links, remove unnecessary tracking parameters, and normalize each destination into a clean permalink. Input order and duplicate rows are preserved in the copy-ready result, CSV, and XLSX. An unresolved link keeps its row and is marked **URL tidak dapat dimodifikasi**.
+
+### Followers Checker
+
+Followers Checker supports Instagram, Facebook, TikTok, Threads, X, YouTube, and LinkedIn. Sign in separately to each platform you use through its dedicated MIDETA Chrome session. MIDETA does not read passwords, and an active saved session can be reused. Intentional blank rows between URLs are preserved as `space` rows in the table and downloaded files so spreadsheet positions do not shift; leading and trailing blank rows are ignored.
+
+Paste one profile URL per line, just like Social Media Enrichment. MIDETA detects the platform automatically and returns `Platform`, `Account Name`, `URL`, and `Followers`. Input order and duplicate URLs are retained. Post URLs, unavailable accounts, and logged-out sessions keep their own result rows with a clear status. Results can be downloaded as CSV or XLSX.
 
 ### Comment Scrapper
 
@@ -374,7 +411,8 @@ These controls protect the primary repository and catch accidental removal. Publ
 - MIDETA matches metrics to the target post. Values from recommendations, captions, or nearby posts are not treated as engagement.
 - If Facebook has no public follower count but shows friends, MIDETA uses the friend count.
 - Facebook Reel bookmarks are filled only when Facebook displays a real count.
-- Data that a platform does not provide is marked **Tidak tersedia**. `0` is used only when the platform reports zero.
+- Every URL keeps one row in its original input order, including URLs that fail.
+- Engagement counters that are genuinely absent are written as `0`; unreadable, blocked, or unsupported data is marked **Cek**.
 - A URL that fails completely stays in its original input position and is marked **URL tidak dapat diproses**, so following rows never shift.
 - Private posts, expired sessions, CAPTCHAs, layout changes, and rate limits may leave some fields unavailable.
 
@@ -428,7 +466,12 @@ pages/3_Riwayat_Analisis.py
                            local result history
 pages/4_Conventional_Media_Enrichment.py
                            conventional-media article enrichment
+pages/5_Modified_Link.py
+                           social short/share-link cleaner
+pages/6_Followers_Checker.py
+                           profile follower and URL mapping checker
 src/connectors/            platform data readers
+src/follower_browser.py    profile login sessions and follower reader
 src/instagram_browser.py   logged-in Instagram enrichment
 src/tiktok_browser.py      shared TikTok result model and parser helpers
 src/tiktok_free.py         no-login TikTok enrichment

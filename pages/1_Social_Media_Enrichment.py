@@ -143,7 +143,7 @@ def render_instagram_controls(slot: str) -> str:
     else:
         st.caption(
             "Advanced: memeriksa halaman posting dan profil author untuk Followers. Views hanya diambil jika Instagram "
-            "menyediakannya untuk video/Reels; foto dan carousel ditulis Tidak tersedia, bukan 0. "
+            "menyediakannya untuk video/Reels; data yang tidak dapat dibaca ditulis Cek. "
             f"Mode ini sengaja lebih teliti dan lebih lama ({ENRICHMENT_BROWSER_CHUNK_SIZE} URL per tahap)."
         )
     st.caption(
@@ -247,7 +247,7 @@ def render_facebook_controls(slot: str) -> str:
     )
     st.caption(
         "Password diketik langsung di Facebook dan tidak dibaca MIDETA. Jika Views target tidak ditampilkan Facebook, "
-        "kolom akan ditulis Tidak tersedia dan tidak mengambil angka dari Reel lain."
+        "kolom akan ditulis Cek dan tidak mengambil angka dari Reel lain."
     )
     open_col, check_col, close_col = st.columns(3)
     if open_col.button("Buka Chrome Facebook", key=f"open_facebook_{slot}", width="stretch"):
@@ -738,7 +738,7 @@ def collect_one_item(
                         "Platform": "Facebook",
                         "Alasan": (
                             "Views Reel target belum ditampilkan Facebook pada halaman post maupun halaman Reels profil. "
-                            "Nilai dibiarkan Tidak tersedia agar tidak tertukar dengan Reel lain."
+                            "Nilai ditulis Cek agar tidak tertukar dengan Reel lain."
                         ),
                     }
             except CommentBrowserLoginRequired as exc:

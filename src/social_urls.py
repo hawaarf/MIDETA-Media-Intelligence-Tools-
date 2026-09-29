@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -86,6 +86,114 @@ def platform_from_url(url: str) -> str | None:
         if any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains):
             return platform
     return None
+
+
+def canonical_social_url(url: str, platform: str | None = None) -> str | None:
+    """Return a clean, stable post URL without changing how it is enriched.
+
+    The function is deliberately local and deterministic: it removes tracking
+    parameters and normalizes known post shapes, but it never opens the URL.
+    Short/share redirects are handled separately by :func:`modified_social_url`.
+    """
+    value = str(url or "").strip()
+    detected = platform or platform_from_url(value)
+    if not value or detected not in PLATFORM_DOMAINS:
+        return None
+
+    parsed = urlparse(value)
+    parts = [part for part in parsed.path.split("/") if part]
+    folded = [part.casefold() for part in parts]
+
+    if detected == "Threads":
+        for index, part in enumerate(folded[:-1]):
+            if part == "post" and index > 0 and parts[index - 1].startswith("@"):
+                return f"https://www.threads.com/{parts[index - 1]}/post/{parts[index + 1]}"
+
+    if detected == "Instagram":
+        for index, part in enumerate(folded[:-1]):
+            if part in {"p", "reel", "reels", "tv"}:
+                post_type = "reel" if part == "reels" else part
+                return f"https://www.instagram.com/{post_type}/{parts[index + 1]}/"
+
+    if detected == "TikTok":
+        for index, part in enumerate(folded[:-1]):
+            if part in {"video", "photo"} and index > 0 and parts[index - 1].startswith("@"):
+                return f"https://www.tiktok.com/{parts[index - 1]}/{part}/{parts[index + 1]}"
+
+    if detected == "X":
+        for index, part in enumerate(folded[:-1]):
+            if part == "status" and index > 0:
+                return f"https://x.com/{parts[index - 1].lstrip('@')}/status/{parts[index + 1]}"
+
+    if detected == "YouTube":
+        hostname = (parsed.hostname or "").casefold()
+        query = parse_qs(parsed.query)
+        video_id = None
+        if hostname in {"youtu.be", "www.youtu.be"} and parts:
+            video_id = parts[0]
+        elif folded and folded[0] in {"shorts", "live", "embed"} and len(parts) > 1:
+            video_id = parts[1]
+        elif folded and folded[0] == "watch":
+            video_id = (query.get("v") or [None])[0]
+        if video_id:
+            return f"https://www.youtube.com/watch?v={video_id}"
+
+    if detected == "Facebook":
+        if len(parts) >= 4 and folded[0] == "groups" and folded[2] in {"posts", "permalink"}:
+            return f"https://www.facebook.com/groups/{parts[1]}/posts/{parts[3]}"
+        if len(parts) >= 2 and folded[0] in {"reel", "reels"}:
+            return f"https://www.facebook.com/reel/{parts[1]}"
+        for index, part in enumerate(folded[:-1]):
+            if part in {"posts", "videos"} and index > 0:
+                return "https://www.facebook.com/" + "/".join(parts[: index + 2])
+        if folded and folded[0] in {"permalink.php", "watch", "photo.php", "story.php"}:
+            allowed = {
+                key: values[-1]
+                for key, values in query.items()
+                if key in {"v", "id", "fbid", "story_fbid"} and values
+            }
+            clean_query = urlencode(allowed)
+            return urlunparse(("https", "www.facebook.com", f"/{parts[0]}", "", clean_query, ""))
+
+    # A supported direct URL that has no more specific post shape still gets a
+    # stable HTTPS host, no fragment, and no campaign/tracking parameters.
+    canonical_hosts = {
+        "Facebook": "www.facebook.com",
+        "Instagram": "www.instagram.com",
+        "Threads": "www.threads.com",
+        "X": "x.com",
+        "TikTok": "www.tiktok.com",
+        "YouTube": "www.youtube.com",
+    }
+    return urlunparse(("https", canonical_hosts[detected], parsed.path or "/", "", "", ""))
+
+
+def modified_social_url(
+    original_url: str,
+    resolved_url: str | None = None,
+    platform: str | None = None,
+) -> str | None:
+    """Build the export-only Modified Link while preserving the source URL.
+
+    ``resolved_url`` should be the connector's final/canonical page when it is
+    available. If it is still a short/share form, resolution is attempted as a
+    best effort. Any failure returns a clean direct input (when possible) or
+    ``None``; enrichment data and the original URL remain untouched.
+    """
+    detected = platform or platform_from_url(original_url)
+    if not detected:
+        return None
+    candidate = str(resolved_url or original_url).strip()
+    if platform_from_url(candidate) != detected:
+        candidate = original_url
+    if is_short_social_url(candidate, detected):
+        try:
+            candidate = resolve_social_url(original_url, expected_platform=detected)
+        except (SocialURLResolutionError, ValueError):
+            candidate = original_url
+    if is_short_social_url(candidate, detected):
+        return None
+    return canonical_social_url(candidate, detected)
 
 
 def is_short_social_url(url: str, platform: str | None = None) -> bool:

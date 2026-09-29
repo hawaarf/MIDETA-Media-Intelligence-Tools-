@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import unittest
-from src.batch import FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_comment_export_rows, compact_social_all_export_row, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, rank_comment_rows, social_job_results, social_result_row
+from src.batch import CHECK_VALUE, FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_comment_export_rows, compact_social_all_export_row, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, rank_comment_rows, social_job_results, social_result_row
 from src.models import DataField, FieldStatus
 from src.connectors import get_connector
 
@@ -230,7 +230,7 @@ class BatchTests(unittest.TestCase):
         result.followers.value = None
         row = compact_social_export_row(result)
         self.assertNotIn("\n", row["Caption"])
-        self.assertEqual(row["Followers"], "Tidak tersedia")
+        self.assertEqual(row["Followers"], CHECK_VALUE)
         self.assertIn("Followers", row["Data yang tidak tersedia"])
         self.assertFalse(any(column.startswith("Status ") for column in row))
         self.assertFalse(any(value in (None, "") for value in row.values()))
@@ -279,9 +279,9 @@ class BatchTests(unittest.TestCase):
         failed_row = compact_social_export_row(results[1])
 
         self.assertEqual([result.url for result in results], [first_url, failed_url, third_url])
-        self.assertEqual(failed_row["Caption"], FAILED_URL_MESSAGE)
-        self.assertEqual(failed_row["Likes"], FAILED_URL_MESSAGE)
-        self.assertEqual(failed_row["Data yang tidak tersedia"], FAILED_URL_MESSAGE)
+        self.assertEqual(failed_row["Caption"], CHECK_VALUE)
+        self.assertEqual(failed_row["Likes"], CHECK_VALUE)
+        self.assertEqual(failed_row["Data yang tidak tersedia"], f"{CHECK_VALUE}: {FAILED_URL_MESSAGE}")
 
     def test_unknown_platform_can_be_exported_as_a_failed_row(self):
         result = failed_social_result(
@@ -294,8 +294,8 @@ class BatchTests(unittest.TestCase):
 
         self.assertEqual(row["URL"], "https://example.com/post/1")
         self.assertEqual(row["Platform"], "Tidak dikenali")
-        self.assertEqual(row["Caption"], FAILED_URL_MESSAGE)
-        self.assertEqual(row["Data yang tidak tersedia"], FAILED_URL_MESSAGE)
+        self.assertEqual(row["Caption"], CHECK_VALUE)
+        self.assertEqual(row["Data yang tidak tersedia"], f"{CHECK_VALUE}: {FAILED_URL_MESSAGE}")
         self.assertTrue(result.note.startswith(FAILED_URL_MESSAGE))
 
     def test_combined_export_restores_input_order_after_out_of_order_completion(self):
@@ -318,6 +318,73 @@ class BatchTests(unittest.TestCase):
             [row["URL"] for row in exported],
             [youtube_url, unknown_url, x_url],
         )
-        self.assertEqual(exported[1]["Caption"], FAILED_URL_MESSAGE)
+        self.assertEqual(exported[1]["Caption"], CHECK_VALUE)
         self.assertIn("Platform belum didukung", exported[1]["Error"])
         self.assertEqual(exported[0]["Error"], "Tidak ada")
+
+    def test_partially_readable_result_uses_zero_only_for_absent_public_counts(self):
+        url = "https://x.com/akun/status/zero"
+        result = get_connector(url).mock_enrichment(url)
+        result.likes = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+        result.comments = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
+        result.shares = DataField(value=None, status=FieldStatus.NOT_SUPPORTED)
+
+        row = compact_social_export_row(result)
+
+        self.assertEqual(row["Likes"], 0)
+        self.assertEqual(row["Comments"], 0)
+        self.assertEqual(row["Shares"], CHECK_VALUE)
+        self.assertIn("Shares", row["Data yang tidak tersedia"])
+        self.assertNotIn("Likes", row["Data yang tidak tersedia"])
+
+    def test_fully_unreadable_result_uses_check_instead_of_false_zero(self):
+        url = "https://x.com/akun/status/unreadable"
+        result = get_connector(url).mock_enrichment(url)
+        for field_name in (
+            "username",
+            "caption",
+            "posted_at",
+            "followers",
+            "likes",
+            "comments",
+            "shares",
+            "views",
+            "bookmarks",
+            "reposts",
+        ):
+            setattr(result, field_name, DataField(value=None, status=FieldStatus.NOT_PUBLIC))
+
+        row = compact_social_export_row(result)
+
+        self.assertTrue(all(row[label] == CHECK_VALUE for label in (
+            "Tanggal posting",
+            "Author",
+            "Caption",
+            "Followers",
+            "Views",
+            "Likes",
+            "Comments",
+            "Save atau bookmark",
+            "Shares",
+            "Reposts",
+        )))
+
+    def test_job_results_keep_original_short_url_as_row_identity(self):
+        source_url = "https://vt.tiktok.com/short/"
+        canonical_url = "https://www.tiktok.com/@akun/video/123"
+        result = get_connector(canonical_url).mock_enrichment(canonical_url)
+        job = {
+            "platform": "TikTok",
+            "items": [
+                {
+                    "position": 1,
+                    "url": source_url,
+                    "status": "completed",
+                    "result": result.model_dump(mode="json"),
+                }
+            ],
+        }
+
+        restored = social_job_results(job)
+
+        self.assertEqual([item.url for item in restored], [source_url])

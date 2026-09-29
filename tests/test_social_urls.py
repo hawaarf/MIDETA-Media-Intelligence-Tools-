@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 from src.social_urls import (
     SocialURLResolutionError,
+    canonical_social_url,
     is_short_social_url,
+    modified_social_url,
     resolve_social_url,
 )
 
@@ -82,6 +84,33 @@ class SocialURLTests(unittest.TestCase):
             "https://t.co/ABC",
         )
         self.assertTrue(all(is_short_social_url(url) for url in urls))
+
+    def test_canonicalizes_direct_post_links_for_every_platform(self):
+        cases = {
+            "https://threads.net/@nalarpedia_id/post/Ddn_ggzgjAE?xmt=AQ": "https://www.threads.com/@nalarpedia_id/post/Ddn_ggzgjAE",
+            "https://www.instagram.com/reels/ABC123/?igsh=tracking": "https://www.instagram.com/reel/ABC123/",
+            "https://m.tiktok.com/@akun/video/123456?is_from_webapp=1": "https://www.tiktok.com/@akun/video/123456",
+            "https://twitter.com/akun/status/98765?s=20": "https://x.com/akun/status/98765",
+            "https://youtu.be/VideoABC?si=tracking": "https://www.youtube.com/watch?v=VideoABC",
+            "https://web.facebook.com/reel/7654321/?mibextid=tracking": "https://www.facebook.com/reel/7654321",
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(canonical_social_url(source), expected)
+
+    @patch("src.social_urls.resolve_social_url")
+    def test_modified_link_replaces_threads_share_path_with_post_permalink(self, resolve):
+        resolve.return_value = "https://www.threads.com/@nalarpedia_id/post/Ddn_ggzgjAE?xmt=AQ"
+
+        modified = modified_social_url(
+            "https://www.threads.com/share/SHORT/",
+            platform="Threads",
+        )
+
+        self.assertEqual(
+            modified,
+            "https://www.threads.com/@nalarpedia_id/post/Ddn_ggzgjAE",
+        )
 
 
 if __name__ == "__main__":

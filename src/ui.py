@@ -46,7 +46,7 @@ ENRICHMENT_GUIDES = {
             ("Ambil metadata", "MIDETA mencocokkan ID post/Reel agar data rekomendasi atau Reel lain tidak tercampur."),
             ("Periksa hasil", "Review author, followers/friends, caption, views, dan engagement lalu ekspor."),
         ],
-        "note": "Advanced hanya mengisi Views bila Facebook menampilkan angka untuk ID Reel yang sama. Jika tidak, hasil ditulis Tidak tersedia. Password diketik langsung di Facebook dan tidak dibaca MIDETA.",
+        "note": "Advanced hanya mengisi Views bila Facebook menampilkan angka untuk ID Reel yang sama. Jika tidak dapat dibaca, hasil ditulis Cek. Password diketik langsung di Facebook dan tidak dibaca MIDETA.",
     },
     "Instagram": {
         "summary": "Pilih Fast untuk engagement atau Advanced untuk metadata lengkap. Keduanya memakai sesi Instagram yang sudah login.",
@@ -189,7 +189,7 @@ def render_github_profile() -> None:
     )
 
 def render_brand_header() -> None:
-    brand, enrichment, conventional, comments, history = st.columns([4.2, 1.25, 1.25, 1.25, 1.05], vertical_alignment="center")
+    brand, enrichment, conventional, comments, modified, followers, history = st.columns([3.1, 1.0, 1.0, 1.0, .9, 1.0, .9], vertical_alignment="center")
     brand.markdown(
         f"""
         <div class="brand-lockup">
@@ -215,6 +215,18 @@ def render_brand_header() -> None:
         "pages/2_Comment_Scrapper.py",
         label="Komentar",
         icon=":material/forum:",
+        width="stretch",
+    )
+    modified.page_link(
+        "pages/5_Modified_Link.py",
+        label="Link",
+        icon=":material/link:",
+        width="stretch",
+    )
+    followers.page_link(
+        "pages/6_Followers_Checker.py",
+        label="Followers",
+        icon=":material/groups:",
         width="stretch",
     )
     history.page_link(
