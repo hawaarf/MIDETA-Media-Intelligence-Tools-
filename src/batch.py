@@ -12,7 +12,7 @@ from src.dates import parse_social_datetime
 from src.models import DataField, FieldStatus, SocialResult
 from src.sentiment import classify_comment_tone
 
-SOCIAL_BATCH_VERSION = 49
+SOCIAL_BATCH_VERSION = 50
 COMMENT_BATCH_VERSION = 16
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -88,6 +88,17 @@ def format_comment_date(value) -> str:
 
 URL_PATTERN = re.compile(r"https?://[^\s,<>\"'\[\](){}]+", re.IGNORECASE)
 URL_TRAILING_PUNCTUATION = ".,;:!?"
+SCHEMELESS_SOCIAL_URL_PATTERN = re.compile(
+    r"(?<![\w@])"
+    r"(?P<url>"
+    r"(?:(?:www|web|m|vm|vt)\.)?"
+    r"(?:facebook\.com|fb\.me|fb\.watch|instagram\.com|instagr\.am|ig\.me|"
+    r"threads\.com|threads\.net|x\.com|twitter\.com|t\.co|tiktok\.com|"
+    r"youtube\.com|youtube-nocookie\.com|youtu\.be)"
+    r"/[^\s,<>\"'\[\](){}]+"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def parse_url_list(value: str, *, preserve_repeated_rows: bool = False) -> list[str]:
@@ -118,9 +129,52 @@ def parse_url_list(value: str, *, preserve_repeated_rows: bool = False) -> list[
     return urls
 
 
+def parse_social_input_rows(
+    value: str,
+    *,
+    preserve_repeated_rows: bool = True,
+) -> list[str]:
+    """Parse social input without silently deleting a non-empty source row.
+
+    Google Sheets cells sometimes contain a social URL without ``https://``.
+    Those known domains are normalized to HTTPS. A remaining non-empty row is
+    kept verbatim so Enrichment All can export it as an explicit failed row
+    instead of shifting every result that follows it.
+    """
+    rows: list[str] = []
+    seen: set[str] = set()
+    for line in value.splitlines():
+        raw_line = line.strip()
+        if not raw_line:
+            continue
+
+        parsed = parse_url_list(raw_line, preserve_repeated_rows=True)
+        if not parsed:
+            parsed = [
+                f"https://{match.group('url').rstrip(URL_TRAILING_PUNCTUATION)}"
+                for match in SCHEMELESS_SOCIAL_URL_PATTERN.finditer(raw_line)
+            ]
+
+        if not parsed:
+            parsed = [re.sub(r"\s+", " ", raw_line)]
+
+        seen_on_line: set[str] = set()
+        for url in parsed:
+            if url in seen_on_line:
+                continue
+            seen_on_line.add(url)
+            if not preserve_repeated_rows and url in seen:
+                continue
+            seen.add(url)
+            rows.append(url)
+    return rows
+
+
 def order_social_results_by_input(
     results: list[SocialResult],
     input_urls: list[str],
+    *,
+    fill_missing: bool = False,
 ) -> list[SocialResult]:
     """Order combined platform results by every input occurrence.
 
@@ -128,22 +182,45 @@ def order_social_results_by_input(
     matched to the next unused occurrence instead of using a dictionary that
     collapses repeated URLs into one position.
     """
-    positions: dict[str, deque[int]] = defaultdict(deque)
-    for position, url in enumerate(input_urls):
-        positions[url].append(position)
-
-    fallback_position = len(input_urls)
-    decorated: list[tuple[int, int, SocialResult]] = []
+    expected_urls = set(input_urls)
+    matching_results: dict[str, deque[tuple[int, SocialResult]]] = defaultdict(deque)
+    unmatched: list[tuple[int, SocialResult]] = []
     for sequence, result in enumerate(results):
-        matching_positions = positions.get(result.url)
-        position = (
-            matching_positions.popleft()
-            if matching_positions
-            else fallback_position + sequence
+        target = (
+            matching_results[result.url]
+            if result.url in expected_urls
+            else None
         )
-        decorated.append((position, sequence, result))
-    decorated.sort(key=lambda item: (item[0], item[1]))
-    return [result for _, _, result in decorated]
+        if target is None:
+            unmatched.append((sequence, result))
+        else:
+            target.append((sequence, result))
+
+    ordered: list[SocialResult] = []
+    for url in input_urls:
+        candidates = matching_results.get(url)
+        if candidates:
+            _, result = candidates.popleft()
+            ordered.append(result)
+            continue
+        if fill_missing:
+            from src.social_urls import platform_from_url
+
+            ordered.append(
+                failed_social_result(
+                    url,
+                    platform_from_url(url) or "Tidak dikenali",
+                    "Baris input tidak menghasilkan data. Jalankan ulang URL ini.",
+                )
+            )
+
+    leftovers = unmatched + [
+        item
+        for candidates in matching_results.values()
+        for item in candidates
+    ]
+    ordered.extend(result for _, result in sorted(leftovers, key=lambda item: item[0]))
+    return ordered
 
 
 def group_social_urls(urls: list[str]) -> tuple[dict[str, list[str]], list[dict[str, str]]]:

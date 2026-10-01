@@ -12,13 +12,15 @@ MIDETA membantu merapikan metadata media sosial, komentar publik, dan artikel me
 
 ### Yang bisa dilakukan
 
-MIDETA punya enam bagian utama:
+MIDETA punya delapan bagian utama:
 
 - **Social Media Enrichment** untuk mengambil tanggal posting, author, caption, followers, views, likes, comments, bookmark, shares, dan repost.
 - **Comment Scrapper** untuk mengambil komentar publik, membedakan komentar utama dan reply, lalu mengurutkannya berdasarkan engagement.
 - **Conventional Media Enrichment** untuk membersihkan artikel berita serta melengkapi tanggal, media, scope, tier, journalist, tone, quote mention, dan jenis penyebutan direct/indirect.
 - **Modified Link** untuk mengubah short/share link menjadi permalink posting yang bersih tanpa menjalankan enrichment.
 - **Followers Checker** untuk memperbarui jumlah followers banyak akun dalam satu tabel mapping dan menyimpan URL profil setiap platform.
+- **Profile Scraping** untuk mengambil URL posting publik dari satu profil TikTok pada rentang tanggal khusus tanpa login atau Apify.
+- **Keyword Search** untuk menemukan sampel posting publik TikTok dan Threads berdasarkan keyword, Boolean, dan rentang tanggal.
 - **Riwayat Analisis** untuk membuka kembali hasil yang pernah diproses.
 
 Platform media sosial yang didukung: YouTube, TikTok, Facebook, Instagram, Threads, dan X. Conventional Media Enrichment dapat menerima URL artikel dari berbagai situs berita publik.
@@ -106,6 +108,28 @@ Followers Checker mendukung Instagram, Facebook, TikTok, Threads, X, YouTube, se
 
 Tempel satu URL profil per baris seperti pada Social Media Enrichment. MIDETA mengenali platform secara otomatis dan menghasilkan kolom `Platform`, `Account Name`, `URL`, dan `Followers`. Urutan input dan URL berulang tetap dipertahankan. URL posting, akun yang gagal dibuka, dan akun yang belum login tetap memperoleh baris hasil dengan status yang jelas. Hasil dapat diunduh sebagai CSV atau XLSX.
 
+### Profile Scraping
+
+Profile Scraping menerima satu URL profil TikTok, `@username`, atau username biasa. Pilih tanggal awal dan tanggal akhir secara inklusif, lalu MIDETA menelusuri timeline publik dari posting terbaru menuju posting lama. Proses berhenti setelah melewati tanggal awal atau mencapai batas aman 10.000 posting.
+
+Fitur ini berjalan melalui extractor open-source lokal dan request publik yang browser-compatible. Tidak ada Chrome yang dibuka, tidak ada login/cookie akun yang dipakai, dan tidak membutuhkan Apify. Postingan privat, terhapus, dibatasi wilayah, atau tidak ditampilkan TikTok tetap tidak dapat diambil. Bila sumber publik terputus sebelum seluruh rentang terlewati, hasil yang sudah ditemukan tetap bisa diunduh tetapi diberi status parsial.
+
+Output CSV/XLSX berisi `No`, `Date Publish`, `Author`, `Post Type`, `Caption`, dan `URL`. URL juga tersedia sebagai daftar satu baris per posting untuk langsung disalin. Hasil diurutkan dari tanggal terbaru ke terlama dan post ID yang berulang—misalnya pinned post yang muncul kembali—hanya disimpan sekali.
+
+### Keyword Search
+
+Keyword Search adalah fitur discovery terpisah dengan prioritas TikTok dan Threads. Masukkan keyword biasa atau query Boolean, pilih platform, rentang tanggal, tipe hasil Threads, serta batas hasil. Contoh query:
+
+```text
+("ojol" OR "ojek online" OR gojek) NOT (promo OR voucher)
+```
+
+Operator `AND`, `OR`, dan `NOT` dapat digabung dengan tanda kurung. Tanda kutip mempertahankan sebuah frasa. MIDETA mengirim setiap istilah positif ke pencarian platform, menggabungkan hasil, menjalankan aturan Boolean serta filter tanggal secara lokal, lalu menghapus duplikasi berdasarkan permalink. Pencarian publik dicoba terlebih dahulu. Karena TikTok dan Threads kadang menahan daftar hasil dari request publik, aktifkan **Sesi TikTok** atau **Sesi Threads** bila platform terkait tidak menghasilkan data: login satu kali langsung di situs platform, klik **Periksa**, kemudian jalankan pencarian. Sesi ini terpisah dari Social Media Enrichment dan tidak membutuhkan Apify.
+
+Hasil berisi platform, tanggal, author, content, URL, engagement yang dapat dibaca, keyword yang cocok, tipe hasil, status, dan waktu pengambilan. Preview juga menampilkan total mention, author unik, engagement terbaca, serta tren harian. Semua baris dapat diunduh sebagai CSV atau XLSX.
+
+Keyword Search tidak setara dengan indeks berlisensi milik Meltwater. TikTok dan Threads dapat membatasi hasil publik, tidak menyertakan seluruh tanggal atau engagement, mengubah struktur halaman, dan melakukan rate limit. Karena itu hasil harus dianggap sebagai discovery/sampel, bukan total seluruh percakapan. MIDETA tidak melewati login, CAPTCHA, atau kontrol akses untuk memperluas cakupan tersebut.
+
 ### Comment Scrapper
 
 Pilih platform dan masukkan URL posting yang ingin diperiksa. Hasil komentar berisi:
@@ -120,7 +144,7 @@ Facebook, Threads, dan X memakai Chrome khusus MIDETA karena komentarnya baru di
 
 Enrichment Threads mencoba halaman publik terlebih dahulu. Jika Threads mengembalikan halaman kosong atau `invalid_post` untuk post yang sebenarnya masih ada, MIDETA otomatis memakai Sesi Threads yang sama sebagai fallback. Login satu kali diperlukan hanya untuk post yang dibatasi seperti ini; nilai yang tidak dapat dibaca ditulis **Cek**.
 
-MIDETA dapat mengambil maksimal 2.000 komentar dari setiap URL. Progress bar menampilkan jumlah yang sudah ditemukan selama halaman di-scroll dan reply dibuka. Platform tetap dapat menyembunyikan atau membatasi sebagian komentar.
+MIDETA dapat mengambil maksimal 10.000 komentar dari setiap URL. Progress bar menampilkan jumlah yang sudah ditemukan selama halaman di-scroll, komentar panjang dibuka, dan reply dimuat. Platform tetap dapat menyembunyikan atau membatasi sebagian komentar.
 
 Comment Scrapper juga mendukung Split Screen dan Triple Screen, dengan hasil terpisah untuk setiap platform.
 
@@ -177,7 +201,7 @@ Perlindungan tersebut menjaga repository utama dan mendeteksi penghapusan tidak 
 - MIDETA mencocokkan data dengan posting target. Data dari rekomendasi, caption, atau posting lain tidak dipakai sebagai engagement.
 - Jika Facebook tidak menampilkan followers tetapi menampilkan friends, jumlah friends dipakai sebagai pengganti.
 - Bookmark Facebook Reels hanya diisi bila Facebook benar-benar menampilkan angkanya.
-- Setiap URL tetap memiliki satu baris dan urutannya selalu mengikuti input, termasuk URL yang gagal diproses.
+- Setiap baris input tetap memiliki satu baris hasil dan urutannya selalu mengikuti input, termasuk URL yang gagal atau teks URL yang rusak. URL sosial tanpa `https://` akan dinormalisasi otomatis agar tidak hilang dan menggeser baris berikutnya.
 - Counter engagement yang memang tidak ada ditulis `0`; data yang tidak dapat dibaca, diblokir, atau tidak didukung ditulis **Cek**.
 - URL yang gagal total tetap berada pada urutan input dan ditulis **URL tidak dapat diproses**, sehingga baris hasil tidak bergeser.
 - Postingan privat, sesi login kedaluwarsa, CAPTCHA, perubahan tampilan platform, dan rate limit dapat membuat sebagian data tidak terbaca.
@@ -236,9 +260,15 @@ pages/5_Modified_Link.py
                            pembersih short/share link media sosial
 pages/6_Followers_Checker.py
                            pemeriksa followers dan mapping URL profil
+pages/7_Profile_Scraping.py
+                           pengambil URL posting TikTok per rentang tanggal
+pages/8_Keyword_Search.py
+                           pencarian keyword publik TikTok dan Threads
 src/connectors/            pembaca data tiap platform
 src/follower_browser.py    sesi login dan pembaca followers profil
 src/instagram_browser.py   enrichment Instagram dengan login
+src/tiktok_profile.py      pagination posting profil TikTok tanpa login
+src/keyword_search.py      Boolean, parsing, dan discovery keyword publik
 src/comment_browser.py     pengambilan komentar Facebook, Threads, dan X
 src/conventional_media.py  enrichment dan sesi login artikel berita
 src/batch.py               antrean dan pemulihan proses
@@ -255,13 +285,15 @@ MIDETA cleans up social-media metadata, public comments, and conventional-media 
 
 ### What it does
 
-MIDETA has six main sections:
+MIDETA has eight main sections:
 
 - **Social Media Enrichment** collects the post date, author, caption, followers, views, likes, comments, bookmarks, shares, and reposts.
 - **Comment Scrapper** collects public comments, separates parent comments from replies, and ranks them by engagement.
 - **Conventional Media Enrichment** cleans news articles and adds publication, media, journalist, tone, quoted-person, and direct/indirect mention fields.
 - **Modified Link** converts short/share URLs into clean post permalinks without running enrichment.
 - **Followers Checker** refreshes follower totals for multiple accounts while retaining each platform profile URL.
+- **Profile Scraping** collects public post URLs from one TikTok profile within a custom date range without login or Apify.
+- **Keyword Search** discovers a bounded sample of public TikTok and Threads posts by keyword, Boolean query, and date range.
 - **Analysis History** keeps earlier results available for review.
 
 Supported social platforms: YouTube, TikTok, Facebook, Instagram, Threads, and X. Conventional Media Enrichment accepts article URLs from a broad range of public news websites.
@@ -342,6 +374,28 @@ Followers Checker supports Instagram, Facebook, TikTok, Threads, X, YouTube, and
 
 Paste one profile URL per line, just like Social Media Enrichment. MIDETA detects the platform automatically and returns `Platform`, `Account Name`, `URL`, and `Followers`. Input order and duplicate URLs are retained. Post URLs, unavailable accounts, and logged-out sessions keep their own result rows with a clear status. Results can be downloaded as CSV or XLSX.
 
+### Profile Scraping
+
+Profile Scraping accepts one TikTok profile URL, `@username`, or plain username. Choose an inclusive start and end date, and MIDETA walks the public timeline from newest to oldest. It stops after passing the start date or reaching the 10,000-post safety limit.
+
+The feature uses a local open-source extractor and browser-compatible public requests. It does not launch Chrome, use login cookies, or require Apify. Private, deleted, region-restricted, or otherwise unavailable posts cannot be collected. If the public source stops before the entire interval is covered, the collected URLs remain downloadable but the run is marked partial.
+
+CSV/XLSX output contains `No`, `Date Publish`, `Author`, `Post Type`, `Caption`, and `URL`. A one-URL-per-line copy box is also provided. Results are sorted newest-first, and repeated post IDs—such as a pinned post returned again during pagination—are kept only once.
+
+### Keyword Search
+
+Keyword Search is a separate discovery feature focused first on TikTok and Threads. Enter plain keywords or a Boolean query, choose the platforms, date range, Threads result type, and output limit. For example:
+
+```text
+("ojol" OR "ojek online" OR gojek) NOT (promo OR voucher)
+```
+
+`AND`, `OR`, and `NOT` can be grouped with parentheses, while quotes preserve a phrase. MIDETA queries each positive term through platform search, merges the responses, applies the full Boolean rule and date range locally, and deduplicates by permalink. Public search is attempted first. Because TikTok and Threads may withhold result cards from plain public requests, enable the relevant **TikTok Session** or **Threads Session** when a platform returns no data: log in once directly on that platform, click **Periksa**, and then run the search. These sessions are separate from Social Media Enrichment and do not require Apify.
+
+The output includes platform, date, author, content, URL, readable engagement, matched keywords, result type, status, and collection time. The page also summarizes mentions, unique authors, readable engagement, and a daily trend; all rows can be exported to CSV or XLSX.
+
+This is not equivalent to Meltwater's licensed index. TikTok and Threads can return a bounded public sample, omit dates or engagement, change page structure, and rate-limit requests. Treat the output as discovery rather than a complete count of all conversation. MIDETA does not bypass login, CAPTCHAs, or access controls to increase coverage.
+
 ### Comment Scrapper
 
 Choose a platform and paste the post URLs. Comment results include:
@@ -354,7 +408,7 @@ Choose a platform and paste the post URLs. Comment results include:
 
 Facebook, Threads, and X use dedicated MIDETA Chrome profiles because their comments load inside the page. Before the first run, click **Buka Sesi**, log in through MIDETA Chrome, then click **Periksa Login**. The saved session is reused until it expires or you log out.
 
-MIDETA can collect up to 2,000 comments from each URL. The progress bar shows how many have been found while the page is scrolled and replies are opened. The platform may still hide or limit part of a conversation.
+MIDETA can collect up to 10,000 comments from each URL. The progress bar shows how many have been found while the page is scrolled, long comments are expanded, and replies are opened. The platform may still hide or limit part of a conversation.
 
 Comment Scrapper also supports Split Screen and Triple Screen, with separate results for every platform.
 
@@ -411,7 +465,7 @@ These controls protect the primary repository and catch accidental removal. Publ
 - MIDETA matches metrics to the target post. Values from recommendations, captions, or nearby posts are not treated as engagement.
 - If Facebook has no public follower count but shows friends, MIDETA uses the friend count.
 - Facebook Reel bookmarks are filled only when Facebook displays a real count.
-- Every URL keeps one row in its original input order, including URLs that fail.
+- Every non-empty input row keeps one result row in its original order, including failed or malformed URL text. Social URLs without `https://` are normalized automatically so they cannot disappear and shift later rows.
 - Engagement counters that are genuinely absent are written as `0`; unreadable, blocked, or unsupported data is marked **Cek**.
 - A URL that fails completely stays in its original input position and is marked **URL tidak dapat diproses**, so following rows never shift.
 - Private posts, expired sessions, CAPTCHAs, layout changes, and rate limits may leave some fields unavailable.
@@ -470,11 +524,17 @@ pages/5_Modified_Link.py
                            social short/share-link cleaner
 pages/6_Followers_Checker.py
                            profile follower and URL mapping checker
+pages/7_Profile_Scraping.py
+                           TikTok profile post URLs by date range
+pages/8_Keyword_Search.py
+                           public TikTok and Threads keyword discovery
 src/connectors/            platform data readers
 src/follower_browser.py    profile login sessions and follower reader
 src/instagram_browser.py   logged-in Instagram enrichment
 src/tiktok_browser.py      shared TikTok result model and parser helpers
 src/tiktok_free.py         no-login TikTok enrichment
+src/tiktok_profile.py      no-login TikTok profile pagination
+src/keyword_search.py      Boolean parsing and public keyword discovery
 src/comment_browser.py     Facebook, Threads, and X comment collection
 src/conventional_media.py  news article enrichment and login session
 src/batch.py               queues and resume support

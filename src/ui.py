@@ -189,7 +189,7 @@ def render_github_profile() -> None:
     )
 
 def render_brand_header() -> None:
-    brand, enrichment, conventional, comments, modified, followers, history = st.columns([3.1, 1.0, 1.0, 1.0, .9, 1.0, .9], vertical_alignment="center")
+    brand, enrichment, conventional, comments, keyword, modified, followers, profile, history = st.columns([2.55, .9, .9, .9, .8, .72, .9, .8, .75], vertical_alignment="center")
     brand.markdown(
         f"""
         <div class="brand-lockup">
@@ -217,6 +217,12 @@ def render_brand_header() -> None:
         icon=":material/forum:",
         width="stretch",
     )
+    keyword.page_link(
+        "pages/8_Keyword_Search.py",
+        label="Cari",
+        icon=":material/search:",
+        width="stretch",
+    )
     modified.page_link(
         "pages/5_Modified_Link.py",
         label="Link",
@@ -227,6 +233,12 @@ def render_brand_header() -> None:
         "pages/6_Followers_Checker.py",
         label="Followers",
         icon=":material/groups:",
+        width="stretch",
+    )
+    profile.page_link(
+        "pages/7_Profile_Scraping.py",
+        label="Profil",
+        icon=":material/manage_search:",
         width="stretch",
     )
     history.page_link(

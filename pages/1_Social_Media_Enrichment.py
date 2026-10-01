@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
 
-from src.batch import SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_social_all_export_row, compact_social_export_row, failed_social_result, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, social_job_results, social_result_row
+from src.batch import SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_social_all_export_row, compact_social_export_row, failed_social_result, merge_facebook_advanced_result, order_social_results_by_input, parse_social_input_rows, social_job_results, social_result_row
 import src.comment_browser as comment_browser_module
 from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MAX_PARALLEL_PUBLIC_URLS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, detect_platform, get_platform_connector
@@ -321,7 +321,7 @@ def render_platform_setup(platform: str, slot: str, compact: bool = False) -> st
 
 
 def validate_job_request(request: dict[str, Any]) -> str | None:
-    urls = parse_url_list(request["url_text"], preserve_repeated_rows=True)
+    urls = parse_social_input_rows(request["url_text"], preserve_repeated_rows=True)
     request["urls"] = urls
     if not urls:
         return f"{request['platform']}: masukkan setidaknya satu URL posting."
@@ -580,6 +580,7 @@ def render_all_job_results(
     results = order_social_results_by_input(
         results,
         st.session_state.get("social_all_order", []),
+        fill_missing=all(job["status"] == "completed" for job in jobs),
     )
     if any(result.is_mock for result in results):
         st.warning("DATA CONTOH AKTIF. Informasi di bawah bukan data dari tautan.")
@@ -1100,7 +1101,7 @@ if layout_mode == "Enrichment All":
         all_submitted = st.form_submit_button("Mulai Enrichment All", type="primary", width="stretch")
 
     if all_submitted:
-        all_urls = parse_url_list(all_url_text, preserve_repeated_rows=True)
+        all_urls = parse_social_input_rows(all_url_text, preserve_repeated_rows=True)
         if not all_urls:
             st.error("Masukkan setidaknya satu URL posting.")
         elif len(all_urls) > MAX_ENRICHMENT_URLS:

@@ -98,6 +98,20 @@ class SocialURLTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(canonical_social_url(source), expected)
 
+    def test_canonicalizes_facebook_permalink_and_keeps_target_identifiers(self):
+        source = (
+            "https://www.facebook.com/permalink.php?"
+            "story_fbid=pfbid029QvQumn6riSYU2SJ2DNRgsWbKS641Y9RyedtA62CmKwmtw2CRDfYtfKZVFEpPGmdl"
+            "&id=61579755060855&rdid=kWpYPf0HvTHPL8Yw#"
+        )
+
+        self.assertEqual(
+            canonical_social_url(source),
+            "https://www.facebook.com/permalink.php?"
+            "story_fbid=pfbid029QvQumn6riSYU2SJ2DNRgsWbKS641Y9RyedtA62CmKwmtw2CRDfYtfKZVFEpPGmdl"
+            "&id=61579755060855",
+        )
+
     @patch("src.social_urls.resolve_social_url")
     def test_modified_link_replaces_threads_share_path_with_post_permalink(self, resolve):
         resolve.return_value = "https://www.threads.com/@nalarpedia_id/post/Ddn_ggzgjAE?xmt=AQ"

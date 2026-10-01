@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import unittest
-from src.batch import CHECK_VALUE, FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_comment_export_rows, compact_social_all_export_row, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, merge_facebook_advanced_result, order_social_results_by_input, parse_url_list, rank_comment_rows, social_job_results, social_result_row
+from src.batch import CHECK_VALUE, FAILED_URL_MESSAGE, SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_comment_export_rows, compact_social_all_export_row, compact_social_export_row, failed_social_result, format_comment_date, format_posting_date, group_social_urls, is_current_social_batch, merge_facebook_advanced_result, order_social_results_by_input, parse_social_input_rows, parse_url_list, rank_comment_rows, social_job_results, social_result_row
 from src.models import DataField, FieldStatus
 from src.connectors import get_connector
 
@@ -73,6 +73,30 @@ class BatchTests(unittest.TestCase):
     def test_parse_url_list_ignores_rows_without_urls(self):
         value = "Aug 30, 2026\ncaption tanpa tautan\nhttps://www.threads.com/@akun/post/ABC."
         self.assertEqual(parse_url_list(value), ["https://www.threads.com/@akun/post/ABC"])
+
+    def test_social_input_normalizes_schemeless_url_from_spreadsheet(self):
+        value = "threads.com/@nandasaf/post/DVtKUwVi123"
+
+        self.assertEqual(
+            parse_social_input_rows(value),
+            ["https://threads.com/@nandasaf/post/DVtKUwVi123"],
+        )
+
+    def test_social_input_keeps_invalid_nonempty_row_for_error_export(self):
+        value = (
+            "https://www.threads.com/@before/post/ABC\n"
+            "tautan pada baris ini rusak\n"
+            "https://x.com/after/status/123"
+        )
+
+        self.assertEqual(
+            parse_social_input_rows(value),
+            [
+                "https://www.threads.com/@before/post/ABC",
+                "tautan pada baris ini rusak",
+                "https://x.com/after/status/123",
+            ],
+        )
 
     def test_group_social_urls_detects_mixed_platforms_and_reports_unknown_urls(self):
         grouped, unsupported = group_social_urls(
@@ -321,6 +345,27 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(exported[1]["Caption"], CHECK_VALUE)
         self.assertIn("Platform belum didukung", exported[1]["Error"])
         self.assertEqual(exported[0]["Error"], "Tidak ada")
+
+    def test_completed_combined_export_fills_any_missing_input_row(self):
+        first_url = "https://www.threads.com/@first/post/ABC"
+        missing_url = "https://www.threads.com/@missing/post/DEF"
+        last_url = "https://x.com/last/status/123"
+        first = get_connector(first_url).mock_enrichment(first_url)
+        last = get_connector(last_url).mock_enrichment(last_url)
+
+        ordered = order_social_results_by_input(
+            [last, first],
+            [first_url, missing_url, last_url],
+            fill_missing=True,
+        )
+        exported = [compact_social_all_export_row(result) for result in ordered]
+
+        self.assertEqual(
+            [row["URL"] for row in exported],
+            [first_url, missing_url, last_url],
+        )
+        self.assertEqual(exported[1]["Likes"], CHECK_VALUE)
+        self.assertIn("tidak menghasilkan data", exported[1]["Error"])
 
     def test_partially_readable_result_uses_zero_only_for_absent_public_counts(self):
         url = "https://x.com/akun/status/zero"

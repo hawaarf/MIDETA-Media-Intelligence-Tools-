@@ -101,6 +101,7 @@ def canonical_social_url(url: str, platform: str | None = None) -> str | None:
         return None
 
     parsed = urlparse(value)
+    query = parse_qs(parsed.query)
     parts = [part for part in parsed.path.split("/") if part]
     folded = [part.casefold() for part in parts]
 
@@ -127,7 +128,6 @@ def canonical_social_url(url: str, platform: str | None = None) -> str | None:
 
     if detected == "YouTube":
         hostname = (parsed.hostname or "").casefold()
-        query = parse_qs(parsed.query)
         video_id = None
         if hostname in {"youtu.be", "www.youtu.be"} and parts:
             video_id = parts[0]
