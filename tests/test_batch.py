@@ -367,7 +367,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(exported[1]["Likes"], CHECK_VALUE)
         self.assertIn("tidak menghasilkan data", exported[1]["Error"])
 
-    def test_partially_readable_result_uses_zero_only_for_absent_public_counts(self):
+    def test_partially_readable_result_uses_zero_for_absent_or_unsupported_counts(self):
         url = "https://x.com/akun/status/zero"
         result = get_connector(url).mock_enrichment(url)
         result.likes = DataField(value=None, status=FieldStatus.NOT_PUBLIC)
@@ -378,9 +378,26 @@ class BatchTests(unittest.TestCase):
 
         self.assertEqual(row["Likes"], 0)
         self.assertEqual(row["Comments"], 0)
-        self.assertEqual(row["Shares"], CHECK_VALUE)
-        self.assertIn("Shares", row["Data yang tidak tersedia"])
+        self.assertEqual(row["Shares"], 0)
+        self.assertEqual(row["Data yang tidak tersedia"], "Lengkap")
         self.assertNotIn("Likes", row["Data yang tidak tersedia"])
+
+    def test_unreadable_engagement_requires_a_direct_check(self):
+        url = "https://www.youtube.com/watch?v=blocked"
+        result = get_connector(url).mock_enrichment(url)
+        result.likes = DataField(value=None, status=FieldStatus.BLOCKED)
+        result.comments = DataField(value=None, status=FieldStatus.FAILED)
+        result.bookmarks = DataField(value=None, status=FieldStatus.NOT_SUPPORTED)
+
+        row = compact_social_export_row(result)
+
+        self.assertEqual(row["Likes"], CHECK_VALUE)
+        self.assertEqual(row["Comments"], CHECK_VALUE)
+        self.assertEqual(row["Save atau bookmark"], 0)
+        self.assertEqual(
+            row["Data yang tidak tersedia"],
+            "Cek langsung: Likes, Comments",
+        )
 
     def test_fully_unreadable_result_uses_check_instead_of_false_zero(self):
         url = "https://x.com/akun/status/unreadable"

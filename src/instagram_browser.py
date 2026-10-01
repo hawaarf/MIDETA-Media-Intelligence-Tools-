@@ -193,7 +193,7 @@ class InstagramBrowserCollector:
         author = cls._username(author) or cls._target_username(source, shortcode)
         if not author and description:
             author_match = re.search(
-                r"-\s*([A-Za-z0-9._]+)\s+on\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}\s*:",
+                r"-\s*([A-Za-z0-9._]+)\s+on\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}(?:\s*:|\s*$)",
                 description,
                 re.I,
             )

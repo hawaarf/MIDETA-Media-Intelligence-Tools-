@@ -342,6 +342,32 @@ class CommentBrowserTests(unittest.TestCase):
             )
         )
 
+    def test_facebook_target_match_accepts_logged_in_numeric_alias_for_same_owner(self):
+        expected = (
+            "https://www.facebook.com/permalink.php?"
+            "story_fbid=pfbid029QvQumn6riSYU2SJ2DNRgsWbKS641Y9RyedtA62CmKwmtw2CRDfYtfKZVFEpPGmdl"
+            "&id=61579755060855"
+        )
+
+        self.assertTrue(
+            CommentBrowserCollector._same_facebook_target(
+                expected,
+                "https://www.facebook.com/61579755060855/posts/123456789",
+            )
+        )
+        self.assertFalse(
+            CommentBrowserCollector._same_facebook_target(
+                expected,
+                "https://www.facebook.com/999999999/posts/123456789",
+            )
+        )
+        self.assertFalse(
+            CommentBrowserCollector._same_facebook_target(
+                expected,
+                "https://www.facebook.com/61579755060855/posts/pfbidDifferentPost",
+            )
+        )
+
     def test_facebook_dom_rows_are_converted_to_parent_and_reply(self):
         collector = CommentBrowserCollector("Facebook")
         rows = [

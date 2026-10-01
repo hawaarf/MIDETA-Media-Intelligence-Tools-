@@ -22,7 +22,7 @@ from src.database import add_history, create_social_job, get_latest_social_job, 
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, InstagramLoginRequired, build_instagram_browser_result
 from src.models import FieldStatus, SocialResult
-from src.social_urls import resolve_social_url
+from src.social_urls import canonical_social_url, resolve_social_url
 from src.tiktok_browser import build_tiktok_browser_result
 import src.connectors.tiktok as tiktok_connector_module
 import src.tiktok_free as tiktok_free_module
@@ -43,7 +43,7 @@ TikTokFreeError = tiktok_free_module.TikTokFreeError
 # yang sudah memiliki pembaca enrichment, lalu gunakan nama cache baru agar
 # instance lama tidak diambil kembali.
 if (
-    getattr(comment_browser_module.CommentBrowserCollector, "RUNTIME_VERSION", 0) < 20
+    getattr(comment_browser_module.CommentBrowserCollector, "RUNTIME_VERSION", 0) < 24
     or not hasattr(comment_browser_module.CommentBrowserCollector, "collect_facebook_enrichment")
 ):
     comment_browser_module = importlib.reload(comment_browser_module)
@@ -64,6 +64,10 @@ page_intro(
 st.info(
     "Alur: pilih mode → tempel satu URL per baris → mulai enrichment → periksa dan unduh hasil. "
     "Enrichment All mengenali platform dan URL pendek secara otomatis."
+)
+st.caption(
+    "Aturan engagement: counter yang memang tidak ada atau tidak berlaku pada platform ditulis 0. "
+    "Cek berarti counter gagal dibaca dan perlu diperiksa langsung pada posting."
 )
 
 PLATFORM_ICONS = {
@@ -99,7 +103,7 @@ def threads_metadata_browser_v6() -> CommentBrowserCollector:
 
 
 @st.cache_resource(show_spinner=False)
-def facebook_enrichment_browser_v5() -> CommentBrowserCollector:
+def facebook_enrichment_browser_v6() -> CommentBrowserCollector:
     return CommentBrowserCollector("Facebook")
 
 
@@ -252,7 +256,7 @@ def render_facebook_controls(slot: str) -> str:
     open_col, check_col, close_col = st.columns(3)
     if open_col.button("Buka Chrome Facebook", key=f"open_facebook_{slot}", width="stretch"):
         try:
-            if facebook_enrichment_browser_v5().open_login():
+            if facebook_enrichment_browser_v6().open_login():
                 st.success("Facebook sudah login dan siap digunakan untuk Advanced enrichment.")
             else:
                 st.info("Selesaikan login di Chrome Facebook, lalu tekan Periksa Login.")
@@ -260,14 +264,14 @@ def render_facebook_controls(slot: str) -> str:
             st.error(str(exc))
     if check_col.button("Periksa Login", key=f"check_facebook_{slot}", width="stretch"):
         try:
-            if facebook_enrichment_browser_v5().is_logged_in():
+            if facebook_enrichment_browser_v6().is_logged_in():
                 st.success("Facebook sudah login dan siap digunakan untuk Advanced enrichment.")
             else:
                 st.warning("Login Facebook belum terdeteksi. Selesaikan login di Chrome MIDETA.")
         except CommentBrowserError as exc:
             st.error(str(exc))
     if close_col.button("Tutup Chrome Facebook", key=f"close_facebook_{slot}", width="stretch"):
-        facebook_enrichment_browser_v5().close()
+        facebook_enrichment_browser_v6().close()
         st.info("Chrome Facebook MIDETA sudah ditutup.")
     return enrichment_mode
 
@@ -360,7 +364,7 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | No
         for request in requests
     ):
         try:
-            if not facebook_enrichment_browser_v5().is_logged_in():
+            if not facebook_enrichment_browser_v6().is_logged_in():
                 errors.append("Facebook belum login. Buka Chrome Facebook dan selesaikan login sebelum memulai batch.")
         except CommentBrowserError as exc:
             errors.append(str(exc))
@@ -692,6 +696,8 @@ def collect_one_item(
             if not job["mock_mode"] and needs_browser_target
             else url
         )
+        if job["platform"] == "Facebook":
+            processing_url = canonical_social_url(processing_url, "Facebook") or processing_url
         connector = get_platform_connector(processing_url, job["platform"])
         if job["mock_mode"]:
             result = connector.mock_enrichment(url)
@@ -946,7 +952,7 @@ def run_active_jobs(
                 if job["platform"] == "Instagram":
                     active_browser = instagram_browser()
                 elif job["platform"] == "Facebook":
-                    active_browser = facebook_enrichment_browser_v5()
+                    active_browser = facebook_enrichment_browser_v6()
                 else:
                     active_browser = threads_metadata_browser_v6()
                 if job["platform"] in {"Instagram", "Facebook"} and not active_browser.is_logged_in():

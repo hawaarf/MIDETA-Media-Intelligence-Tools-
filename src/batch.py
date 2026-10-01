@@ -12,7 +12,7 @@ from src.dates import parse_social_datetime
 from src.models import DataField, FieldStatus, SocialResult
 from src.sentiment import classify_comment_tone
 
-SOCIAL_BATCH_VERSION = 50
+SOCIAL_BATCH_VERSION = 54
 COMMENT_BATCH_VERSION = 16
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -449,8 +449,9 @@ def social_field_export_value(
     """Render one social field without confusing missing data with zero.
 
     A fully unreadable URL and explicit read failures become ``Cek``. For a
-    partially readable post, an absent public numeric counter is treated as a
-    real zero. Unsupported or blocked counters remain ``Cek``.
+    partially readable post, an absent or platform-unsupported numeric counter
+    is treated as a real zero. Blocked, failed, and login-only counters remain
+    ``Cek`` because they still need manual verification.
     """
     if result_unreadable:
         return CHECK_VALUE
@@ -463,7 +464,10 @@ def social_field_export_value(
             value = re.sub(r"\s+", " ", value).strip()
         return value
 
-    if label in SOCIAL_COUNT_FIELDS and field.status == FieldStatus.NOT_PUBLIC:
+    if label in SOCIAL_COUNT_FIELDS and field.status in {
+        FieldStatus.NOT_PUBLIC,
+        FieldStatus.NOT_SUPPORTED,
+    }:
         return 0
     return CHECK_VALUE
 
@@ -527,7 +531,7 @@ def compact_social_export_row(result: SocialResult) -> dict:
     row["Data yang tidak tersedia"] = (
         f"{CHECK_VALUE}: {FAILED_URL_MESSAGE}"
         if unreadable
-        else f"{CHECK_VALUE}: {', '.join(needs_check)}"
+        else f"Cek langsung: {', '.join(needs_check)}"
         if needs_check
         else "Lengkap"
     )

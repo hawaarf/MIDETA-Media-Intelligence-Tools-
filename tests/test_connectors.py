@@ -10,6 +10,7 @@ from src.models import FieldStatus
 
 SOCIAL_HTML = """<html><head><meta name="author" content="@akun"><meta property="og:description" content="Caption publik"><script type="application/ld+json">{"@type":"SocialMediaPosting","datePublished":"2026-08-30","interactionStatistic":{"interactionType":"LikeAction","userInteractionCount":42}}</script><script>{"viewCount":"1200","repostCount":"8"}</script></head></html>"""
 INSTAGRAM_DATE_HTML = """<html><head><meta property="og:description" content="696 likes, 41 comments - nengrikagodel on August 31, 2026: &quot;Caption publik&quot;"><meta name="author" content="nengrikagodel"></head></html>"""
+INSTAGRAM_NO_CAPTION_HTML = """<html><head><meta property="og:description" content="59 likes, 2 comments - jsxproid on September 28, 2026"><meta name="author" content="jsxproid"></head></html>"""
 INSTAGRAM_PROFILE_POST_HTML = """<html><head><meta property="og:description" content="10 likes, 2 comments - profilcontoh on August 25, 2026: &quot;Caption publik&quot;"><meta name="author" content="profilcontoh"></head></html>"""
 INSTAGRAM_PROFILE_HTML = """<html><head><meta property="og:description" content="136K Followers, 1,558 Following, 1,349 Posts - Profil Contoh (@profilcontoh)"></head></html>"""
 INSTAGRAM_DECIMAL_PROFILE_HTML = """<html><head><meta property="og:description" content="24.4K Followers, 78 Following, 355 Posts - Vonix Media (@vonixmedia.id)"></head></html>"""
@@ -56,6 +57,15 @@ THREADS_BROWSER_PROFILE_HTML = """<html><head><meta property="og:description"
 content="508 Followers • 33 Threads • Ojol Solo–Karanganyar"></head></html>"""
 X_REPLIES_HTML = """<html><script type="application/json">{"tweets":[{"rest_id":"100","legacy":{"full_text":"Posting utama","conversation_id_str":"100","favorite_count":9,"reply_count":2},"core":{"user_results":{"result":{"legacy":{"screen_name":"pemilik"}}}}},{"rest_id":"101","legacy":{"full_text":"Komentar langsung","conversation_id_str":"100","in_reply_to_status_id_str":"100","favorite_count":15,"reply_count":1,"created_at":"Thu Sep 03 03:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"ayu"}}}}},{"rest_id":"102","legacy":{"full_text":"Balasan komentar","conversation_id_str":"100","in_reply_to_status_id_str":"101","favorite_count":4,"reply_count":0,"created_at":"Thu Sep 03 04:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"bima"}}}}},{"rest_id":"999","legacy":{"full_text":"Tweet rekomendasi","conversation_id_str":"999","in_reply_to_status_id_str":"998","favorite_count":999},"core":{"user_results":{"result":{"legacy":{"screen_name":"lain"}}}}}]}</script></html>"""
 X_FLIGHT_HTML = """<html><head><meta property="article:author" content="https://x.com/jurnal_ekuitas"><meta property="og:description" content="Caption X"><meta property="article:published_time" content="2026-08-13T03:07:48.000Z"></head><script>rest_id:"999",counts:{__typename:"ApiCounts",bookmark_count:91,favorite_count:999,reply_count:88,retweet_count:77},views:{__typename:"ViewCountInfo",count:"9999"};rest_id:"2087737859063394648",core:{__typename:"UserCore",screen_name:"jurnal_ekuitas",name:"Stock Journal"},relationship_counts:{__typename:"UserRelationshipCounts",followers:2224,following:106},counts:{__typename:"ApiCounts",bookmark_count:64,favorite_count:629,reply_count:53,retweet_count:64,quote_count:15},views:{__typename:"ViewCountInfo",count:"142215"}</script></html>"""
+X_TARGET_STRUCTURED_HTML = """<html><head><meta property="og:description" content="Caption rekomendasi"><meta property="article:published_time" content="2026-01-01T00:00:00Z"></head><script type="application/json">{"tweets":[{"rest_id":"777","legacy":{"full_text":"Posting target lengkap","created_at":"Thu Sep 03 03:00:00 +0000 2026","favorite_count":21,"reply_count":4,"bookmark_count":2,"retweet_count":5,"quote_count":3},"views":{"count":"800"},"core":{"user_results":{"result":{"legacy":{"screen_name":"target_author","name":"Target Author","followers_count":1234}}}}},{"rest_id":"999","legacy":{"full_text":"Posting rekomendasi","favorite_count":999,"reply_count":999},"views":{"count":"99999"},"core":{"user_results":{"result":{"legacy":{"screen_name":"wrong_author","followers_count":99999}}}}}]}</script></html>"""
+YOUTUBE_WATCH_HTML = """<html><head><link rel="canonical" href="https://www.youtube.com/watch?v=Y8yF1AIqqn0"></head><body>
+<script>var ytInitialPlayerResponse = {"videoDetails":{"videoId":"Y8yF1AIqqn0","author":"Tribun Singkawang","shortDescription":"Ratusan pengemudi ojek online menggelar unjuk rasa.","viewCount":"483"},"microformat":{"playerMicroformatRenderer":{"ownerChannelName":"Tribun Singkawang","publishDate":"2026-10-01","uploadDate":"2026-10-01"}}};</script>
+<script>var ytInitialData = {"contents":{"videoPrimaryInfoRenderer":{"videoActions":{"accessibilityData":{"label":"0 likes"}}},"videoSecondaryInfoRenderer":{"owner":{"videoOwnerRenderer":{"subscriberCountText":{"simpleText":"3,67 jt subscriber"}}}},"commentsHeaderRenderer":{"countText":{"simpleText":"0 Komentar"}}},"recommendation":{"videoId":"WrongVideo","author":"Author rekomendasi","commentCount":"999"}};</script>
+</body></html>"""
+YOUTUBE_SHORTS_WATCH_HTML = """<html><head><link rel="canonical" href="https://www.youtube.com/watch?v=oIwSWzz1qNM"></head><body>
+<script>var ytInitialPlayerResponse = {"videoDetails":{"videoId":"oIwSWzz1qNM","author":"Klip Farhan","shortDescription":"20.000 buruh demo di Jakarta.","viewCount":"20000"},"microformat":{"playerMicroformatRenderer":{"ownerChannelName":"Klip Farhan","publishDate":"2026-10-01"}}};</script>
+<script>var ytInitialData = {"contents":{"reelPlayerOverlayRenderer":{"actionButtons":{"likeButton":{"likeButtonRenderer":{"toggleButtonViewModel":{"defaultButtonViewModel":{"buttonViewModel":{"title":"6"}}}}},"commentButton":{"buttonRenderer":{"accessibilityData":{"label":"0 comments"}}}}},"videoSecondaryInfoRenderer":{"owner":{"videoOwnerRenderer":{"subscriberCountText":{"simpleText":"12K subscribers"}}}}}};</script>
+</body></html>"""
 INSTAGRAM_REPOST_HTML = """<html><head><meta property="og:description" content="Caption Instagram"></head><script>{"code":"PostingLain","repost_count":91},{"code":"DcRepost123","reshare_count":7}</script></html>"""
 INSTAGRAM_VISIBLE_REPOST_HTML = """<html><head><meta property="og:description" content="7.6K likes, 144 comments - gnfi on August 30, 2026: &quot;Caption bersih saja&quot;. "><meta name="author" content="gnfi"></head><script>{"node":{"reshare_count_reduced":"70","shortcode":"DcqWqENG04A"}}</script></html>"""
 COMMENT_HTML = """<script type="application/ld+json">{"@type":"Article","comment":[{"@type":"Comment","text":"Komentar publik","author":{"name":"Ayu"},"upvoteCount":3,"comment":[{"@type":"Comment","text":"Balasan publik","author":{"name":"Bima"},"upvoteCount":1}]}]}</script>"""
@@ -148,6 +158,15 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.followers.value, 0)
         self.assertEqual(result.views.value, 0)
         self.assertEqual(result.reposts.value, 0)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(INSTAGRAM_NO_CAPTION_HTML, "https://www.instagram.com/p/Dd21ZiUiYg1/"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/Dd21ZiUiYg1/")
+    def test_instagram_uses_dash_when_post_has_no_caption(self, _validate, _fetch):
+        url = "https://www.instagram.com/p/Dd21ZiUiYg1/"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(result.username.value, "jsxproid")
+        self.assertEqual(result.caption.value, "-")
+        self.assertEqual(result.posted_at.value, "2026-09-28")
 
     @patch("src.connectors.base.fetch_public_html", return_value=(INSTAGRAM_TARGET_DATE_HTML, "https://www.instagram.com/p/TargetDate/"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.instagram.com/p/TargetDate/")
@@ -479,6 +498,53 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.bookmarks.value, 64)
         self.assertEqual(result.reposts.value, 79)
         self.assertEqual(result.likes.status, FieldStatus.AVAILABLE)
+        self.assertEqual(result.comments.status, FieldStatus.AVAILABLE)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(X_TARGET_STRUCTURED_HTML, "https://x.com/target_author/status/777"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://x.com/target_author/status/777")
+    def test_x_reads_only_the_requested_structured_tweet(self, _validate, _fetch):
+        url = "https://x.com/target_author/status/777"
+        result = get_connector(url).enrich(url)
+
+        self.assertEqual(result.username.value, "target_author")
+        self.assertEqual(result.caption.value, "Posting target lengkap")
+        self.assertEqual(result.posted_at.value, "2026-09-03T03:00:00+00:00")
+        self.assertEqual(result.followers.value, 1234)
+        self.assertEqual(result.views.value, 800)
+        self.assertEqual(result.likes.value, 21)
+        self.assertEqual(result.comments.value, 4)
+        self.assertEqual(result.bookmarks.value, 2)
+        self.assertEqual(result.reposts.value, 8)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(YOUTUBE_WATCH_HTML, "https://www.youtube.com/watch?v=Y8yF1AIqqn0"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.youtube.com/watch?v=Y8yF1AIqqn0")
+    def test_youtube_reads_target_author_and_explicit_zero_comments(self, _validate, _fetch):
+        url = "https://www.youtube.com/watch?v=Y8yF1AIqqn0"
+        result = get_connector(url).enrich(url)
+
+        self.assertEqual(result.username.value, "Tribun Singkawang")
+        self.assertEqual(result.caption.value, "Ratusan pengemudi ojek online menggelar unjuk rasa.")
+        self.assertEqual(result.posted_at.value, "2026-10-01T00:00:00+07:00")
+        self.assertEqual(result.followers.value, 3_670_000)
+        self.assertEqual(result.views.value, 483)
+        self.assertEqual(result.likes.value, 0)
+        self.assertEqual(result.comments.value, 0)
+        self.assertEqual(result.comments.status, FieldStatus.AVAILABLE)
+        self.assertNotEqual(result.username.value, "Author rekomendasi")
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(YOUTUBE_SHORTS_WATCH_HTML, "https://www.youtube.com/watch?v=oIwSWzz1qNM"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.youtube.com/watch?v=oIwSWzz1qNM")
+    def test_youtube_shorts_uses_watch_route_and_reads_engagement(self, _validate, fetch):
+        url = "https://www.youtube.com/shorts/oIwSWzz1qNM"
+        result = get_connector(url).enrich(url)
+
+        fetch.assert_called_once_with("https://www.youtube.com/watch?v=oIwSWzz1qNM")
+        self.assertEqual(result.url, url)
+        self.assertEqual(result.username.value, "Klip Farhan")
+        self.assertEqual(result.followers.value, 12_000)
+        self.assertEqual(result.views.value, 20_000)
+        self.assertEqual(result.likes.value, 6)
+        self.assertEqual(result.comments.value, 0)
         self.assertEqual(result.comments.status, FieldStatus.AVAILABLE)
 
     @patch("src.connectors.base.fetch_public_html", return_value=(COMMENT_HTML, "https://example.com/post"))

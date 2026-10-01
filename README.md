@@ -202,7 +202,7 @@ Perlindungan tersebut menjaga repository utama dan mendeteksi penghapusan tidak 
 - Jika Facebook tidak menampilkan followers tetapi menampilkan friends, jumlah friends dipakai sebagai pengganti.
 - Bookmark Facebook Reels hanya diisi bila Facebook benar-benar menampilkan angkanya.
 - Setiap baris input tetap memiliki satu baris hasil dan urutannya selalu mengikuti input, termasuk URL yang gagal atau teks URL yang rusak. URL sosial tanpa `https://` akan dinormalisasi otomatis agar tidak hilang dan menggeser baris berikutnya.
-- Counter engagement yang memang tidak ada ditulis `0`; data yang tidak dapat dibaca, diblokir, atau tidak didukung ditulis **Cek**.
+- Counter engagement yang memang tidak ada atau tidak berlaku pada platform ditulis `0`. **Cek** hanya dipakai ketika counter seharusnya dapat diperiksa tetapi gagal dibaca, diblokir, atau memerlukan pemeriksaan langsung pada posting.
 - URL yang gagal total tetap berada pada urutan input dan ditulis **URL tidak dapat diproses**, sehingga baris hasil tidak bergeser.
 - Postingan privat, sesi login kedaluwarsa, CAPTCHA, perubahan tampilan platform, dan rate limit dapat membuat sebagian data tidak terbaca.
 
@@ -466,7 +466,7 @@ These controls protect the primary repository and catch accidental removal. Publ
 - If Facebook has no public follower count but shows friends, MIDETA uses the friend count.
 - Facebook Reel bookmarks are filled only when Facebook displays a real count.
 - Every non-empty input row keeps one result row in its original order, including failed or malformed URL text. Social URLs without `https://` are normalized automatically so they cannot disappear and shift later rows.
-- Engagement counters that are genuinely absent are written as `0`; unreadable, blocked, or unsupported data is marked **Cek**.
+- Engagement counters that are genuinely absent or do not apply to the platform are written as `0`. **Cek** is reserved for counters that should be verifiable but could not be read, were blocked, or require direct review on the post.
 - A URL that fails completely stays in its original input position and is marked **URL tidak dapat diproses**, so following rows never shift.
 - Private posts, expired sessions, CAPTCHAs, layout changes, and rate limits may leave some fields unavailable.
 

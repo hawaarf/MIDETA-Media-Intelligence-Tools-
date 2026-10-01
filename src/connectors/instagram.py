@@ -96,21 +96,40 @@ class InstagramConnector(BaseConnector):
         if not current:
             return current
         month_names = "|".join(self.MONTHS)
+        # Instagram uses the Open Graph description for two different things:
+        # a real post caption, or a generated engagement summary when the post
+        # has no caption.  Never export that generated summary as user content.
+        metadata = re.fullmatch(
+            rf"\s*\d[\d.,]*\s*(?:k|m|b)?\s+(?:likes?|suka)\s*,\s*"
+            rf"\d[\d.,]*\s*(?:k|m|b)?\s+(?:comments?|komentar)\s*-\s*"
+            rf".+?\s+on\s+(?:{month_names})\s+\d{{1,2}},\s+\d{{4}}"
+            rf"(?:\s*:\s*(?P<caption>.*))?\s*",
+            current,
+            re.I | re.S,
+        )
+        if metadata:
+            caption = str(metadata.group("caption") or "").strip()
+            if not caption or not caption.strip('"“”‘’. '):
+                return "-"
+        else:
+            caption = current.strip()
+
         match = re.match(
             rf"^.*?\bon\s+(?:{month_names})\s+\d{{1,2}},\s+\d{{4}}\s*:\s*(.+)$",
             current.strip(),
             re.I | re.S,
         )
-        caption = match.group(1).strip() if match else current.strip()
+        if match and not metadata:
+            caption = match.group(1).strip()
         wrapped = re.fullmatch(r'["“](.*)["”]\s*\.?', caption, re.S)
         if wrapped:
-            return wrapped.group(1).strip() or current
+            return wrapped.group(1).strip() or "-"
         quote_pairs = (("\"", "\""), ("“", "”"), ("‘", "’"))
         for opening, closing in quote_pairs:
             if caption.startswith(opening) and caption.endswith(closing):
                 caption = caption[len(opening):-len(closing)].strip()
                 break
-        return caption or current
+        return caption or "-"
 
     def _platform_posted_at(self, html: str, soup, url: str, current: str | None) -> str | None:
         shortcode = self._post_shortcode(url)
@@ -154,7 +173,11 @@ class InstagramConnector(BaseConnector):
         for description in descriptions:
             if not description:
                 continue
-            match = re.search(rf"\bon\s+({month_names})\s+(\d{{1,2}}),\s+(\d{{4}})\s*:", description, re.I)
+            match = re.search(
+                rf"\bon\s+({month_names})\s+(\d{{1,2}}),\s+(\d{{4}})(?:\s*:|\s*$)",
+                description,
+                re.I,
+            )
             if match:
                 month_name, day, year = match.groups()
                 return f"{int(year):04d}-{self.MONTHS[month_name.casefold()]:02d}-{int(day):02d}"

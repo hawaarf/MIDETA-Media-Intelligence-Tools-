@@ -10,6 +10,7 @@ import re
 import time
 from pathlib import Path
 from typing import Callable
+from urllib.parse import parse_qs, urlparse
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -32,7 +33,7 @@ class CommentBrowserLoginRequired(CommentBrowserError):
 
 
 class CommentBrowserCollector:
-    RUNTIME_VERSION = 23
+    RUNTIME_VERSION = 24
     THREADS_MAX_SCROLL_ROUNDS = 1_600
     FACEBOOK_MAX_SCROLL_ROUNDS = 1_600
     X_MAX_SCROLL_ROUNDS = 1_600
@@ -378,7 +379,31 @@ class CommentBrowserCollector:
         if not expected_ids:
             return True
         candidate_ids = set(connector._post_identifiers(candidate_url))
-        return bool(expected_ids & candidate_ids)
+        if expected_ids & candidate_ids:
+            return True
+        if not candidate_ids:
+            return False
+
+        # Facebook can replace a permalink ``pfbid`` with an internal numeric
+        # story ID after login. Accept that representation change only when
+        # both URLs identify the same owner. Do not accept another pfbid from
+        # that owner, because it would be a different/recommended post.
+        def owner_id(value: str) -> str | None:
+            parsed = urlparse(value)
+            query_owner = (parse_qs(parsed.query).get("id") or [None])[0]
+            if query_owner and str(query_owner).isdigit():
+                return str(query_owner)
+            parts = [part for part in parsed.path.split("/") if part]
+            return parts[0] if parts and parts[0].isdigit() else None
+
+        expected_has_pfbid = any(value.casefold().startswith("pfbid") for value in expected_ids)
+        candidate_has_pfbid = any(value.casefold().startswith("pfbid") for value in candidate_ids)
+        representation_changed = expected_has_pfbid != candidate_has_pfbid
+        return bool(
+            representation_changed
+            and owner_id(expected_url)
+            and owner_id(expected_url) == owner_id(candidate_url)
+        )
 
     @classmethod
     def _facebook_permalink(cls, driver, fallback_url: str) -> str:

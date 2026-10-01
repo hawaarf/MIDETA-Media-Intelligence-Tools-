@@ -134,6 +134,19 @@ class InstagramBrowserTests(unittest.TestCase):
         self.assertEqual(metrics.likes, 1)
         self.assertEqual(metrics.comments, 0)
 
+    def test_post_metadata_keeps_engagement_but_uses_dash_without_caption(self):
+        source = """<html><head><meta property="og:description" content="59 likes, 2 comments - jsxproid on September 28, 2026"></head></html>"""
+        metrics = InstagramBrowserCollector._post_metadata(
+            source,
+            "https://www.instagram.com/p/Dd21ZiUiYg1/",
+            "Dd21ZiUiYg1",
+        )
+        self.assertEqual(metrics.username, "jsxproid")
+        self.assertEqual(metrics.caption, "-")
+        self.assertEqual(metrics.posted_at, "2026-09-28")
+        self.assertEqual(metrics.likes, 59)
+        self.assertEqual(metrics.comments, 2)
+
     def test_advanced_carousel_opens_profile_without_slow_view_search(self):
         collector = InstagramBrowserCollector()
         collector.is_logged_in = Mock(return_value=True)
