@@ -12,7 +12,7 @@ from src.dates import parse_social_datetime
 from src.models import DataField, FieldStatus, SocialResult
 from src.sentiment import classify_comment_tone
 
-SOCIAL_BATCH_VERSION = 54
+SOCIAL_BATCH_VERSION = 55
 COMMENT_BATCH_VERSION = 16
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -279,13 +279,49 @@ def merge_facebook_advanced_result(
     fast_result: SocialResult,
     browser_result: SocialResult,
 ) -> SocialResult:
-    """Keep Fast enrichment authoritative and use login only to improve Views.
+    """Keep reliable Fast fields and recover unreadable ones from the browser.
 
     Facebook's authenticated page uses a different layout from its public page.
-    It is useful for locating the exact Reel view count, but often omits regular
-    post metadata that the Fast connector can already read reliably.
+    Fast remains authoritative when it returned real post metadata.  When the
+    public request only returned Facebook's login shell, however, its numeric
+    zeroes are export defaults rather than observed engagement.  In that case
+    Advanced mode must be allowed to supply every field it actually read from
+    the exact post, not Views alone.
     """
     merged = fast_result.model_copy(deep=True)
+
+    metadata_names = ("username", "caption", "posted_at")
+    fast_has_post_metadata = any(
+        getattr(fast_result, name).value not in (None, "")
+        for name in metadata_names
+    )
+    numeric_names = (
+        "followers",
+        "likes",
+        "comments",
+        "shares",
+        "bookmarks",
+        "reposts",
+    )
+    for name in (*metadata_names, *numeric_names):
+        fast_field = getattr(merged, name)
+        browser_field = getattr(browser_result, name)
+        if browser_field.value in (None, ""):
+            continue
+        fast_is_missing = (
+            fast_field.value in (None, "")
+            or fast_field.status != FieldStatus.AVAILABLE
+        )
+        fast_is_login_shell_default = (
+            name in numeric_names
+            and not fast_has_post_metadata
+            and fast_field.value == 0
+        )
+        if fast_is_missing or fast_is_login_shell_default:
+            setattr(merged, name, browser_field.model_copy(deep=True))
+
+    # The authenticated profile's exact Reel card is the most dependable
+    # source for Views, while the public post frequently omits that metric.
     if browser_result.views.value not in (None, ""):
         merged.views = browser_result.views.model_copy(deep=True)
     elif merged.views.value in (None, ""):

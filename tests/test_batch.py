@@ -207,6 +207,31 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(merged.views.value, 900)
         self.assertEqual(merged.views.status, FieldStatus.AVAILABLE)
 
+    def test_facebook_advanced_recovers_fields_when_fast_only_saw_login_shell(self):
+        url = "https://www.facebook.com/reel/28595130840171728"
+        fast = get_connector(url).mock_enrichment(url)
+        for name in ("username", "caption", "posted_at"):
+            setattr(fast, name, DataField(value=None, status=FieldStatus.NOT_PUBLIC))
+        for name in ("followers", "likes", "comments", "shares", "bookmarks", "reposts"):
+            setattr(fast, name, DataField(value=0, status=FieldStatus.AVAILABLE))
+
+        browser = fast.model_copy(deep=True)
+        browser.username = DataField(value="Banten TV", status=FieldStatus.AVAILABLE)
+        browser.caption = DataField(value="Caption Reel target", status=FieldStatus.AVAILABLE)
+        browser.likes = DataField(value=83, status=FieldStatus.AVAILABLE)
+        browser.comments = DataField(value=14, status=FieldStatus.AVAILABLE)
+        browser.shares = DataField(value=6, status=FieldStatus.AVAILABLE)
+        browser.bookmarks = DataField(value=3, status=FieldStatus.AVAILABLE)
+
+        merged = merge_facebook_advanced_result(fast, browser)
+
+        self.assertEqual(merged.username.value, "Banten TV")
+        self.assertEqual(merged.caption.value, "Caption Reel target")
+        self.assertEqual(merged.likes.value, 83)
+        self.assertEqual(merged.comments.value, 14)
+        self.assertEqual(merged.shares.value, 6)
+        self.assertEqual(merged.bookmarks.value, 3)
+
     def test_threads_uses_browser_when_public_reader_fails(self):
         url = "https://www.threads.com/@akun/post/ABC"
         browser_result = get_connector(url).mock_enrichment(url)

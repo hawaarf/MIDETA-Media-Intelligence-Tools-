@@ -328,7 +328,7 @@ Urutan kolom adalah:
 1. `date_publish` — tanggal publikasi;
 2. `month` — bulan publikasi;
 3. `media_name` — nama media dalam huruf kapital;
-4. `media_scope` — `National`, `Regional`, atau `Inter`;
+4. `media_scope` — `National`, `Regional`, `Provincial`, atau `International`;
 5. `media_tier` — `Tier 1`, `Tier 2`, atau `Tier 3`;
 6. `page_link` — URL sesuai input;
 7. `title` — judul artikel;

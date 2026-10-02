@@ -145,7 +145,20 @@ def canonical_social_url(url: str, platform: str | None = None) -> str | None:
             return f"https://www.facebook.com/reel/{parts[1]}"
         for index, part in enumerate(folded[:-1]):
             if part in {"posts", "videos"} and index > 0:
-                return "https://www.facebook.com/" + "/".join(parts[: index + 2])
+                # Facebook can insert a human-readable title before the real
+                # post ID: /page/posts/title-slug/123456. Keep that final ID;
+                # dropping it makes the page readable in Chrome but removes
+                # the identifier needed to bind metadata to the target post.
+                end = index + 2
+                if (
+                    len(parts) > end
+                    and (
+                        parts[end].isdigit()
+                        or parts[end].casefold().startswith("pfbid")
+                    )
+                ):
+                    end += 1
+                return "https://www.facebook.com/" + "/".join(parts[:end])
         if folded and folded[0] in {"permalink.php", "watch", "photo.php", "story.php"}:
             allowed = {
                 key: values[-1]

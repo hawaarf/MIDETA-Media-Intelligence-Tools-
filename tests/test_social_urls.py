@@ -112,6 +112,32 @@ class SocialURLTests(unittest.TestCase):
             "&id=61579755060855",
         )
 
+    def test_canonicalizes_facebook_slug_post_without_dropping_final_id(self):
+        cases = {
+            (
+                "https://www.facebook.com/investor.id/posts/"
+                "bei-meminta-penjelasan-terkait-pergerakan-saham-goto-gojek-tokopedia-goto-kepada/"
+                "1699877082138386/"
+            ): (
+                "https://www.facebook.com/investor.id/posts/"
+                "bei-meminta-penjelasan-terkait-pergerakan-saham-goto-gojek-tokopedia-goto-kepada/"
+                "1699877082138386"
+            ),
+            (
+                "https://www.facebook.com/investor.id/posts/"
+                "volume-transaksi-saham-goto-meledak-pada-awal-sesi-i-hari-ini/"
+                "1700050315454396/?utm_source=tracking"
+            ): (
+                "https://www.facebook.com/investor.id/posts/"
+                "volume-transaksi-saham-goto-meledak-pada-awal-sesi-i-hari-ini/"
+                "1700050315454396"
+            ),
+        }
+
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(canonical_social_url(source), expected)
+
     @patch("src.social_urls.resolve_social_url")
     def test_modified_link_replaces_threads_share_path_with_post_permalink(self, resolve):
         resolve.return_value = "https://www.threads.com/@nalarpedia_id/post/Ddn_ggzgjAE?xmt=AQ"

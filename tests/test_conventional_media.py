@@ -1,12 +1,14 @@
 # Copyright (c) 2026 Hawarisma Rafanidya Singgih
 # SPDX-License-Identifier: MIT
 
+import json
 import unittest
 
 from src.conventional_media import (
     ARTICLE_COLUMNS,
     CHECK_ARTICLE_NOT_AVAILABLE,
     CHECK_FAILED_TO_PROCESS,
+    CONVENTIONAL_MEDIA_CATALOG,
     SWA_CRAWLING_NOTICE,
     _failed_result,
     classify_tone,
@@ -70,7 +72,7 @@ class ConventionalMediaTests(unittest.TestCase):
         )
         self.assertEqual(
             media_identity("https://www.reuters.com/world/example"),
-            ("REUTERS.COM", "Inter", "Tier 1"),
+            ("REUTERS.COM", "International", "Tier 1"),
         )
         self.assertEqual(
             media_identity("https://diskominfo.sumutprov.go.id/page/berita/contoh"),
@@ -80,6 +82,35 @@ class ConventionalMediaTests(unittest.TestCase):
             media_identity("https://www.rmol.id/read/contoh"),
             ("RMOL.ID", "National", "Tier 2"),
         )
+
+    def test_reviewed_conventional_media_catalog_is_the_primary_identity_source(self):
+        self.assertEqual(len(CONVENTIONAL_MEDIA_CATALOG), 16_209)
+        self.assertEqual(
+            media_identity("https://20.detik.com/berita/contoh"),
+            ("DETIK.COM", "National", "Tier 1"),
+        )
+        self.assertEqual(
+            media_identity("https://investasi.kontan.co.id/news/contoh"),
+            ("INVESTASI.KONTAN.CO.ID", "National", "Tier 1"),
+        )
+        self.assertEqual(
+            media_identity("https://zone.id/news/contoh"),
+            ("ZONE.ID", "Provincial", "Tier 3"),
+        )
+        self.assertEqual(
+            media_identity("https://bkpp.demakkab.go.id/news/contoh"),
+            ("BKPP.DEMAKKAB.GO.ID", "", "Tier 3"),
+        )
+
+        international_html = ARTICLE_HTML.replace(
+            "<html>",
+            '<html lang="id">',
+        )
+        international = enrich_article_html(
+            "https://01caijing.com/news/contoh",
+            international_html,
+        )
+        self.assertEqual(international.media_scope, "International")
 
     def test_unknown_indonesian_publisher_is_not_assumed_international(self):
         self.assertEqual(
@@ -469,6 +500,123 @@ class ConventionalMediaTests(unittest.TestCase):
             ),
             "Negative",
         )
+
+    def test_financial_tone_tracks_headline_tickers_not_unrelated_winners(self):
+        self.assertEqual(
+            classify_tone(
+                "Daftar Saham LQ45, GOTO dan AMMN Disorot",
+                "PT GOTO kembali anjlok tajam dan turun 12,5%. "
+                "PT AMMN terkoreksi dan melemah. PT CUAN menguat dan naik.",
+            ),
+            "Negative",
+        )
+        self.assertEqual(
+            classify_tone(
+                "Saham GOTO Tertekan, Analis Soroti Peluang Buyback",
+                "Saham GOTO tertekan dan terkoreksi setelah tekanan jual. "
+                "Valuasi GOTO membaik dan menarik, dengan peluang pemulihan serta pertumbuhan laba.",
+            ),
+            "Neutral",
+        )
+
+    def test_analyst_groups_are_normalized_to_human_names(self):
+        content = (
+            "Analis dari Deutsche Bank Peter Milliken menilai tekanan jual akan mereda. "
+            '"Aksi jual membuat valuasi menarik," kata Ranjan Sharma, Steven Suntoso, '
+            "Sigrid Qiu, Alex Yao dan Benny Kurniawan, Tim Analis JP Morgan. "
+            '"Harga belum mencerminkan fundamental," kata Edo, Analis Phillip Sekuritas Indonesia. '
+            '"Dampaknya kami perhitungkan," kata Hans Patuwo, Chief Executive Officer GOTO.'
+        )
+
+        self.assertEqual(
+            quote_mentions(content, {}),
+            "Peter Milliken, Ranjan Sharma, Steven Suntoso, Sigrid Qiu, Alex Yao, "
+            "Benny Kurniawan, Edo, Hans Patuwo",
+        )
+        self.assertEqual(
+            type_mentions(content, {}),
+            "Peter Milliken (indirect), Ranjan Sharma (direct), Steven Suntoso (direct), "
+            "Sigrid Qiu (direct), Alex Yao (direct), Benny Kurniawan (direct), "
+            "Edo (direct), Hans Patuwo (direct)",
+        )
+
+    def test_syndication_suffix_and_editorial_prompts_are_removed(self):
+        body = " ".join(
+            ["Isi artikel menjelaskan penurunan saham dan ketentuan bursa secara lengkap."] * 8
+        )
+        payload = json.dumps(
+            {
+                "@context": "https://schema.org",
+                "@type": "NewsArticle",
+                "headline": (
+                    "Saham GOTO Merosot hingga 44% Artikel ini adalah bagian dari Mitra Promedia Group "
+                    "dan sudah tayang dengan judul lain Baca selengkapnya di: https://contoh.invalid"
+                ),
+                "articleBody": body + " Make the article one line onlyRemove remaining article headings",
+            }
+        )
+        html = f"<html><head><script type='application/ld+json'>{payload}</script></head><body></body></html>"
+
+        result = enrich_article_html(
+            "https://contohmedia.com/saham-goto-merosot-hingga-44-persen",
+            html,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.title, "Saham GOTO Merosot hingga 44%")
+        self.assertNotIn("Make the article", result.content)
+        self.assertNotIn("Remove remaining", result.content)
+
+    def test_embedded_editor_payload_recovers_complete_article_content(self):
+        teaser = " ".join(["Teaser artikel berhenti sebelum kalimatnya selesai"] * 6)
+        recovered = " ".join(
+            ["Isi lengkap artikel membahas saham GOTO dan kinerja perusahaan secara akurat."] * 10
+        )
+        malformed_payload = teaser + '{"title": "Judul lain", "content": "' + recovered
+        payload = json.dumps(
+            {
+                "@context": "https://schema.org",
+                "@type": "NewsArticle",
+                "headline": "Kinerja Saham GOTO Hari Ini",
+                "articleBody": malformed_payload,
+            }
+        )
+        html = f"<html><head><script type='application/ld+json'>{payload}</script></head><body></body></html>"
+
+        result = enrich_article_html(
+            "https://contohmedia.com/kinerja-saham-goto-hari-ini",
+            html,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.content.startswith("Isi lengkap artikel"))
+        self.assertNotIn('{"title"', result.content)
+        self.assertNotIn("Teaser artikel", result.content)
+
+    def test_byline_and_figure_caption_are_not_exported_as_content(self):
+        body = " ".join(
+            ["Isi berita menjelaskan saham GOTO dan pergerakan pasar secara lengkap."] * 8
+        )
+        html = f"""
+        <html><head><title>Pergerakan Saham GOTO Hari Ini</title></head><body>
+          <div class="tmpt-desk-kon">
+            <p>Reporter: Hasbi Maulana | Editor: Hasbi Maulana</p>
+            <p>{body}<figure class="article-media"><figcaption>
+              Judul artikel rekomendasi. © 2026 Konten oleh Contoh Media
+            </figcaption></figure></p>
+          </div>
+        </body></html>
+        """
+
+        result = enrich_article_html(
+            "https://contohmedia.com/pergerakan-saham-goto-hari-ini",
+            html,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertNotIn("Reporter:", result.content)
+        self.assertNotIn("artikel rekomendasi", result.content)
+        self.assertNotIn("Konten oleh", result.content)
 
     def test_title_entities_publisher_suffix_and_visible_date_are_cleaned(self):
         paragraph = " ".join(

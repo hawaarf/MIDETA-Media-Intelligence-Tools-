@@ -336,6 +336,100 @@ class FacebookConnector(BaseConnector):
                 metrics.setdefault("shares", value)
         return metrics
 
+    @staticmethod
+    def _visible_reel_owner(soup: BeautifulSoup) -> tuple[str | None, str | None]:
+        """Read the owner shown beside the first video in a fullscreen Reel."""
+        if not soup.select_one('[aria-label="Video player"], [aria-label="Pemutar video"]'):
+            return None, None
+        owner_labels = {
+            "lihat profil pemilik",
+            "see owner profile",
+            "view owner profile",
+            "view profile owner",
+        }
+        for link in soup.select("a[aria-label][href]"):
+            label = re.sub(r"\s+", " ", str(link.get("aria-label") or "")).strip().casefold()
+            if label not in owner_labels:
+                continue
+            author = re.sub(r"\s+", " ", link.get_text(" ", strip=True)).strip()
+            if not author:
+                continue
+            href = str(link.get("href") or "").replace("\\/", "/").replace("&amp;", "&")
+            parsed = urlparse(href)
+            parts = [part for part in parsed.path.split("/") if part]
+            profile_url = None
+            if parts and parts[0].casefold() == "profile.php":
+                profile_id = (parse_qs(parsed.query).get("id") or [None])[0]
+                if profile_id:
+                    profile_url = f"https://www.facebook.com/profile.php?id={profile_id}"
+            elif parts:
+                profile_url = f"https://www.facebook.com/{parts[0]}"
+            return author, profile_url
+        return None, None
+
+    def _visible_reel_metrics(self, soup: BeautifulSoup) -> dict[str, int]:
+        """Read the first action rail belonging to an opened fullscreen Reel.
+
+        Facebook's Reel viewer does not expose the normal post action-menu
+        label.  The requested Reel is rendered first and recommendations follow
+        it, so taking the first complete action rail avoids borrowing metrics
+        from the next video.
+        """
+        player = soup.select_one('[aria-label="Video player"], [aria-label="Pemutar video"]')
+        if player is None:
+            return {}
+
+        label_to_metric = {
+            "suka": "likes",
+            "like": "likes",
+            "komentari": "comments",
+            "beri komentar": "comments",
+            "comment": "comments",
+            "bagikan": "shares",
+            "share": "shares",
+            "simpan": "bookmarks",
+            "save": "bookmarks",
+            "hapus dari item tersimpan": "bookmarks",
+            "remove from saved": "bookmarks",
+        }
+
+        def read_from(root) -> dict[str, int]:
+            metrics: dict[str, int] = {}
+            for node in root.select("[aria-label]"):
+                label = re.sub(r"\s+", " ", str(node.get("aria-label") or "")).strip().casefold()
+                name = label_to_metric.get(label)
+                if name is None or name in metrics:
+                    continue
+                values = [
+                    node.get_text(" ", strip=True),
+                    str(node.get("title") or ""),
+                ]
+                for value_text in values:
+                    value_text = re.sub(r"\s+", " ", value_text).strip()
+                    if not re.fullmatch(
+                        r"\d[\d.,]*\s*(?:k|m|b|rb|ribu|jt|juta)?",
+                        value_text,
+                        re.I,
+                    ):
+                        continue
+                    value = self._localized_count(value_text)
+                    if value is not None:
+                        metrics[name] = value
+                        break
+            return metrics
+
+        # Use the smallest ancestor that contains a complete target action
+        # rail. This prevents later recommendation rails from being considered.
+        root = player
+        for _ in range(14):
+            metrics = read_from(root)
+            if {"likes", "comments", "shares"}.issubset(metrics):
+                return metrics
+            if root.parent is None:
+                break
+            root = root.parent
+        return {}
+
     def _group_post_actor(self, html: str, post_id: str) -> tuple[str | None, str | None]:
         candidates: list[tuple[int, str, str | None]] = []
         for post_match in re.finditer(rf'"post_id"\s*:\s*"{re.escape(post_id)}"', html, re.I):
@@ -387,6 +481,9 @@ class FacebookConnector(BaseConnector):
             if owner_name:
                 return owner_name
             visible_author, _ = self._visible_post_owner(soup)
+            if visible_author:
+                return visible_author
+            visible_author, _ = self._visible_reel_owner(soup)
             if visible_author:
                 return visible_author
             title = soup.title.get_text(" ", strip=True) if soup.title else ""
@@ -456,6 +553,8 @@ class FacebookConnector(BaseConnector):
             _, profile_url = self._target_owner(html, canonical)
         if not profile_url:
             _, profile_url = self._visible_post_owner(soup)
+        if not profile_url:
+            _, profile_url = self._visible_reel_owner(soup)
         if len(parts) >= 2 and parts[0].casefold() not in reserved and parts[1].casefold() in {
             "videos",
             "posts",
@@ -590,9 +689,14 @@ class FacebookConnector(BaseConnector):
         stats = self._script_metrics(self._metric_source(html, canonical))
         stats.update(self._platform_metrics(html, canonical))
         stats = self._merge_meta_metrics(stats, self._meta_metrics(soup))
-        for name, value in self._visible_post_metrics(soup).items():
-            if stats.get(name) is None:
-                stats[name] = value
+        visible_metrics = self._visible_post_metrics(soup)
+        if not visible_metrics:
+            visible_metrics = self._visible_reel_metrics(soup)
+        for name, value in visible_metrics.items():
+            # These controls are scoped to the exact card/player currently
+            # open. Prefer them over nearby script counters, which can include
+            # a stale cache or a recommended Reel in the same document.
+            stats[name] = value
         if profile_html:
             profile_soup = BeautifulSoup(profile_html, "lxml")
             followers = self._profile_count_by_label(profile_html, profile_soup, "followers?", "pengikut")

@@ -797,6 +797,51 @@ class ConnectorTests(unittest.TestCase):
         self.assertIsNone(result.views.value)
         self.assertEqual(result.views.status, FieldStatus.NOT_PUBLIC)
 
+    def test_facebook_authenticated_fullscreen_reel_reads_first_action_rail(self):
+        connector = get_connector("https://www.facebook.com/reel/28595130840171728")
+        html = """
+        <main>
+          <div class="target-reel">
+            <div aria-label="Video player"></div>
+            <a aria-label="See owner profile" href="/profile.php?id=100063560258062&amp;sk=reels_tab"></a>
+            <a aria-label="See owner profile" href="/profile.php?id=100063560258062&amp;sk=reels_tab">Banten TV</a>
+            <div role="button" aria-label="Suka">83</div>
+            <div role="button" aria-label="Komentari">14</div>
+            <div role="button" aria-label="Bagikan">6</div>
+            <div role="button" aria-label="Simpan">3</div>
+          </div>
+          <div class="recommended-reel">
+            <div aria-label="Video player"></div>
+            <a aria-label="Lihat Profil Pemilik" href="/akunlain">Akun Lain</a>
+            <div role="button" aria-label="Suka">27,6 rb</div>
+            <div role="button" aria-label="Komentari">1,1 rb</div>
+            <div role="button" aria-label="Bagikan">511</div>
+          </div>
+        </main>
+        <script>{"post_id":"28595130840171728","like_count":999,"comment_count":999,
+        "share_count":999,"save_count":999}</script>
+        """
+
+        result = connector.enrich_loaded_html(
+            html,
+            "https://www.facebook.com/reel/28595130840171728",
+        )
+
+        self.assertEqual(result.username.value, "Banten TV")
+        self.assertEqual(result.likes.value, 83)
+        self.assertEqual(result.comments.value, 14)
+        self.assertEqual(result.shares.value, 6)
+        self.assertEqual(result.bookmarks.value, 3)
+        soup = BeautifulSoup(html, "lxml")
+        self.assertEqual(
+            connector._target_profile_url(
+                html,
+                soup,
+                "https://www.facebook.com/reel/28595130840171728",
+            ),
+            "https://www.facebook.com/profile.php?id=100063560258062",
+        )
+
     def test_facebook_authenticated_dom_ignores_logged_in_account(self):
         connector = get_connector("https://www.facebook.com/maskurcokern7/posts/pfbidTarget")
 

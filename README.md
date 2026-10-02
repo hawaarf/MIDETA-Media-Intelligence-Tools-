@@ -41,6 +41,8 @@ Hanya URL-nya yang akan dipakai. Hasil disimpan setiap kali satu URL selesai, ja
 
 URL pendek dan URL hasil tombol **Share** juga bisa langsung ditempel. Ini mencakup `youtu.be`, `vt.tiktok.com`, `vm.tiktok.com`, `fb.watch`, `fb.me`, `t.co`, serta format `/share/...` milik Facebook, Instagram, dan Threads. MIDETA mengarahkan tautan tersebut ke posting aslinya sebelum membaca data, tetapi tetap menampilkan URL yang ditempel pada baris hasil agar urutannya mudah dicocokkan.
 
+Setelah enrichment selesai, bagian **Reporting Format** membuat teks laporan siap salin. Untuk satu URL, hasil ditulis dalam format ringkas per posting. Untuk beberapa URL, MIDETA menggabungkan platform, rentang tanggal, pesan singkat dari caption, rincian engagement setiap posting, dan total seluruh engagement. Pilih **Indonesia** atau **English**, lalu edit pesan bila konteks atau terjemahan perlu disempurnakan. Views dan followers tidak dihitung sebagai engagement. Report dapat disalin langsung atau diunduh sebagai TXT.
+
 #### Pilihan mode Facebook
 
 Facebook menyediakan dua mode. **Fast** membaca metadata publik tanpa login. **Advanced** memakai Chrome Facebook yang sudah login, membuka post target dan profil author, lalu mencari Reel dengan ID yang sama pada halaman Reels untuk melengkapi followers/friends dan views.
@@ -168,7 +170,7 @@ Kolom hasil:
 | `date_publish` | Tanggal publikasi artikel, misalnya `Sep 23, 2026` |
 | `month` | Nama bulan publikasi |
 | `media_name` | Nama media yang dinormalisasi dan ditulis dengan huruf kapital |
-| `media_scope` | `National`, `Regional`, atau `Inter` |
+| `media_scope` | `National`, `Regional`, `Provincial`, atau `International` |
 | `media_tier` | `Tier 1`, `Tier 2`, atau `Tier 3` |
 | `page_link` | URL asli sesuai baris input |
 | `title` | Judul artikel |
@@ -314,6 +316,8 @@ MIDETA uses the URL and ignores the surrounding text. Each result is saved as so
 
 Short links and links copied from a platform's **Share** button can be pasted directly. This includes `youtu.be`, `vt.tiktok.com`, `vm.tiktok.com`, `fb.watch`, `fb.me`, `t.co`, and the `/share/...` formats used by Facebook, Instagram, and Threads. MIDETA resolves these links to the original post before collecting data while keeping the pasted URL in the result row so the original order remains easy to match.
 
+After enrichment completes, **Reporting Format** creates a copy-ready text report. A single URL uses a compact per-post layout. Multiple URLs are compiled into a platform/date header, a short caption-based message, per-post engagement, and total engagement across all posts. Choose **Indonesia** or **English**, then edit the message when its context or translation needs refinement. Views and followers are excluded from engagement. The report can be copied directly or downloaded as TXT.
+
 #### Facebook modes
 
 Facebook has two modes. **Fast** reads public metadata without login. **Advanced** uses a logged-in MIDETA Chrome profile, opens the target post and author profile, then finds the Reel with the same ID on the profile's Reels page to complete followers/friends and views.
@@ -432,7 +436,7 @@ Output columns:
 | `date_publish` | Article publication date, for example `Sep 23, 2026` |
 | `month` | Full publication month name |
 | `media_name` | Normalized uppercase media name |
-| `media_scope` | `National`, `Regional`, or `Inter` |
+| `media_scope` | `National`, `Regional`, `Provincial`, or `International` |
 | `media_tier` | `Tier 1`, `Tier 2`, or `Tier 3` |
 | `page_link` | Original URL from the corresponding input row |
 | `title` | Article title |

@@ -22,6 +22,7 @@ from src.database import add_history, create_social_job, get_latest_social_job, 
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.instagram_browser import InstagramBrowserCollector, InstagramBrowserError, InstagramLoginRequired, build_instagram_browser_result
 from src.models import FieldStatus, SocialResult
+from src.social_reporting import build_social_report_message, format_social_report, reportable_social_results
 from src.social_urls import canonical_social_url, resolve_social_url
 from src.tiktok_browser import build_tiktok_browser_result
 import src.connectors.tiktok as tiktok_connector_module
@@ -437,6 +438,54 @@ def render_job_controls(job: dict[str, Any], slot: str) -> Any:
     return progress
 
 
+def render_reporting_format(results: list[SocialResult], report_key: str) -> None:
+    """Show an editable, copy-ready report after enrichment is complete."""
+    report_results = reportable_social_results(results)
+    if not report_results:
+        return
+    st.markdown("#### Reporting Format")
+    with st.container(border=True):
+        language = st.segmented_control(
+            "Bahasa report / Report language",
+            ("Indonesia", "English"),
+            default="Indonesia",
+            key=f"report_language_{report_key}",
+            width="stretch",
+        ) or "Indonesia"
+        automatic_message = build_social_report_message(report_results, language)
+        english = language == "English"
+        message = st.text_area(
+            "Short message" if english else "Pesan singkat",
+            value=automatic_message,
+            height=130,
+            help=(
+                "The message is extracted locally from source captions. Edit it before copying if translation or context needs refinement."
+                if english
+                else "Pesan diringkas secara lokal dari caption sumber. Edit sebelum disalin bila terjemahan atau konteks perlu disempurnakan."
+            ),
+            key=f"report_message_{report_key}_{language.casefold()}",
+        )
+        report_text = format_social_report(
+            report_results,
+            language,
+            message=message,
+        )
+        st.code(report_text, language="text", wrap_lines=True)
+        st.caption(
+            "Use the copy icon in the report box, or download it as TXT."
+            if english
+            else "Gunakan ikon salin pada kotak report, atau unduh sebagai TXT."
+        )
+        st.download_button(
+            "Download TXT Report" if english else "Unduh Report TXT",
+            report_text.encode("utf-8"),
+            f"mideta_social_report_{report_key}.txt",
+            "text/plain",
+            key=f"download_report_{report_key}_{language.casefold()}",
+            width="stretch",
+        )
+
+
 def render_job_results(job: dict[str, Any] | None, platform: str) -> None:
     if not job:
         return
@@ -498,6 +547,8 @@ def render_job_results(job: dict[str, Any] | None, platform: str) -> None:
         key=f"download_xlsx_{platform}_{job['id']}",
         width="stretch",
     )
+    if job["status"] == "completed":
+        render_reporting_format(results, f"{platform.lower()}_{job['id']}")
 
 
 def load_all_jobs() -> list[dict[str, Any]]:
@@ -634,6 +685,8 @@ def render_all_job_results(
         key=f"download_xlsx_all_{job_key}",
         width="stretch",
     )
+    if jobs and all(job["status"] == "completed" for job in jobs):
+        render_reporting_format(results, f"all_{job_key}")
 
 
 def render_job_issues(job: dict[str, Any] | None) -> None:

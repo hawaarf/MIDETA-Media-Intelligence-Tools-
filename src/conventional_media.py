@@ -4,6 +4,7 @@
 """Conventional news article enrichment for MIDETA."""
 from __future__ import annotations
 
+import csv
 import html as html_lib
 import json
 import re
@@ -50,12 +51,52 @@ CHECK_ARTICLE_NOT_AVAILABLE = "[CHECK] article not available"
 CHECK_FAILED_TO_PROCESS = "[CHECK] failed to process"
 SWA_CRAWLING_NOTICE = "dilarang craweling"
 CONVENTIONAL_PROFILE_DIR = DATA_DIR / "browser_profiles" / "conventional_media"
+CONVENTIONAL_MEDIA_CATALOG_PATH = (
+    Path(__file__).resolve().parent / "data" / "conventional_media_tiering.tsv"
+)
 ARTICLE_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
 )
 _HOST_LOCKS: dict[str, threading.Lock] = {}
 _HOST_LOCKS_GUARD = threading.Lock()
+
+
+def _load_conventional_media_catalog() -> dict[str, tuple[str, str, str]]:
+    """Load the reviewed domain identity and tier catalogue shipped with MIDETA."""
+    if not CONVENTIONAL_MEDIA_CATALOG_PATH.exists():
+        return {}
+    catalog: dict[str, tuple[str, str, str]] = {}
+    with CONVENTIONAL_MEDIA_CATALOG_PATH.open(
+        encoding="utf-8-sig",
+        newline="",
+    ) as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        required = {"domain", "media_name", "media_scope", "media_tier"}
+        if not reader.fieldnames or not required.issubset(reader.fieldnames):
+            raise ValueError("Database conventional media memiliki header yang tidak valid.")
+        for line_number, row in enumerate(reader, start=2):
+            domain = str(row.get("domain") or "").casefold().strip().strip(".")
+            if domain.startswith("www."):
+                domain = domain[4:]
+            if not domain:
+                continue
+            if domain in catalog:
+                raise ValueError(
+                    f"Domain conventional media duplikat pada baris {line_number}: {domain}"
+                )
+            media_name = str(row.get("media_name") or "").strip() or domain.upper()
+            media_scope = str(row.get("media_scope") or "").strip()
+            media_tier = str(row.get("media_tier") or "").strip()
+            if media_tier not in {"Tier 1", "Tier 2", "Tier 3"}:
+                raise ValueError(
+                    f"Tier conventional media tidak valid pada baris {line_number}: {media_tier}"
+                )
+            catalog[domain] = (media_name, media_scope, media_tier)
+    return catalog
+
+
+CONVENTIONAL_MEDIA_CATALOG = _load_conventional_media_catalog()
 
 
 def _publisher_lock(url: str) -> threading.Lock:
@@ -242,6 +283,13 @@ def media_identity(url: str) -> tuple[str, str, str]:
     host = (urlparse(url).hostname or "").casefold().strip(".")
     if host.startswith("www."):
         host = host[4:]
+    catalog_identity = CONVENTIONAL_MEDIA_CATALOG.get(host)
+    if catalog_identity is not None:
+        name, scope, tier = catalog_identity
+        if host.endswith("antaranews.com") and urlparse(url).path.startswith("/rilis-pers/"):
+            tier = "Tier 3"
+        return name, scope, tier
+
     base = _base_domain(host)
     labels = host.split(".")
     prefix = labels[: max(0, len(labels) - len(base.split(".")))]
@@ -254,7 +302,7 @@ def media_identity(url: str) -> tuple[str, str, str]:
     if regional:
         scope = "Regional"
     elif base in INTERNATIONAL_MEDIA_DOMAINS:
-        scope = "Inter"
+        scope = "International"
     else:
         # MIDETA is aimed at Indonesian media monitoring. Treat an unknown
         # publisher as national unless it is in the international catalogue;
@@ -575,7 +623,7 @@ def _fallback_publish_date(url: str, page_text: str) -> tuple[str, str]:
 
 
 IRRELEVANT_NODE_RE = re.compile(
-    r"(?:^|[-_\s])(ad|ads|advert|advertisement|banner|breadcrumb|comment|footer|header|menu|nav|newsletter|"
+    r"(?:^|[-_\s])(ad|ads|advert|advertisement|banner|breadcrumb|caption|comment|footer|header|menu|nav|newsletter|"
     r"popup|promo|recommend|related|share|sidebar|social|subscribe)(?:$|[-_\s])",
     re.I,
 )
@@ -583,7 +631,8 @@ IRRELEVANT_TEXT_RE = re.compile(
     r"^(?:advertisement|iklan|baca juga|simak juga|lihat juga|artikel terkait|berita terkait|"
     r"rekomendasi|pilihan editor|baca selengkapnya|lebih lanjut(?:\s+(?:klik\s+)?di sini)?|"
     r"klik(?:\s+di)?\s+sini|lanjut membaca|read also|read more|related articles?|"
-    r"recommended(?: articles?)?|bagikan artikel|share this article|subscribe|berlangganan|follow us)\b",
+    r"recommended(?: articles?)?|bagikan artikel|share this article|subscribe|berlangganan|follow us|"
+    r"reporter\s*:|editor\s*:|penulis\s*:|author\s*:)\b",
     re.I,
 )
 PROMOTIONAL_SENTENCE_RE = re.compile(
@@ -606,12 +655,21 @@ IRRELEVANT_TAIL_RE = re.compile(
     r"pewarta\s*:|copyright\s*[©\u00a9]|dilarang\s+keras\s+mengambil\s+konten|"
     r"dilarang\s+mengambil\s+dan/atau\s+menayangkan\s+ulang|"
     r"disclaimer\s*:\s*this\s+article\s+was\s+automatically\s+rewritten|"
-    r"follow\s+channel\s+telegram|cek\s+berita\s+dan\s+artikel\s+lainnya|"
+    r"follow\s+channel\s+telegram|cek\s+berita\s+dan\s+artikel\s+(?:lainnya|yang\s+lain)|"
     r"temukan\s+berita\s+terkini|dapatkan\s+update\s+berita|nyaman\s+tanpa\s+iklan|"
     r"cek\s+berita\s+teknologi|mau\s+berita\s+menarik\s+lainnya|"
     r"update\s+berita\s+dan\s+artikel|silakan\s+baca\s+konten\s+menarik\s+lainnya|"
     r"read\s+full\s+article(?:\s+on\b)?|teks\s+foto\s*:|"
+    r"make\s+the\s+article\s+one\s+line\s+only(?:remove\s+remaining\s+article\s+headings)?|"
+    r"remove\s+remaining\s+article\s+headings|"
     r"tag\s*:|sumber\s*:\s*berita\s+bisnis\s+hari\s+terbaru)(?=\s|[:|–—.!?-]|$)",
+    re.I,
+)
+RAW_JSON_TAIL_RE = re.compile(r"\{\s*[\"']title[\"']\s*:\s*[\"']", re.I)
+COPYRIGHT_TAIL_RE = re.compile(r"(?:©|\u00a9)\s*(?:19|20)\d{2}\s+konten\s+oleh\b", re.I)
+BYLINE_ONLY_RE = re.compile(
+    r"^(?:(?:reporter|editor|penulis|author)\s*:\s*[^|\n]{2,100}"
+    r"(?:\s*\|\s*)?)+$",
     re.I,
 )
 
@@ -619,6 +677,8 @@ IRRELEVANT_TAIL_RE = re.compile(
 def _strip_irrelevant_tail(value: str) -> str:
     """Remove inline recommendations while retaining surrounding article text."""
     text = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n|•")
+    if BYLINE_ONLY_RE.fullmatch(text):
+        return ""
     text = PROMOTIONAL_SENTENCE_RE.sub(" ", text)
     text = re.sub(r"\s+", " ", text).strip()
     # Publisher footers and next-article modules are terminal: everything
@@ -626,6 +686,9 @@ def _strip_irrelevant_tail(value: str) -> str:
     # story rather than to the submitted article.
     if marker := IRRELEVANT_TAIL_RE.search(text):
         text = text[:marker.start()].rstrip(" ;|:–—-.")
+    for tail_pattern in (RAW_JSON_TAIL_RE, COPYRIGHT_TAIL_RE):
+        if marker := tail_pattern.search(text):
+            text = text[:marker.start()].rstrip(" ;|:–—-.")
     # Structured article bodies can contain several inline cards in one long
     # text node. Remove every card, rather than leaving the second one behind.
     while marker := IRRELEVANT_INLINE_RE.search(text):
@@ -647,7 +710,9 @@ def _strip_irrelevant_tail(value: str) -> str:
 
 
 def _clean_candidate(candidate: Tag) -> str:
-    for element in candidate.select("script, style, noscript, nav, header, footer, aside, form, iframe, svg, button"):
+    for element in candidate.select(
+        "script, style, noscript, nav, header, footer, aside, form, iframe, svg, button, figure, figcaption"
+    ):
         element.decompose()
     for element in list(candidate.find_all(True)):
         if getattr(element, "attrs", None) is None:
@@ -702,6 +767,7 @@ def _extract_dom_content(soup: BeautifulSoup) -> str:
         ".blog-item-body",
         ".card-isi",
         ".aktual_article",
+        ".tmpt-desk-kon",
         ".primary_content",
         ".section-berita",
         ".text-article",
@@ -748,7 +814,32 @@ def _extract_dom_content(soup: BeautifulSoup) -> str:
     return ""
 
 
+def _recover_embedded_article_content(value: str) -> str:
+    """Recover article copy accidentally embedded as a JSON-like text suffix.
+
+    A few publishers concatenate an unfinished teaser with a serialized editor
+    payload. The payload is not always valid JSON because quotes inside the
+    article are left unescaped, so recover its ``content`` value conservatively
+    instead of exporting the object or leaving a cut-off sentence.
+    """
+    text = str(value or "")
+    marker = RAW_JSON_TAIL_RE.search(text)
+    if not marker:
+        return text
+    payload = text[marker.start():]
+    content_marker = re.search(r"[\"']content[\"']\s*:\s*[\"']", payload, re.I)
+    if not content_marker:
+        return text[:marker.start()]
+    recovered = payload[content_marker.end():].strip()
+    recovered = re.sub(r"[\"']\s*}\s*$", "", recovered).strip()
+    recovered = recovered.replace(r"\n", "\n").replace(r'\"', '"')
+    if len(recovered.split()) >= 35:
+        return recovered
+    return text[:marker.start()]
+
+
 def _clean_content(text: str) -> str:
+    text = _recover_embedded_article_content(str(text or ""))
     if re.search(r"<[^>]+>", str(text or "")):
         text = BeautifulSoup(str(text), "lxml").get_text("\n", strip=True)
     paragraphs: list[str] = []
@@ -809,6 +900,11 @@ def _page_state(title: str, body_text: str, content: str) -> str:
 def _clean_title(value: str, media_name: str) -> str:
     """Decode entities and remove publisher chrome without rewriting a headline."""
     title = html_lib.unescape(re.sub(r"\s+", " ", str(value or ""))).strip()
+    title = re.split(
+        r"(?i)\s+(?:artikel\s+ini\s+adalah\s+bagian\s+dari\b|baca\s+selengkapnya\s+di\s*:)",
+        title,
+        maxsplit=1,
+    )[0].strip()
     title = re.sub(
         r"(?i)^portal berita indonesia\s*\|\s*berita hari ini\s*\|\s*",
         "",
@@ -860,26 +956,49 @@ def _url_matches_article(url: str, title: str, content: str) -> bool:
 
 
 NEGATIVE_TERMS = (
-    "ancam", "bangkrut", "bencana", "buruk", "ditangkap", "gagal", "gugatan", "jatuh",
-    "kecelakaan", "kerugian", "kontroversi", "korupsi", "krisis", "masalah", "meninggal",
-    "negatif", "pelanggaran", "pemecatan", "penipuan", "phk", "rugi", "skandal", "turun",
+    "ambles", "ancam", "anjlok", "bangkrut", "bencana", "buruk", "ditangkap", "gagal", "gugatan", "jatuh",
+    "decline", "downturn", "drop", "kecelakaan", "kerugian", "kontroversi", "korupsi", "krisis", "masalah", "meninggal",
+    "melemah", "merosot", "musnah", "negatif", "pelanggaran", "pemecatan", "penipuan", "phk",
+    "plummet", "rugi", "selling pressure", "skandal", "tekanan", "tergerus", "terkoreksi", "terpangkas", "tertekan", "turun",
 )
 POSITIVE_TERMS = (
     "apresiasi", "baik", "bantuan", "beasiswa", "berhasil", "bertumbuh", "capaian",
-    "cuan", "dukung", "efisien", "jaminan", "kesehatan", "keuntungan", "kuat", "laba",
-    "manfaat", "menang", "naik", "pelindungan", "perlindungan", "peluang", "pemulihan",
+    "cuan", "dukung", "efisien", "euforia", "gain", "growth", "improve", "jaminan", "kesehatan", "keuntungan", "kuat", "laba", "lonjak", "menarik",
+    "manfaat", "membaik", "melompat", "menang", "menguat", "murah", "naik", "opportunity", "pelindungan", "perlindungan", "peluang", "pemulihan",
     "pendidikan", "peningkatan", "positif", "prestasi", "profit", "rekor", "sejahtera",
-    "semarak", "sukses", "tumbuh", "unggul", "untung",
+    "semarak", "stabil", "strong", "sukses", "support", "tumbuh", "unggul", "untung",
 )
+TONE_GENERIC_ACRONYMS = {
+    "ARA", "ARB", "BEI", "CEO", "DCF", "EBITDA", "FTSE", "GEIS", "IHSG", "LQ45",
+    "MSCI", "OJK", "PBV", "PER", "RUPS", "RUPSLB", "SOTP",
+}
 
 
 def classify_tone(title: str, content: str) -> str:
-    text = f"{title} {title} {title} {content}".casefold()
+    # Financial roundups often mix winners and losers. When the headline names
+    # tickers, score paragraphs about those subjects so another company's rally
+    # does not overwrite the submitted article's actual focus.
+    focus_terms = {
+        token
+        for token in re.findall(r"\b[A-Z][A-Z0-9]{1,7}\b", str(title or ""))
+        if token not in TONE_GENERIC_ACRONYMS and not token.isdigit()
+    }
+    focused_content = str(content or "")
+    if focus_terms:
+        sentences = re.split(r"(?<=[.!?])\s*|[\r\n]+", focused_content)
+        matching = [
+            sentence
+            for sentence in sentences
+            if any(re.search(rf"\b{re.escape(term)}\b", sentence, re.I) for term in focus_terms)
+        ]
+        if matching:
+            focused_content = " ".join(matching)
+    text = f"{title} {title} {title} {focused_content}".casefold()
     negative = sum(len(re.findall(rf"\b{re.escape(term)}\w*", text)) for term in NEGATIVE_TERMS)
     positive = sum(len(re.findall(rf"\b{re.escape(term)}\w*", text)) for term in POSITIVE_TERMS)
-    if negative > positive * 1.25 and negative:
+    if negative > positive * 1.35 and negative:
         return "Negative"
-    if positive > negative * 1.25 and positive:
+    if positive > negative * 1.35 and positive:
         return "Positive"
     return "Neutral"
 
@@ -888,7 +1007,8 @@ PERSON_TITLES_RE = re.compile(
     r"(?i)^(?:(?:presiden|wakil presiden|menteri perhubungan(?:\s*\(menhub\))?|menhub|menteri|"
     r"wakil menteri|gubernur (?:sumatera utara|sumut)|gubernur|gubsu|"
     r"(?:north sumatra )?governor|wakil gubernur|bupati|"
-    r"wali kota|walikota|direktur utama|direktur|komisaris utama|komisaris|ceo|chief executive officer|"
+    r"wali kota|walikota|direktur dan sekretaris perusahaan|direktur utama|direktur|"
+    r"komisaris utama|komisaris|analis(?:\s+dari)?|analyst|tim analis|ceo|chief executive officer|"
     r"president director|president of|country manager|country head|head of|chief of|founder|co-founder|"
     r"rektor|wakil rektor|dekan|asisten deputi|deputi|pemilik|pelaku usaha|"
     r"mitra pengemudi|mitra merchant|mitra instruktur|mitra penerima beasiswa|mitra naik kelas|mitra|"
@@ -923,6 +1043,7 @@ PERSON_ROLE_PATTERN = (
     r"head\s+of|founder|co-founder|menteri|wakil\s+menteri|deputi|asisten\s+deputi|"
     r"rektor|wakil\s+rektor|dekan|direktur(?:\s+utama)?|komisaris(?:\s+utama)?|"
     r"gubernur|wakil\s+gubernur|bupati|wali\s*kota|ketua(?:\s+umum)?|sekretaris|"
+    r"analis|analyst|tim\s+analis|"
     r"juru\s+bicara|koordinator|pemilik|pelaku\s+usaha|"
     r"mitra(?:\s+(?:pengemudi|merchant|instruktur|penerima\s+beasiswa|naik\s+kelas))?)"
 )
@@ -932,7 +1053,8 @@ FORMAL_ROLE_RE = re.compile(
     r"president(?:\s+director|\s+of)?|country\s+(?:manager|head|marketing)|head\s+of|"
     r"founder|co-founder|menteri|wakil\s+menteri|deputi|asisten\s+deputi|rektor|"
     r"wakil\s+rektor|dekan|direktur(?:\s+utama)?|komisaris(?:\s+utama)?|gubernur|"
-    r"wakil\s+gubernur|bupati|wali\s*kota|ketua(?:\s+umum)?|sekretaris|juru\s+bicara|"
+    r"wakil\s+gubernur|bupati|wali\s*kota|ketua(?:\s+umum)?|sekretaris|analis|analyst|"
+    r"tim\s+analis|juru\s+bicara|"
     r"koordinator|pemilik)\b",
     re.I,
 )
@@ -940,6 +1062,10 @@ ACADEMIC_SUFFIX_PATTERN = r"(?:S\.?E\.?|S\.?H\.?|M\.?H\.?|M\.?B\.?A\.?|M\.?Si\.?
 PERSON_BEFORE_ROLE_RE = re.compile(
     rf"(?P<name>{PERSON_SEQUENCE})(?:\s*,\s*(?i:{ACADEMIC_SUFFIX_PATTERN}))*\s*,\s*"
     rf"(?P<role>(?i:{PERSON_ROLE_PATTERN}))\b"
+)
+SPEECH_NAME_LIST_RE = re.compile(
+    rf"\b(?i:kata|ujar|menurut|ungkap|tutur|sebut|tambah|papar|jelas|imbuh|according\s+to)\s+"
+    rf"(?P<names>{PERSON_SEQUENCE}(?:\s*,\s*{PERSON_SEQUENCE})*(?:\s+(?i:dan|and)\s+{PERSON_SEQUENCE})?)"
 )
 PERSON_NAME_ALIASES = {
     "bobby": "Bobby Nasution",
@@ -979,21 +1105,24 @@ def _clean_person_name(value: str) -> str:
         "",
         name,
     ).strip(" ,.;:-")
-    name = re.sub(r"^(?:(?:[A-Z]{2,})(?:\s+|$))+", "", name).strip(" ,.;:-")
+    # Two-letter prefixes such as "RA Koesoemohadiani" can be personal
+    # initials. Strip only longer organization acronyms here; known two-letter
+    # organizations are rejected by the word filter below.
+    name = re.sub(r"^(?:(?:[A-Z]{3,})(?:\s+|$))+", "", name).strip(" ,.;:-")
     name = re.sub(r"(?i)^(?:dki\s+)?jakarta\s+(?=[A-ZÀ-ÖØ-Ý])", "", name).strip(" ,.;:-")
     name = re.sub(r"(?i),?\s+(?:S\.?H\.?|M\.?H\.?|S\.?E\.?|M\.?B\.?A\.?|Ph\.?D\.?)$", "", name).strip()
     name = PERSON_NAME_ALIASES.get(name.casefold(), name)
     non_person_words = {
-        "aksi", "alasan", "anak", "asosiasi", "badan", "berita", "buruh", "company", "dana", "dampak",
-        "bpjs", "country", "demokrat", "direktur", "dirlantas", "dpr", "dprd", "federasi",
+        "aksi", "alasan", "anak", "asosiasi", "badan", "berita", "bursa", "buruh", "company", "dana", "dampak",
+        "analis", "analyst", "bank", "bpjs", "country", "demokrat", "deutsche", "direktur", "dirlantas", "dki", "dpr", "dprd", "federasi",
         "foundation", "gerindra", "gojek", "goto", "governor", "gubernur", "gubsu", "grab", "grabacademy",
         "anggota", "eks", "golkar", "hakim", "hanura", "hukum", "indonesia", "instansi", "jalan", "jaya",
-        "kejagung", "kebijakan", "kementerian", "koalisi", "kombes", "komisi", "konfederasi", "kecil",
+        "jasa", "karbon", "kejagung", "kebijakan", "kementerian", "keuangan", "koalisi", "kombes", "komisi", "konfederasi", "kecil",
         "kapuspenkum", "kepesertaan", "kesehatan", "ketua", "krakatau", "lembaga",
-        "mahkamah", "majelis", "manajemen", "manager", "massa", "maxim", "media", "menengah", "menteri", "merchant", "metro", "mikro", "mitra",
-        "ministry", "nasdem", "negara", "organisasi", "pejabat", "perkuat", "putusan",
-        "partai", "pekerja", "pemerintah", "perindo", "perjuangan", "perseroan", "perusahaan", "polisi",
-        "polda", "penopang", "redaksi", "rektor", "republik", "rasuna", "ruu", "saham", "serikat", "sumber", "tim", "tuntutan",
+        "mahkamah", "majelis", "manajemen", "manager", "massa", "maxim", "media", "menengah", "menteri", "merchant", "metro", "mikro", "mitra", "morgan",
+        "ministry", "nasdem", "negara", "ojk", "organisasi", "pejabat", "perkuat", "putusan",
+        "otoritas", "partai", "pasar", "pekerja", "pemerintah", "pengawas", "perindo", "perjuangan", "perseroan", "perusahaan", "phillip", "polisi", "pt",
+        "polda", "penopang", "redaksi", "rektor", "republik", "rasuna", "ruu", "saham", "sekuritas", "serikat", "sumber", "tbk", "tim", "tuntutan",
         "kesaksian",
         "union", "universitas", "usaha", "utama", "yayasan", "terbuka", "senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu",
         "buka", "lebih", "banyak", "pilihan", "kelas", "chief", "executive", "officer", "head", "president",
@@ -1113,6 +1242,11 @@ def _mention_details(content: str, article_node: dict[str, Any], title: str = ""
 
     for match in SPEECH_AFTER_NAME_RE.finditer(content):
         candidates.append((match.start(), _best_person_name(_clause_before(content, match.start()), from_end=True), "direct", False))
+    for match in SPEECH_NAME_LIST_RE.finditer(content):
+        for offset, raw_name in enumerate(
+            re.split(r"\s*,\s*|\s+(?i:dan|and)\s+", match.group("names"))
+        ):
+            candidates.append((match.start() + offset, raw_name, "direct", True))
     for match in SPEECH_BEFORE_NAME_RE.finditer(content):
         candidates.append((match.start(), _best_person_name(_clause_after(content, match.end()), from_end=False), "direct", False))
     for match in MENTION_ACTION_RE.finditer(f"{title}. {content}"):
@@ -1206,7 +1340,9 @@ def enrich_article_html(source_url: str, html: str, resolved_url: str | None = N
         or (soup.html.get("lang") if soup.html else "")
         or _meta(soup, 'meta[property="og:locale"]')
     ).casefold()
-    if media_scope == "Inter" and (language.startswith("id") or "id_id" in language):
+    if host not in CONVENTIONAL_MEDIA_CATALOG and media_scope in {"Inter", "International"} and (
+        language.startswith("id") or "id_id" in language
+    ):
         media_scope = "National"
     title = _plain_text(article.get("headline") or article.get("name")) or _meta(
         soup, 'meta[property="og:title"]', 'meta[name="twitter:title"]'

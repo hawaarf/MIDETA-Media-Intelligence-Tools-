@@ -7,6 +7,9 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
+from src.batch import SOCIAL_BATCH_VERSION
+from src.connectors import get_connector
+
 
 class EnrichmentPageTests(unittest.TestCase):
     @staticmethod
@@ -108,6 +111,52 @@ class EnrichmentPageTests(unittest.TestCase):
         self.assertIn("Periksa Login", button_labels)
         self.assertIn("Tutup Chrome Facebook", button_labels)
         self.assertIn("Mulai Advanced Enrichment", button_labels)
+
+    def test_completed_enrichment_shows_bilingual_reporting_format(self):
+        url = "https://www.youtube.com/watch?v=report"
+        result = get_connector(url).mock_enrichment(url)
+        result.username.value = "akunreport"
+        result.caption.value = "Posting ini menjelaskan kejadian utama untuk laporan."
+        result.posted_at.value = "2026-09-30"
+        job = {
+            "id": 77,
+            "platform": "YouTube",
+            "schema_version": SOCIAL_BATCH_VERSION,
+            "status": "completed",
+            "processed": 1,
+            "pending": 0,
+            "total": 1,
+            "enrichment_mode": "standard",
+            "mock_mode": False,
+            "items": [
+                {
+                    "position": 1,
+                    "url": url,
+                    "status": "completed",
+                    "result": result.model_dump(mode="json"),
+                }
+            ],
+            "errors": [],
+            "browser_issues": [],
+        }
+        with (
+            patch("src.database.get_social_job", return_value=None),
+            patch("src.database.get_latest_social_job", return_value=job),
+        ):
+            app = self._app()
+            language = next(
+                widget
+                for widget in app.get("button_group")
+                if widget.label == "Bahasa report / Report language"
+            )
+            language.set_value("English").run(timeout=10)
+
+        self.assertFalse(app.exception)
+        self.assertIn("Short message", [widget.label for widget in app.text_area])
+        self.assertIn(
+            "Download TXT Report",
+            [widget.label for widget in app.get("download_button")],
+        )
 
 
 if __name__ == "__main__":
