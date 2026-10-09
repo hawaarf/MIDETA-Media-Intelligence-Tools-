@@ -449,8 +449,21 @@ def _parse_publish_date(value: Any) -> tuple[str, str]:
     if not text or re.search(r"(?:^null\b|substitution for tag|^[-+]?\d{2}:\d{2}$)", text, re.I):
         return "", ""
     parsed: datetime | None = None
+    if re.fullmatch(r"\d{10,13}", text):
+        # Some Indonesian publishers expose JSON-LD dates as Unix seconds (or
+        # milliseconds) rather than ISO-8601. Keep the accepted range bounded
+        # to plausible publication dates so unrelated numeric IDs are ignored.
+        try:
+            timestamp = int(text)
+            if len(text) == 13:
+                timestamp /= 1000
+            if 946_684_800 <= timestamp <= 4_102_444_800:
+                parsed = datetime.fromtimestamp(timestamp, tz=ZoneInfo("Asia/Jakarta"))
+        except (ValueError, OverflowError, OSError):
+            parsed = None
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed is None:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         try:
             parsed = parsedate_to_datetime(text)
@@ -582,6 +595,7 @@ def _extract_publish_date(
     structured_values = (
         article.get("datePublished"),
         _meta(soup, 'meta[property="article:published_time"]'),
+        _meta(soup, 'meta[name="article:published_time"]'),
         _meta(soup, 'meta[name="pubdate"]'),
         _meta(soup, 'meta[name="publishdate"]'),
         _meta(soup, 'meta[itemprop="datePublished"]'),
@@ -672,6 +686,159 @@ BYLINE_ONLY_RE = re.compile(
     r"(?:\s*\|\s*)?)+$",
     re.I,
 )
+ARTICLE_EXPANSION_LABELS = {
+    "show all": "show_all",
+    "page selanjutnya": "next",
+    "halaman selanjutnya": "next",
+    "selanjutnya": "next",
+}
+ARTICLE_NAVIGATION_LABELS = {
+    *ARTICLE_EXPANSION_LABELS,
+    "sebelumnya",
+    "previous",
+    "next",
+}
+ARTICLE_PAGINATION_MARKER_RE = re.compile(
+    r"(?:^|[-_\s])(?:full|link[-_]?nex[-_]?prev|next|page|pager|pagination|read[-_]?more|show[-_]?all)(?:$|[-_\s])",
+    re.I,
+)
+ARTICLE_PAGE_QUERY_KEYS = {"page", "p", "pg", "halaman", "show", "view"}
+
+
+def _article_control_label(element: Tag) -> str:
+    """Return a compact label for an article expansion/navigation control."""
+    text = re.sub(r"\s+", " ", element.get_text(" ", strip=True)).casefold()
+    return text.strip(" \t\r\n:;|·•‹›«»←→")
+
+
+def _pagination_context(element: Tag) -> bool:
+    """Limit generic next controls to elements that look like article pagination."""
+    current: Tag | None = element
+    for _ in range(4):
+        if not isinstance(current, Tag):
+            break
+        marker = " ".join(
+            [
+                str(current.get("id") or ""),
+                *[str(item) for item in (current.get("class") or [])],
+                str(current.get("rel") or ""),
+            ]
+        )
+        if ARTICLE_PAGINATION_MARKER_RE.search(marker):
+            return True
+        current = current.parent if isinstance(current.parent, Tag) else None
+    return False
+
+
+def _article_page_relation(current_url: str, target_url: str, *, contextual: bool) -> bool:
+    """Accept only same-article pagination URLs, never generic next-story links."""
+    current = urlparse(current_url)
+    target = urlparse(target_url)
+    if (
+        current.scheme not in {"http", "https"}
+        or target.scheme not in {"http", "https"}
+        or (current.hostname or "").casefold() != (target.hostname or "").casefold()
+    ):
+        return False
+
+    current_path = current.path.rstrip("/") or "/"
+    target_path = target.path.rstrip("/") or "/"
+    if target_path.startswith(f"{current_path}/"):
+        suffix = target_path[len(current_path) + 1 :].casefold()
+        if re.fullmatch(r"(?:\d{1,2}|all|full|show[-_]?all)", suffix):
+            return True
+
+    current_query = dict(
+        item.split("=", 1) if "=" in item else (item, "")
+        for item in current.query.split("&")
+        if item
+    )
+    target_query = dict(
+        item.split("=", 1) if "=" in item else (item, "")
+        for item in target.query.split("&")
+        if item
+    )
+    changed_keys = {
+        key
+        for key in set(current_query) | set(target_query)
+        if current_query.get(key) != target_query.get(key)
+    }
+    if current_path == target_path and changed_keys and changed_keys <= ARTICLE_PAGE_QUERY_KEYS:
+        return True
+
+    def page_stem(path: str) -> str:
+        return re.sub(r"/(?:\d{1,2}|all|full|show[-_]?all)$", "", path, flags=re.I)
+
+    return contextual and page_stem(current_path) == page_stem(target_path)
+
+
+def _article_expansion_control(
+    soup: BeautifulSoup,
+    current_url: str,
+) -> tuple[str, str, str] | None:
+    """Find a safe Show All/forward-page control and its optional destination."""
+    matches: list[tuple[int, str, str, str]] = []
+    for element in soup.select("a, button, [role='button']"):
+        if not isinstance(element, Tag):
+            continue
+        label = _article_control_label(element)
+        action = ARTICLE_EXPANSION_LABELS.get(label)
+        if not action:
+            continue
+        raw_target = str(
+            element.get("href")
+            or element.get("data-href")
+            or element.get("data-url")
+            or ""
+        ).strip()
+        target = urljoin(current_url, raw_target) if raw_target and raw_target != "#" else ""
+        contextual = _pagination_context(element)
+        if action == "next":
+            if not target or not _article_page_relation(current_url, target, contextual=contextual):
+                if not contextual:
+                    continue
+        elif target and not _article_page_relation(current_url, target, contextual=contextual):
+            continue
+        # Prefer Show All over a paginated version when both are present.
+        matches.append((0 if action == "show_all" else 1, action, target, label))
+    if not matches:
+        return None
+    _, action, target, label = min(matches, key=lambda item: item[0])
+    return action, target, label
+
+
+def _expanded_public_article_html(
+    html: str,
+    resolved_url: str,
+    *,
+    max_pages: int = 10,
+) -> tuple[str, list[str]]:
+    """Follow bounded same-article expansion links and return all article pages."""
+    primary_html = html
+    additional_html: list[str] = []
+    current_html = html
+    current_url = resolved_url
+    visited = {resolved_url.split("#", 1)[0]}
+    for _ in range(max_pages - 1):
+        control = _article_expansion_control(BeautifulSoup(current_html, "lxml"), current_url)
+        if not control:
+            break
+        action, target, _ = control
+        canonical_target = target.split("#", 1)[0] if target else ""
+        if not canonical_target or canonical_target in visited:
+            break
+        visited.add(canonical_target)
+        try:
+            next_html, next_url = fetch_public_html(target, user_agent=ARTICLE_USER_AGENT)
+        except (CollectionError, URLValidationError):
+            break
+        if action == "show_all":
+            primary_html = next_html
+            additional_html.clear()
+        else:
+            additional_html.append(next_html)
+        current_html, current_url = next_html, next_url
+    return primary_html, additional_html
 
 
 def _strip_irrelevant_tail(value: str) -> str:
@@ -714,6 +881,12 @@ def _clean_candidate(candidate: Tag) -> str:
         "script, style, noscript, nav, header, footer, aside, form, iframe, svg, button, figure, figcaption"
     ):
         element.decompose()
+    # Some publishers place page controls inside the article wrapper. Remove
+    # the control itself after its destination has been followed so labels
+    # such as "Sebelumnya" never become the first word of exported copy.
+    for element in list(candidate.select("a, [role='button']")):
+        if isinstance(element, Tag) and _article_control_label(element) in ARTICLE_NAVIGATION_LABELS:
+            element.decompose()
     for element in list(candidate.find_all(True)):
         if getattr(element, "attrs", None) is None:
             continue
@@ -750,6 +923,14 @@ def _clean_candidate(candidate: Tag) -> str:
 def _extract_dom_content(soup: BeautifulSoup) -> str:
     selectors = (
         "[itemprop='articleBody']",
+        # Publisher-specific wrappers observed on otherwise fully public
+        # pages. Keep these ahead of generic ``article``/``main`` selectors so
+        # navigation and related-story cards cannot outscore the real copy.
+        "#fontResizableText",
+        "#velocity-post-content",
+        ".content_read",
+        ".post_content",
+        ".prose.mb-6.max-w-full",
         "#berita_content_sub",
         "#sub_content",
         "#berita_panel",
@@ -863,6 +1044,23 @@ def _clean_content(text: str) -> str:
     return "\n\n".join(paragraphs)
 
 
+def _merge_article_parts(parts: Iterable[str]) -> str:
+    """Join article pages in order while removing repeated whole paragraphs."""
+    paragraphs: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        for paragraph in re.split(r"\n{2,}", _clean_content(part)):
+            cleaned = re.sub(r"\s+", " ", paragraph).strip()
+            if not cleaned:
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            paragraphs.append(cleaned)
+    return "\n\n".join(paragraphs)
+
+
 UNAVAILABLE_MARKERS = (
     "404 not found", "article not found", "artikel tidak ditemukan", "content is unavailable",
     "halaman tidak ditemukan", "konten tidak tersedia", "page does not exist", "page not found",
@@ -928,6 +1126,20 @@ def _clean_title(value: str, media_name: str) -> str:
             title = prefix.strip()
             break
     return title.strip(" \t\r\n-|–—")
+
+
+def _publisher_only_title(value: str, media_name: str) -> bool:
+    """Return whether metadata contains only the publisher brand, not a headline."""
+    title_key = re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+    media_parts = [
+        re.sub(r"[^a-z0-9]", "", part.casefold())
+        for part in str(media_name or "").split(".")
+        if part.casefold() not in {"www", "com", "co", "id", "net", "org", "news", "tv"}
+    ]
+    brand_keys = {part for part in media_parts if part}
+    if media_parts:
+        brand_keys.add("".join(media_parts))
+    return bool(title_key and title_key in brand_keys)
 
 
 URL_TITLE_STOPWORDS = {
@@ -1326,7 +1538,12 @@ def _failed_result(
     )
 
 
-def enrich_article_html(source_url: str, html: str, resolved_url: str | None = None) -> ArticleResult:
+def enrich_article_html(
+    source_url: str,
+    html: str,
+    resolved_url: str | None = None,
+    additional_html: Iterable[str] = (),
+) -> ArticleResult:
     """Extract one article from loaded HTML while retaining the submitted URL."""
     effective_url = resolved_url or source_url
     media_name, media_scope, media_tier = media_identity(effective_url)
@@ -1344,20 +1561,25 @@ def enrich_article_html(source_url: str, html: str, resolved_url: str | None = N
         language.startswith("id") or "id_id" in language
     ):
         media_scope = "National"
-    title = _plain_text(article.get("headline") or article.get("name")) or _meta(
-        soup, 'meta[property="og:title"]', 'meta[name="twitter:title"]'
+    structured_title = _plain_text(article.get("headline") or article.get("name"))
+    metadata_title = _meta(soup, 'meta[property="og:title"]', 'meta[name="twitter:title"]')
+    visible_heading = _meta(
+        soup,
+        "#sub_content h1",
+        ".news-detail-content h1",
+        ".entry-content h1",
+        "article h1",
+        ".entry-title",
+        ".post-title",
+        "h1",
     )
-    if not title:
-        title = _meta(
-            soup,
-            "#sub_content h1",
-            ".news-detail-content h1",
-            ".entry-content h1",
-            "article h1",
-            ".entry-title",
-            ".post-title",
-            "h1",
-        )
+    title = structured_title or metadata_title
+    if visible_heading and not structured_title and (
+        not title or _publisher_only_title(_clean_title(title, media_name), media_name)
+    ):
+        title = visible_heading
+    elif not title:
+        title = visible_heading
     if not title and soup.title:
         title = soup.title.get_text(" ", strip=True)
     title = _clean_title(title, media_name)
@@ -1371,6 +1593,16 @@ def enrich_article_html(source_url: str, html: str, resolved_url: str | None = N
         content = SWA_CRAWLING_NOTICE
     else:
         content = structured_content if len(structured_content.split()) >= 35 else dom_content
+        article_parts = [content]
+        for page_html in additional_html:
+            page_soup = BeautifulSoup(page_html or "", "lxml")
+            page_article = _article_node(_json_ld_nodes(page_soup))
+            page_structured = _clean_content(_plain_text(page_article.get("articleBody")))
+            page_dom = _extract_dom_content(page_soup)
+            page_content = page_structured if len(page_structured.split()) >= 35 else page_dom
+            if page_content:
+                article_parts.append(page_content)
+        content = _merge_article_parts(article_parts)
     body_text = soup.get_text(" ", strip=True)
     date_publish, month = _extract_publish_date(
         soup,
@@ -1437,6 +1669,21 @@ def enrich_article_html(source_url: str, html: str, resolved_url: str | None = N
     )
 
 
+def _enrich_fetched_article(
+    source_url: str,
+    html: str,
+    resolved_url: str,
+) -> ArticleResult:
+    """Expand same-article pagination before extracting one public result."""
+    primary_html, additional_html = _expanded_public_article_html(html, resolved_url)
+    return enrich_article_html(
+        source_url,
+        primary_html,
+        resolved_url,
+        additional_html=additional_html,
+    )
+
+
 def _enrich_public_article_unlocked(url: str) -> ArticleResult:
     """Collect an article without login, classifying failures for spreadsheet review."""
     try:
@@ -1448,7 +1695,7 @@ def _enrich_public_article_unlocked(url: str) -> ArticleResult:
                 raise
             time.sleep(0.6)
             html, resolved_url = fetch_public_html(url, user_agent=ARTICLE_USER_AGENT)
-        result = enrich_article_html(url, html, resolved_url)
+        result = _enrich_fetched_article(url, html, resolved_url)
         if result.status == "failed" and result.reason.startswith("Isi artikel"):
             # Some publishers intermittently return a shell page while their
             # article cache is warming or one backend serves an empty shell.
@@ -1461,7 +1708,7 @@ def _enrich_public_article_unlocked(url: str) -> ArticleResult:
                         url,
                         user_agent=ARTICLE_USER_AGENT,
                     )
-                    fresh_result = enrich_article_html(url, fresh_html, fresh_resolved_url)
+                    fresh_result = _enrich_fetched_article(url, fresh_html, fresh_resolved_url)
                     if fresh_result.status != "failed":
                         return fresh_result
                     html, resolved_url, result = fresh_html, fresh_resolved_url, fresh_result
@@ -1479,7 +1726,7 @@ def _enrich_public_article_unlocked(url: str) -> ArticleResult:
                 fragment="",
             ).geturl()
             amp_html, amp_resolved_url = fetch_public_html(amp_url, user_agent=ARTICLE_USER_AGENT)
-            amp_result = enrich_article_html(url, amp_html, amp_resolved_url)
+            amp_result = _enrich_fetched_article(url, amp_html, amp_resolved_url)
             if amp_result.status == "completed":
                 return amp_result
         if result.status == "failed":
@@ -1492,7 +1739,7 @@ def _enrich_public_article_unlocked(url: str) -> ArticleResult:
                         amp_url,
                         user_agent=ARTICLE_USER_AGENT,
                     )
-                    amp_result = enrich_article_html(url, amp_html, amp_resolved_url)
+                    amp_result = _enrich_fetched_article(url, amp_html, amp_resolved_url)
                     if amp_result.status == "completed":
                         return amp_result
                 except (CollectionError, URLValidationError):
@@ -1562,6 +1809,65 @@ class ConventionalMediaBrowser:
         except (URLValidationError, WebDriverException) as exc:
             raise ConventionalMediaError("Halaman login tidak dapat dibuka di Chrome artikel MIDETA.") from exc
 
+    def _expanded_html(self, driver) -> tuple[list[str], str]:
+        """Click dynamic expansion controls and retain each forward article page."""
+        pages = [str(driver.page_source or "")]
+        initial_url = str(driver.current_url or "")
+        visited_urls = {initial_url.split("#", 1)[0]}
+        for _ in range(9):
+            current_url = str(driver.current_url or initial_url)
+            before_html = str(driver.page_source or "")
+            control = _article_expansion_control(
+                BeautifulSoup(before_html, "lxml"),
+                current_url,
+            )
+            if not control:
+                break
+            action, target, label = control
+            canonical_target = target.split("#", 1)[0] if target else ""
+            if canonical_target:
+                if canonical_target in visited_urls:
+                    break
+                visited_urls.add(canonical_target)
+                driver.get(target)
+            else:
+                clicked = bool(
+                    driver.execute_script(
+                        """
+                        const wanted = arguments[0];
+                        const clean = value => (value || '')
+                          .replace(/\\s+/g, ' ')
+                          .trim()
+                          .toLocaleLowerCase()
+                          .replace(/^[\\s:;|·•‹›«»←→]+|[\\s:;|·•‹›«»←→]+$/g, '');
+                        const control = [...document.querySelectorAll('a, button, [role="button"]')]
+                          .find(node => clean(node.innerText || node.textContent) === wanted);
+                        if (!control) return false;
+                        control.click();
+                        return true;
+                        """,
+                        label,
+                    )
+                )
+                if not clicked:
+                    break
+            try:
+                WebDriverWait(driver, min(self.wait_seconds, 8)).until(
+                    lambda active: str(active.page_source or "") != before_html
+                    or str(active.current_url or "") != current_url
+                )
+            except TimeoutException:
+                break
+            time.sleep(0.35)
+            expanded_html = str(driver.page_source or "")
+            if expanded_html == before_html:
+                break
+            if action == "show_all":
+                pages = [expanded_html]
+            else:
+                pages.append(expanded_html)
+        return pages, initial_url
+
     def collect(self, url: str) -> ArticleResult:
         try:
             validate_public_url(url)
@@ -1571,7 +1877,13 @@ class ConventionalMediaBrowser:
                 lambda active: active.execute_script("return document.readyState") in {"interactive", "complete"}
             )
             time.sleep(1.0)
-            return enrich_article_html(url, driver.page_source, str(driver.current_url or url))
+            pages, resolved_url = self._expanded_html(driver)
+            return enrich_article_html(
+                url,
+                pages[0],
+                resolved_url or url,
+                additional_html=pages[1:],
+            )
         except TimeoutException:
             try:
                 driver.execute_script("window.stop();")

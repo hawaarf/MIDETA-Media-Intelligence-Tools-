@@ -43,9 +43,13 @@ URL pendek dan URL hasil tombol **Share** juga bisa langsung ditempel. Ini menca
 
 Setelah enrichment selesai, bagian **Reporting Format** membuat teks laporan siap salin. Untuk satu URL, hasil ditulis dalam format ringkas per posting. Untuk beberapa URL, MIDETA menggabungkan platform, rentang tanggal, pesan singkat dari caption, rincian engagement setiap posting, dan total seluruh engagement. Pilih **Indonesia** atau **English**, lalu edit pesan bila konteks atau terjemahan perlu disempurnakan. Views dan followers tidak dihitung sebagai engagement. Report dapat disalin langsung atau diunduh sebagai TXT.
 
+#### YouTube Fast API
+
+Masukkan YouTube Data API key melalui panel YouTube untuk memakai jalur cepat. MIDETA meminta metadata video dalam batch hingga 50 ID, meminta statistik channel hanya sekali per channel, lalu menyimpan subscriber count di cache selama aplikasi aktif. Key disimpan lokal di `data/private`, tidak dimasukkan ke Git atau file ekspor. Jika API atau kuotanya tidak tersedia, MIDETA otomatis kembali ke pembaca halaman publik dan mempertahankan seluruh baris input.
+
 #### Pilihan mode Facebook
 
-Facebook menyediakan dua mode. **Fast** membaca metadata publik tanpa login. **Advanced** memakai Chrome Facebook yang sudah login, membuka post target dan profil author, lalu mencari Reel dengan ID yang sama pada halaman Reels untuk melengkapi followers/friends dan views.
+Facebook menyediakan dua mode. **Fast** mencoba metadata publik terlebih dahulu dan, bila Facebook mengirim halaman kosong, memakai sesi Chrome yang sudah login untuk membaca satu post/Reel target saja—termasuk membuka caption lengkap—tanpa membuka profil atau daftar Reels. **Advanced** membuka post target dan profil author, lalu mencari Reel dengan ID yang sama pada halaman Reels untuk melengkapi followers/friends dan views.
 
 Gunakan **Advanced** bila views tidak muncul pada mode Fast. MIDETA tidak mengambil angka dari kartu Reel lain: jika Reel target tidak ditemukan atau Facebook tidak menampilkan angkanya, kolom Views ditulis **Cek**. Untuk memakainya, pilih Advanced, klik **Buka Chrome Facebook**, login langsung di Facebook, lalu klik **Periksa Login** sebelum memulai antrean.
 
@@ -317,6 +321,10 @@ MIDETA uses the URL and ignores the surrounding text. Each result is saved as so
 Short links and links copied from a platform's **Share** button can be pasted directly. This includes `youtu.be`, `vt.tiktok.com`, `vm.tiktok.com`, `fb.watch`, `fb.me`, `t.co`, and the `/share/...` formats used by Facebook, Instagram, and Threads. MIDETA resolves these links to the original post before collecting data while keeping the pasted URL in the result row so the original order remains easy to match.
 
 After enrichment completes, **Reporting Format** creates a copy-ready text report. A single URL uses a compact per-post layout. Multiple URLs are compiled into a platform/date header, a short caption-based message, per-post engagement, and total engagement across all posts. Choose **Indonesia** or **English**, then edit the message when its context or translation needs refinement. Views and followers are excluded from engagement. The report can be copied directly or downloaded as TXT.
+
+#### YouTube Fast API
+
+Enter a YouTube Data API key in the YouTube panel to enable the fast path. MIDETA requests video metadata in batches of up to 50 IDs, requests channel statistics once per channel, and caches subscriber counts while the app is running. The key is stored locally under `data/private`; it is never committed or included in exports. If the API or its quota is unavailable, MIDETA automatically falls back to the public watch-page reader while retaining every input row.
 
 #### Facebook modes
 

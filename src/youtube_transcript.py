@@ -130,6 +130,11 @@ def _valid_speaker_name(value: str) -> bool:
     name = re.sub(r"\s+", " ", html.unescape(value)).strip(" -–—[]()")
     if not name or len(name) > 60 or len(name.split()) > 7:
         return False
+    # YouTube's rolling VTT captions embed word-level timing tags such as
+    # ``<00:00:01.880>``. A partial tag before the first colon is never a
+    # speaker name, even if the surrounding sentence otherwise looks valid.
+    if re.search(r"[<>]|\b\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\b", name):
+        return False
     if _NON_SPEECH_RE.fullmatch(f"[{name}]"):
         return False
     if re.search(r"https?://|www\.|[@#]", name, re.I):
@@ -147,22 +152,26 @@ def _speaker_and_text(raw_text: str, state: _SpeakerState) -> tuple[str, str, bo
         text = _clean_caption_text(source)
         return state.current, text, True
 
-    changed_without_name = source.startswith(">>")
-    prefix_match = _PREFIX_SPEAKER_RE.match(source)
+    # Remove VTT cue markup *before* looking for ``Name: text``. Otherwise the
+    # colon inside a word-level timestamp can turn the preceding sentence into
+    # a fabricated speaker label.
+    clean_source = _clean_caption_text(source)
+    changed_without_name = clean_source.startswith(">>")
+    prefix_match = _PREFIX_SPEAKER_RE.match(clean_source)
     if prefix_match:
         candidate = prefix_match.group(1) or prefix_match.group(2) or ""
         if _valid_speaker_name(candidate):
             state.current = re.sub(r"\s+", " ", candidate).strip()
             return state.current, _clean_caption_text(prefix_match.group(3)), True
 
-    source = re.sub(r"^>>\s*", "", source)
+    clean_source = re.sub(r"^>>\s*", "", clean_source)
     if changed_without_name:
         speaker = state.generic(next_speaker=True)
     elif state.current:
         speaker = state.current
     else:
         speaker = state.generic()
-    return speaker, _clean_caption_text(source), False
+    return speaker, clean_source, False
 
 
 def _deduplicate_rolling(segments: list[TranscriptSegment]) -> list[TranscriptSegment]:
@@ -186,6 +195,32 @@ def _deduplicate_rolling(segments: list[TranscriptSegment]) -> list[TranscriptSe
                 continue
             if same_speaker and close_in_time and previous_folded.startswith(current_folded + " "):
                 continue
+            if same_speaker:
+                previous_words = previous.text.split()
+                current_words = segment.text.split()
+                maximum = min(len(previous_words), len(current_words))
+                minimum_overlap = 2 if close_in_time else 3
+                overlap = next(
+                    (
+                        size
+                        for size in range(maximum, minimum_overlap - 1, -1)
+                        if [word.casefold() for word in previous_words[-size:]]
+                        == [word.casefold() for word in current_words[:size]]
+                    ),
+                    0,
+                )
+                if overlap:
+                    suffix = " ".join(current_words[overlap:])
+                    if close_in_time:
+                        if suffix:
+                            previous.text = f"{previous.text} {suffix}"
+                        previous.speaker_from_caption = (
+                            previous.speaker_from_caption or segment.speaker_from_caption
+                        )
+                        continue
+                    if not suffix:
+                        continue
+                    segment.text = suffix
         output.append(segment)
     return output
 
@@ -395,18 +430,33 @@ class YouTubeTranscriptCollector:
                 "File subtitle YouTube gagal diunduh. Coba proses ulang URL tersebut."
             ) from exc
 
-    def collect(self, url: str, *, language: str = "auto") -> YouTubeTranscriptResult:
+    def collect(
+        self,
+        url: str,
+        *,
+        language: str = "auto",
+        progress_callback: Callable[[float, str], None] | None = None,
+    ) -> YouTubeTranscriptResult:
+        def report(fraction: float, detail: str) -> None:
+            if progress_callback is not None:
+                progress_callback(fraction, detail)
+
+        report(0.04, "Memeriksa URL video")
         source_url = _video_url(url)
         language_choice = str(language or "auto").casefold()
         if language_choice not in {"auto", "id", "en"}:
             raise YouTubeTranscriptError("Pilihan bahasa subtitle tidak dikenali.")
 
+        report(0.18, "Membaca metadata dan channel YouTube")
         info = self._extract_info(source_url)
+        report(0.48, "Memilih subtitle yang tersedia")
         source_name, language_code, language_name, track = _select_track(
             info, language_choice
         )
         headers = info.get("http_headers") if isinstance(info.get("http_headers"), Mapping) else {}
+        report(0.62, f"Mengunduh subtitle {language_name}")
         payload = self._fetch_subtitle(str(track.get("url") or ""), headers)
+        report(0.82, "Menyusun timestamp dan label pembicara")
         segments = parse_caption_payload(payload, str(track.get("ext") or ""))
         if not segments:
             raise YouTubeTranscriptError(
@@ -415,7 +465,7 @@ class YouTubeTranscriptCollector:
 
         spokespersons = tuple(dict.fromkeys(segment.speaker for segment in segments))
         has_named_speakers = any(segment.speaker_from_caption for segment in segments)
-        return YouTubeTranscriptResult(
+        result = YouTubeTranscriptResult(
             source_url=source_url,
             title=str(info.get("title") or "Video YouTube").strip(),
             channel=str(
@@ -431,6 +481,8 @@ class YouTubeTranscriptCollector:
             spokespersons=spokespersons,
             has_named_speakers=has_named_speakers,
         )
+        report(1.0, f"Selesai menyusun {len(segments):,} baris transcript")
+        return result
 
 
 def _speaker_mapping(
@@ -461,6 +513,15 @@ def format_transcript_report(
     speaker_names: Mapping[str, str] | None = None,
 ) -> str:
     """Return channel, spokespersons, caption provenance, and transcript as TXT."""
+    metadata = format_transcript_metadata(result, speaker_names)
+    return f"{metadata}\n\nTranscript:\n{format_transcript(result, speaker_names)}"
+
+
+def format_transcript_metadata(
+    result: YouTubeTranscriptResult,
+    speaker_names: Mapping[str, str] | None = None,
+) -> str:
+    """Return copy-ready video identity separately from transcript lines."""
     names = _speaker_mapping(result, speaker_names)
     source_label = "Subtitle manual YouTube" if result.caption_source == "manual" else "Subtitle otomatis YouTube"
     spokespersons = ", ".join(dict.fromkeys(names.values()))
@@ -469,6 +530,5 @@ def format_transcript_report(
         f"Judul Video: {result.title}\n"
         f"Spokesperson: {spokespersons}\n"
         f"Bahasa Subtitle: {result.language_name} ({result.language_code})\n"
-        f"Sumber Transcript: {source_label}\n\n"
-        f"Transcript:\n{format_transcript(result, names)}"
+        f"Sumber Transcript: {source_label}"
     )

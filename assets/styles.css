@@ -775,8 +775,25 @@ textarea:focus-visible {
   line-height: 1.55;
 }
 
+[data-testid="stProgress"] {
+  padding: 0.7rem 0.85rem 0.8rem;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: 0 8px 24px rgba(55, 40, 50, 0.055);
+}
+
+[data-testid="stProgress"] p {
+  margin-bottom: 0.38rem;
+  color: var(--text) !important;
+  font-size: 0.82rem;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
 [data-testid="stProgress"] > div > div {
   background: linear-gradient(90deg, var(--brand-dark), var(--brand-bright));
+  border-radius: 999px;
 }
 
 [data-baseweb="tab-list"] {

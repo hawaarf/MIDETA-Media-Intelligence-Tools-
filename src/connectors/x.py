@@ -35,11 +35,51 @@ class XConnector(BaseConnector):
     @staticmethod
     def _scalar(block: str, key: str) -> int | None:
         match = re.search(
-            rf'(?:"{re.escape(key)}"|{re.escape(key)})\s*:\s*"?(\d+)"?',
+            rf'(?:"{re.escape(key)}"|(?<![\w]){re.escape(key)})(?![\w])'
+            rf'\s*:\s*"?(\d+)"?',
             block,
             re.I,
         )
         return int(match.group(1)) if match else None
+
+    @staticmethod
+    def _js_string(block: str, key: str) -> str | None:
+        """Read a quoted string from X's JavaScript/Seroval payload."""
+        match = re.search(
+            rf'(?:"{re.escape(key)}"|(?<![\w]){re.escape(key)})(?![\w])'
+            rf'\s*:\s*"((?:\\.|[^"\\])*)"',
+            block,
+            re.I | re.S,
+        )
+        if not match:
+            return None
+        try:
+            return json.loads(f'"{match.group(1)}"')
+        except (json.JSONDecodeError, TypeError):
+            return match.group(1)
+
+    @staticmethod
+    def _seroval_object(block: str, key: str, max_chars: int = 2_000) -> str:
+        """Return a flat object assigned directly or through a Seroval $R reference."""
+        match = re.search(
+            rf'(?:"{re.escape(key)}"|(?<![\w]){re.escape(key)})(?![\w])\s*:\s*'
+            rf'(?:\$R\[\d+\]\s*=\s*)?\{{([^{{}}]{{0,{max_chars}}})\}}',
+            block,
+            re.I | re.S,
+        )
+        return match.group(1) if match else ""
+
+    @staticmethod
+    def _slice_utf16(text: str, start: int, end: int) -> str:
+        """Apply X display_text_range across current and legacy index formats."""
+        if start < 0 or end < start:
+            return text
+        # Current X payloads use Unicode character offsets (including emoji as
+        # one character). Some legacy payloads used UTF-16 code-unit offsets.
+        if end <= len(text):
+            return text[start:end]
+        encoded = text.encode("utf-16-le")
+        return encoded[start * 2:end * 2].decode("utf-16-le", errors="ignore")
 
     def _target_flight_window(self, html: str, url: str) -> str:
         target_id = self._status_id(url)
@@ -66,6 +106,11 @@ class XConnector(BaseConnector):
                 "ApiCounts" in block,
                 "ViewCountInfo" in block,
                 "UserRelationshipCounts" in block,
+                "display_text_range" in block,
+                "relationship_counts" in block,
+                "full_text" in block,
+                bool(re.search(r'(?:"views"|views)\s*:', block, re.I)),
+                bool(re.search(r'(?:"counts"|counts)\s*:', block, re.I)),
             ),
         )
 
@@ -114,7 +159,32 @@ class XConnector(BaseConnector):
         tweet = self._target_tweet(html, url)
         legacy = tweet.get("legacy") if isinstance(tweet, dict) else None
         caption = legacy.get("full_text") if isinstance(legacy, dict) else None
-        return str(caption).strip() if str(caption or "").strip() else current
+        if str(caption or "").strip():
+            return str(caption).strip()
+
+        # Current X pages serialize tweets with Seroval references instead of
+        # embedding ordinary JSON. For replies, full_text contains hidden
+        # leading @mentions; display_text_range identifies the visible caption.
+        window = self._target_flight_window(html, url)
+        details = self._seroval_object(window, "details", max_chars=8_000)
+        caption = self._js_string(details or window, "full_text")
+        if caption:
+            display_range = re.search(
+                r'(?:"display_text_range"|display_text_range)\s*:\s*'
+                r'(?:\$R\[\d+\]\s*=\s*)?\[\s*(\d+)\s*,\s*(\d+)\s*\]',
+                details or window,
+                re.I,
+            )
+            if display_range:
+                caption = self._slice_utf16(
+                    caption,
+                    int(display_range.group(1)),
+                    int(display_range.group(2)),
+                )
+            caption = caption.strip()
+            if caption:
+                return caption
+        return current
 
     def _platform_posted_at(self, html, soup, url, current):
         tweet = self._target_tweet(html, url)
@@ -132,6 +202,12 @@ class XConnector(BaseConnector):
                 value = user["relationship_counts"].get("followers")
             if value is not None:
                 return self._number(value, default=0)
+
+        window = self._target_flight_window(html, url)
+        relationship = self._seroval_object(window, "relationship_counts")
+        followers = self._scalar(relationship, "followers")
+        if followers is not None:
+            return followers
 
         username = self._username_from_url(url)
         if not username:
@@ -192,7 +268,11 @@ class XConnector(BaseConnector):
             window,
             re.I | re.S,
         )
-        count_source = counts.group(1) if counts else window[:12_000]
+        count_source = (
+            counts.group(1)
+            if counts
+            else self._seroval_object(window, "counts") or window[:12_000]
+        )
         for source_key, output_key in {
             "favorite_count": "likes",
             "reply_count": "comments",
@@ -216,6 +296,10 @@ class XConnector(BaseConnector):
         if views:
             value = self._scalar(views.group(1), "count")
             if value is not None and "views" not in metrics:
+                metrics["views"] = value
+        elif "views" not in metrics:
+            value = self._scalar(self._seroval_object(window, "views"), "count")
+            if value is not None:
                 metrics["views"] = value
         return metrics
 

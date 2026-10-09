@@ -63,7 +63,7 @@ def current_comment_browser(platform: str) -> CommentBrowserCollector:
     """Upgrade a cached browser object after a Streamlit hot reload."""
     browser = comment_browser_v6(platform)
     if (
-        getattr(browser, "RUNTIME_VERSION", 0) >= 23
+        getattr(browser, "RUNTIME_VERSION", 0) >= 31
         and "max_comments" in inspect.signature(browser.collect).parameters
         and "expected_comments" in inspect.signature(browser.collect).parameters
     ):
@@ -151,7 +151,11 @@ def collect_comment_url(
         connector = get_platform_connector(url, platform)
         preview = None
         expected_comments = None
-        if include_preview or (platform == "X" and not request["mock_mode"]):
+        if include_preview or (
+            active_browser is not None
+            and platform in {"Facebook", "Threads", "X"}
+            and not request["mock_mode"]
+        ):
             try:
                 preview_result = connector.mock_enrichment(url) if request["mock_mode"] else connector.enrich(url)
                 if isinstance(preview_result.comments.value, int) and preview_result.comments.value > 0:
@@ -318,12 +322,13 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
                         "Alasan": str(exc),
                     }
                 )
-                progress_targets[platform].progress(1.0, text=f"{platform}: Chrome tidak dapat dimulai")
+                progress_targets[platform].progress(1.0, text=f"{platform}: Chrome tidak dapat dimulai · 100%")
                 continue
         tasks.append({"request": request, "active_browser": active_browser})
+        fraction = batch_progress_fraction(0, len(request["urls"]), 0.04)
         progress_targets[platform].progress(
-            batch_progress_fraction(0, len(request["urls"]), 0.04),
-            text=f"{platform}: menyiapkan {len(request['urls']):,} URL…",
+            fraction,
+            text=f"{platform}: menyiapkan {len(request['urls']):,} URL · {round(fraction * 100)}%",
         )
 
     if tasks:
@@ -349,15 +354,17 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
                         elapsed = now - state["heartbeat_started"]
                         heartbeat = min(0.9, 0.04 + (elapsed / (elapsed + 10.0)) * 0.86)
                         state["active_fraction"] = max(state["active_fraction"], heartbeat)
+                        fraction = batch_progress_fraction(
+                            state["processed"],
+                            state["total"],
+                            state["active_fraction"],
+                        )
                         progress_targets[active_platform].progress(
-                            batch_progress_fraction(
-                                state["processed"],
-                                state["total"],
-                                state["active_fraction"],
-                            ),
+                            fraction,
                             text=(
                                 f"{active_platform}: memproses URL {state['processed'] + 1:,} "
-                                f"dari {state['total']:,} · {state['comment_count']:,} komentar ditemukan"
+                                f"dari {state['total']:,} · {round(fraction * 100)}% · "
+                                f"{state['comment_count']:,} komentar · menunggu {int(elapsed):,} dtk"
                             ),
                         )
                     continue
@@ -377,15 +384,17 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
                         state["active_fraction"],
                         min(count / limit, 0.95),
                     )
+                    fraction = batch_progress_fraction(
+                        state["processed"],
+                        state["total"],
+                        state["active_fraction"],
+                    )
                     progress_targets[platform].progress(
-                        batch_progress_fraction(
-                            state["processed"],
-                            state["total"],
-                            state["active_fraction"],
-                        ),
+                        fraction,
                         text=(
                             f"{platform}: URL {state['processed'] + 1:,} dari {state['total']:,} · "
-                            f"{count:,} komentar ditemukan (maks. {MAX_COMMENTS_PER_URL:,})"
+                            f"{round(fraction * 100)}% · {count:,} komentar ditemukan "
+                            f"(maks. {MAX_COMMENTS_PER_URL:,})"
                         ),
                     )
                     continue
@@ -394,9 +403,13 @@ def run_comment_requests(requests: list[dict[str, Any]], progress_targets: dict[
                 state["active_fraction"] = 0.04
                 state["heartbeat_started"] = time.monotonic()
                 state["comment_count"] = 0
+                fraction = batch_progress_fraction(state["processed"], state["total"])
                 progress_targets[platform].progress(
-                    batch_progress_fraction(state["processed"], state["total"]),
-                    text=f"{platform}: {state['processed']:,} dari {state['total']:,} URL selesai",
+                    fraction,
+                    text=(
+                        f"{platform}: {state['processed']:,} dari {state['total']:,} URL selesai · "
+                        f"{round(fraction * 100)}%"
+                    ),
                 )
 
     for platform, state in states.items():
@@ -557,7 +570,7 @@ if submitted:
         with column:
             progress_targets[request["platform"]] = st.progress(
                 0,
-                text=f"{request['platform']}: menyiapkan antrean…",
+                text=f"{request['platform']}: menyiapkan antrean · 0%",
             )
     run_comment_requests(requests, progress_targets)
 

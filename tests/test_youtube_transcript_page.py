@@ -6,6 +6,8 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from src.youtube_transcript import TranscriptSegment, YouTubeTranscriptResult
+
 
 class YouTubeTranscriptPageTests(unittest.TestCase):
     @staticmethod
@@ -35,6 +37,27 @@ class YouTubeTranscriptPageTests(unittest.TestCase):
 
         self.assertFalse(app.exception)
         self.assertTrue(any("URL video YouTube" in item.value for item in app.error))
+
+    def test_result_separates_video_information_and_transcript(self):
+        app = self._app()
+        app.session_state["youtube_transcript_result"] = YouTubeTranscriptResult(
+            source_url="https://www.youtube.com/watch?v=abcdefghijk",
+            title="Video Contoh",
+            channel="Channel Contoh",
+            language_code="id",
+            language_name="Indonesia",
+            caption_source="automatic",
+            segments=[TranscriptSegment(0, "Kalimat pembuka.", "Pembicara 1")],
+            spokespersons=("Pembicara 1",),
+            has_named_speakers=False,
+        )
+
+        app.run(timeout=10)
+
+        self.assertFalse(app.exception)
+        markdown = " ".join(item.value for item in app.markdown)
+        self.assertIn("Informasi Video", markdown)
+        self.assertIn("Transcript", markdown)
 
 
 if __name__ == "__main__":

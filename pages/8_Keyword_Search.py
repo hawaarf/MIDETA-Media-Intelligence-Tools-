@@ -209,13 +209,15 @@ with st.form("keyword_search_form"):
 
 if submitted:
     st.session_state.pop("keyword_search_result", None)
-    progress = st.progress(0.01, text="Menyiapkan pencarian publik…")
+    progress = st.progress(0.01, text="Keyword Search · Menyiapkan pencarian publik · 1%")
 
     def update_progress(state: dict[str, int]) -> None:
         total = max(state["total"], 1)
+        fraction = min(state["completed"] / total, 0.98)
         progress.progress(
-            min(state["completed"] / total, 0.98),
+            fraction,
             text=(
+                f"Keyword Search · {round(fraction * 100)}% · "
                 f"{state['completed']} dari {state['total']} pencarian selesai · "
                 f"{state['discovered']:,} posting cocok ditemukan"
             ),
@@ -244,7 +246,7 @@ if submitted:
         progress.empty()
         st.error(str(exc))
     else:
-        progress.progress(1.0, text=f"Selesai: {len(result.rows):,} mention unik ditemukan")
+        progress.progress(1.0, text=f"Keyword Search selesai · 100% · {len(result.rows):,} mention unik ditemukan")
         st.session_state["keyword_search_result"] = result
         st.session_state["keyword_search_range"] = (start_date, end_date)
 

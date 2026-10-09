@@ -5,7 +5,7 @@ import json
 import re
 from urllib.parse import parse_qs, unquote, urlparse
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from src.connectors.base import BaseConnector
 from src.dates import relative_social_date_iso, social_date_iso
@@ -61,7 +61,11 @@ class FacebookConnector(BaseConnector):
     @staticmethod
     def _group_post_ids(url: str) -> tuple[str, str] | None:
         parts = [unquote(part) for part in urlparse(url).path.split("/") if part]
-        if len(parts) < 4 or parts[0].lower() != "groups" or not parts[1].isdigit():
+        # Facebook group URLs can use either the numeric group ID or a public
+        # slug, for example ``/groups/helios1688/permalink/<post-id>``.
+        # Requiring digits here caused slug-based group posts to be treated as
+        # ordinary profile posts, so their group name was never appended.
+        if len(parts) < 4 or parts[0].lower() != "groups" or not parts[1].strip():
             return None
         if parts[2].lower() not in {"permalink", "posts"}:
             return None
@@ -336,10 +340,39 @@ class FacebookConnector(BaseConnector):
                 metrics.setdefault("shares", value)
         return metrics
 
-    @staticmethod
-    def _visible_reel_owner(soup: BeautifulSoup) -> tuple[str | None, str | None]:
-        """Read the owner shown beside the first video in a fullscreen Reel."""
-        if not soup.select_one('[aria-label="Video player"], [aria-label="Pemutar video"]'):
+    def _target_reel_card(self, soup: BeautifulSoup, url: str) -> Tag | None:
+        """Return the rendered Reel card whose video ID matches the requested URL."""
+        identifiers = set(self._post_identifiers(url))
+        for card in soup.select("[data-video-id]"):
+            if str(card.get("data-video-id") or "") in identifiers:
+                return card
+
+        player = soup.select_one('[aria-label="Video player"], [aria-label="Pemutar video"]')
+        if player is None:
+            return None
+        root = player
+        for _ in range(10):
+            if root is None:
+                break
+            video_id = str(root.get("data-video-id") or "")
+            if video_id and (not identifiers or video_id in identifiers):
+                return root
+            if root is not player and root.select_one("a[aria-label][href]"):
+                # Older authenticated layouts do not expose data-video-id.
+                # Their smallest owner-containing ancestor is still the exact
+                # opened Reel, while recommendations live in sibling cards.
+                return root
+            root = root.parent
+        return player.parent if isinstance(player.parent, Tag) else player
+
+    def _visible_reel_owner(
+        self,
+        soup: BeautifulSoup,
+        url: str,
+    ) -> tuple[str | None, str | None]:
+        """Read the owner shown inside the requested fullscreen Reel."""
+        root = self._target_reel_card(soup, url)
+        if root is None:
             return None, None
         owner_labels = {
             "lihat profil pemilik",
@@ -347,7 +380,7 @@ class FacebookConnector(BaseConnector):
             "view owner profile",
             "view profile owner",
         }
-        for link in soup.select("a[aria-label][href]"):
+        for link in root.select("a[aria-label][href]"):
             label = re.sub(r"\s+", " ", str(link.get("aria-label") or "")).strip().casefold()
             if label not in owner_labels:
                 continue
@@ -367,16 +400,80 @@ class FacebookConnector(BaseConnector):
             return author, profile_url
         return None, None
 
-    def _visible_reel_metrics(self, soup: BeautifulSoup) -> dict[str, int]:
-        """Read the first action rail belonging to an opened fullscreen Reel.
+    def _visible_reel_caption(self, soup: BeautifulSoup, url: str) -> str | None:
+        """Read an expanded caption from the exact rendered fullscreen Reel."""
+        root = self._target_reel_card(soup, url)
+        if root is None:
+            return None
+
+        controls = {
+            "see more",
+            "see less",
+            "lihat selengkapnya",
+            "lihat lebih sedikit",
+            "show translation",
+            "hide translation",
+            "lihat terjemahan",
+            "sembunyikan terjemahan",
+        }
+
+        def paragraph_texts(search_root: Tag) -> list[str]:
+            values: list[str] = []
+            nodes = ([search_root] if search_root.name == "div" else []) + search_root.select("div")
+            for node in nodes:
+                if node.select_one("div") or str(node.get("role") or "").casefold() == "button":
+                    continue
+                text = re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip()
+                if len(text) < 30 or text.casefold() in controls:
+                    continue
+                if text not in values:
+                    values.append(text)
+            return values
+
+        # Reel subtitles and other video overlays are rendered inside the same
+        # card as the post description. Scope extraction to the smallest block
+        # around a caption marker so spoken subtitle text is not mistaken for
+        # the written caption.
+        markers = list(root.select('a[href*="/reel/hashtag/"]'))
+        if not markers:
+            markers = [
+                node
+                for node in root.select('button, [role="button"]')
+                if re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip().casefold()
+                in {"see less", "lihat lebih sedikit"}
+            ]
+        caption_root = root
+        for marker in markers[:1]:
+            candidate = marker.parent
+            for _ in range(10):
+                if not isinstance(candidate, Tag) or candidate is root.parent:
+                    break
+                if paragraph_texts(candidate):
+                    caption_root = candidate
+                    break
+                candidate = candidate.parent
+
+        paragraphs = paragraph_texts(caption_root)
+
+        hashtags: list[str] = []
+        for link in caption_root.select('a[href*="/reel/hashtag/"]'):
+            text = re.sub(r"\s+", " ", link.get_text(" ", strip=True)).strip()
+            if text.startswith("#") and text not in hashtags:
+                hashtags.append(text)
+        if hashtags:
+            paragraphs.append(" ".join(hashtags))
+        return "\n\n".join(paragraphs) if paragraphs else None
+
+    def _visible_reel_metrics(self, soup: BeautifulSoup, url: str) -> dict[str, int]:
+        """Read the first action rail belonging to the requested fullscreen Reel.
 
         Facebook's Reel viewer does not expose the normal post action-menu
-        label.  The requested Reel is rendered first and recommendations follow
-        it, so taking the first complete action rail avoids borrowing metrics
-        from the next video.
+        label. The target card carries data-video-id, while its action rail is
+        rendered as a sibling. Starting at that card and walking outward avoids
+        borrowing metrics from a recommended Reel.
         """
-        player = soup.select_one('[aria-label="Video player"], [aria-label="Pemutar video"]')
-        if player is None:
+        card = self._target_reel_card(soup, url)
+        if card is None:
             return {}
 
         label_to_metric = {
@@ -416,11 +513,16 @@ class FacebookConnector(BaseConnector):
                     if value is not None:
                         metrics[name] = value
                         break
+                else:
+                    # A rendered action button with no adjacent number means
+                    # zero engagement, not missing metadata.
+                    if str(node.get("role") or "").casefold() == "button" or node.name == "button":
+                        metrics[name] = 0
             return metrics
 
         # Use the smallest ancestor that contains a complete target action
         # rail. This prevents later recommendation rails from being considered.
-        root = player
+        root = card
         for _ in range(14):
             metrics = read_from(root)
             if {"likes", "comments", "shares"}.issubset(metrics):
@@ -456,17 +558,33 @@ class FacebookConnector(BaseConnector):
     def _group_post_author(self, html: str, post_id: str) -> str | None:
         return self._group_post_actor(html, post_id)[0]
 
-    def _group_name(self, html: str, soup, group_id: str) -> str | None:
-        group_patterns = (
-            rf'"group"\s*:\s*\{{\s*"id"\s*:\s*"{re.escape(group_id)}"\s*,\s*"name"\s*:\s*"((?:\\.|[^"\\])*)"',
-            rf'"group"\s*:\s*\{{\s*"name"\s*:\s*"((?:\\.|[^"\\])*)".{0,800}?"id"\s*:\s*"{re.escape(group_id)}"',
-        )
-        for pattern in group_patterns:
-            match = re.search(pattern, html, re.I | re.S)
-            if match:
-                name = self._decode_script_value(match.group(1))
-                if name:
-                    return name
+    def _group_name(self, html: str, soup, group_ref: str) -> str | None:
+        # The rendered header is the most reliable source for a slug URL and
+        # is naturally scoped to the group currently being viewed.
+        expected = group_ref.casefold()
+        for link in soup.select('a[href*="/groups/"]'):
+            href = unquote(str(link.get("href") or "")).replace("\\/", "/")
+            path = [part for part in urlparse(href).path.split("/") if part]
+            if len(path) < 2 or path[0].casefold() != "groups" or path[1].casefold() != expected:
+                continue
+            name = re.sub(r"\s+", " ", link.get_text(" ", strip=True)).strip()
+            if name and name.casefold() not in {"join", "gabung"}:
+                return name
+
+        # Numeric URLs can be matched exactly against Facebook's serialised
+        # group object. Keep this strict so a recommended group cannot donate
+        # its name to the target post.
+        if group_ref.isdigit():
+            group_patterns = (
+                rf'"group"\s*:\s*\{{\s*"id"\s*:\s*"{re.escape(group_ref)}"\s*,\s*"name"\s*:\s*"((?:\\.|[^"\\])*)"',
+                rf'"group"\s*:\s*\{{\s*"name"\s*:\s*"((?:\\.|[^"\\])*)".{{0,800}}?"id"\s*:\s*"{re.escape(group_ref)}"',
+            )
+            for pattern in group_patterns:
+                match = re.search(pattern, html, re.I | re.S)
+                if match:
+                    name = self._decode_script_value(match.group(1))
+                    if name:
+                        return name
         title = self._meta(soup, 'meta[property="og:title"]')
         if title and " | " in title:
             name = title.split(" | ", 1)[0].strip()
@@ -483,7 +601,7 @@ class FacebookConnector(BaseConnector):
             visible_author, _ = self._visible_post_owner(soup)
             if visible_author:
                 return visible_author
-            visible_author, _ = self._visible_reel_owner(soup)
+            visible_author, _ = self._visible_reel_owner(soup, url)
             if visible_author:
                 return visible_author
             title = soup.title.get_text(" ", strip=True) if soup.title else ""
@@ -515,7 +633,8 @@ class FacebookConnector(BaseConnector):
             # currently signed in to Facebook.
             return current if current_key and current_key == url_key else url_author
         group_id, post_id = group_post
-        author = self._group_post_author(html, post_id) or current
+        visible_author, _ = self._visible_post_owner(soup)
+        author = self._group_post_author(html, post_id) or visible_author or current
         group_name = self._group_name(html, soup, group_id)
         if not author:
             return group_name
@@ -554,7 +673,7 @@ class FacebookConnector(BaseConnector):
         if not profile_url:
             _, profile_url = self._visible_post_owner(soup)
         if not profile_url:
-            _, profile_url = self._visible_reel_owner(soup)
+            _, profile_url = self._visible_reel_owner(soup, canonical)
         if len(parts) >= 2 and parts[0].casefold() not in reserved and parts[1].casefold() in {
             "videos",
             "posts",
@@ -676,6 +795,9 @@ class FacebookConnector(BaseConnector):
         caption = self._meta(soup, 'meta[property="og:description"]', 'meta[name="description"]')
         caption = self._full_caption(soup, caption)
         caption = self._platform_caption(html, canonical, caption)
+        visible_caption = self._visible_reel_caption(soup, canonical)
+        if visible_caption and len(visible_caption) > len(caption or ""):
+            caption = visible_caption
         posted = self._meta(
             soup,
             'meta[property="article:published_time"]',
@@ -691,7 +813,7 @@ class FacebookConnector(BaseConnector):
         stats = self._merge_meta_metrics(stats, self._meta_metrics(soup))
         visible_metrics = self._visible_post_metrics(soup)
         if not visible_metrics:
-            visible_metrics = self._visible_reel_metrics(soup)
+            visible_metrics = self._visible_reel_metrics(soup, canonical)
         for name, value in visible_metrics.items():
             # These controls are scoped to the exact card/player currently
             # open. Prefer them over nearby script counters, which can include

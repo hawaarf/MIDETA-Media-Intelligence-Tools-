@@ -10,7 +10,7 @@ import re
 import time
 from pathlib import Path
 from typing import Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -33,11 +33,12 @@ class CommentBrowserLoginRequired(CommentBrowserError):
 
 
 class CommentBrowserCollector:
-    RUNTIME_VERSION = 24
+    RUNTIME_VERSION = 31
     THREADS_MAX_SCROLL_ROUNDS = 1_600
     FACEBOOK_MAX_SCROLL_ROUNDS = 1_600
     X_MAX_SCROLL_ROUNDS = 1_600
     X_IDLE_STABLE_ROUNDS = 16
+    X_NESTED_MAX_PARENTS = 250
     OTHER_MAX_SCROLL_ROUNDS = 30
     END_STABLE_ROUNDS = 3
     IDLE_STABLE_ROUNDS = 8
@@ -97,6 +98,23 @@ class CommentBrowserCollector:
             text,
             flags=re.I,
         ).strip()
+
+    @classmethod
+    def _clean_x_reply_text(cls, value) -> str:
+        """Remove X's addressing mentions from the start of a reply.
+
+        X stores replies as ``@target @other actual text`` even when the UI
+        treats those handles as reply metadata. The author already has its own
+        export column, so the comment column should contain only the message.
+        Mentions appearing later in a sentence are intentionally preserved.
+        """
+        text = cls._clean_comment_text(value)
+        text = re.sub(
+            r"^(?:@[A-Za-z0-9_]{1,30}(?:[\t \u00a0]*[,;:]?[\t \u00a0]*|\r?\n+))+",
+            "",
+            text,
+        )
+        return text.lstrip(" \t\r\n,;:·-–—")
 
     @classmethod
     def _comments_are_variants(cls, first, second) -> bool:
@@ -360,7 +378,7 @@ class CommentBrowserCollector:
                 "Facebook belum login. Buka Chrome Facebook, selesaikan login, lalu tekan Periksa Login."
             )
         try:
-            return self._collect_facebook_enrichment_once(url)
+            return self._collect_facebook_enrichment_once(url, include_profile=True)
         except WebDriverException as exc:
             if self._session_was_lost(exc):
                 self._discard_driver()
@@ -369,6 +387,26 @@ class CommentBrowserCollector:
                 ) from exc
             raise CommentBrowserError(
                 "Chrome MIDETA untuk Facebook tidak dapat membaca posting ini. Pastikan posting terlihat, lalu coba lagi."
+            ) from exc
+
+    def collect_facebook_fast_enrichment(self, url: str) -> SocialResult:
+        """Read only the requested Facebook page when its public HTML is empty."""
+        if self.platform != "Facebook":
+            raise CommentBrowserError("Fallback Fast ini hanya tersedia untuk Facebook.")
+        if not self.is_logged_in(open_platform=False):
+            raise CommentBrowserLoginRequired(
+                "Facebook membatasi URL ini. Buka Chrome Facebook dan login agar fallback Fast dapat membacanya."
+            )
+        try:
+            return self._collect_facebook_enrichment_once(url, include_profile=False)
+        except WebDriverException as exc:
+            if self._session_was_lost(exc):
+                self._discard_driver()
+                raise CommentBrowserLoginRequired(
+                    "Sesi Chrome Facebook terputus. Buka Chrome Facebook dan periksa login sebelum melanjutkan."
+                ) from exc
+            raise CommentBrowserError(
+                "Fallback Fast tidak dapat membaca halaman Facebook ini. Pastikan posting terlihat, lalu coba lagi."
             ) from exc
 
     @staticmethod
@@ -483,7 +521,68 @@ class CommentBrowserCollector:
                 break
         return html, connector._views_from_reels_html(html, target)
 
-    def _collect_facebook_enrichment_once(self, url: str) -> SocialResult:
+    @staticmethod
+    def _prepare_facebook_reel(driver, target: str) -> None:
+        """Show the original, expanded caption on the exact Reel card."""
+        if not target:
+            return
+        try:
+            state = driver.execute_script(
+                r"""
+                const target = String(arguments[0] || '');
+                const card = document.querySelector(`[data-video-id="${target}"]`) ||
+                  document.querySelector('[aria-label="Video player"], [aria-label="Pemutar video"]')
+                    ?.closest('[data-video-id]') ||
+                  document.querySelector('[aria-label="Video player"], [aria-label="Pemutar video"]')
+                    ?.parentElement;
+                if (!card) return {found: false, translationClicked: false};
+                const buttons = Array.from(card.querySelectorAll('button, [role="button"]'));
+                const label = node => (node.innerText || node.getAttribute('aria-label') || '')
+                  .replace(/\s+/g, ' ').trim();
+                const translated = buttons.find(node =>
+                  /^(?:hide translation|sembunyikan terjemahan)$/i.test(label(node))
+                );
+                if (translated) translated.click();
+                return {found: true, translationClicked: Boolean(translated)};
+                """,
+                target,
+            )
+        except WebDriverException:
+            return
+        if isinstance(state, dict) and state.get("translationClicked"):
+            time.sleep(0.25)
+        try:
+            expanded = driver.execute_script(
+                r"""
+                const target = String(arguments[0] || '');
+                const card = document.querySelector(`[data-video-id="${target}"]`) ||
+                  document.querySelector('[aria-label="Video player"], [aria-label="Pemutar video"]')
+                    ?.closest('[data-video-id]') ||
+                  document.querySelector('[aria-label="Video player"], [aria-label="Pemutar video"]')
+                    ?.parentElement;
+                if (!card) return false;
+                const label = node => (node.innerText || node.getAttribute('aria-label') || '')
+                  .replace(/\s+/g, ' ').trim();
+                const more = Array.from(card.querySelectorAll('button, [role="button"]')).find(node =>
+                  /^(?:see more|read more|lihat selengkapnya|baca selengkapnya|tampilkan selengkapnya)$/i.test(label(node))
+                );
+                if (!more) return false;
+                more.click();
+                return true;
+                """,
+                target,
+            )
+        except WebDriverException:
+            return
+        if expanded is True:
+            time.sleep(0.25)
+
+    def _collect_facebook_enrichment_once(
+        self,
+        url: str,
+        *,
+        include_profile: bool,
+    ) -> SocialResult:
         driver = self.start()
         driver.get(url)
         self._wait_for_page()
@@ -501,7 +600,10 @@ class CommentBrowserCollector:
                 )
             except WebDriverException:
                 pass
+            self._prepare_facebook_reel(driver, target_ids[0])
         post_html = driver.page_source
+        if not include_profile:
+            return connector.enrich_loaded_html(post_html, current_url)
         post_soup = BeautifulSoup(post_html, "lxml")
         profile_url = connector._target_profile_url(post_html, post_soup, current_url)
         profile_html = None
@@ -900,9 +1002,13 @@ class CommentBrowserCollector:
         max_comments: int = MAX_COMMENTS_PER_URL,
         expected_comments: int | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        initial_rows: list[dict] | None = None,
+        try_x_recent: bool = True,
     ) -> list[dict]:
         driver = self.start()
         thread_rows: dict[str, dict] = {}
+        if initial_rows:
+            self._merge_thread_rows(thread_rows, initial_rows)
         stable_rounds = 0
         idle_rounds = 0
         previous_scroll = None
@@ -910,6 +1016,7 @@ class CommentBrowserCollector:
         reported_count = -1
         locked_threads_url = ""
         locked_x_url = ""
+        x_filter_retry_done = False
         if self.platform == "Threads":
             max_rounds = self.THREADS_MAX_SCROLL_ROUNDS
             current_url = str(getattr(driver, "current_url", "") or "")
@@ -924,6 +1031,11 @@ class CommentBrowserCollector:
             current_match = re.search(r"/status/(\d+)", current_url, re.I)
             if current_match and current_match.group(1) == target_code:
                 locked_x_url = current_url
+            # A caller may intentionally supply the chronological URL. Avoid
+            # reloading that same view after its timeline has been exhausted.
+            x_filter_retry_done = not try_x_recent or (
+                dict(parse_qsl(urlparse(current_url).query)).get("sort_replies") == "recency"
+            )
         else:
             max_rounds = self.OTHER_MAX_SCROLL_ROUNDS
 
@@ -1193,14 +1305,50 @@ class CommentBrowserCollector:
             previous_scroll = scroll_position
             previous_height = page_height
 
-            end_stable_rounds = 6 if self.platform == "Facebook" else self.END_STABLE_ROUNDS
-            if state.get("reachedEnd") and stable_rounds >= end_stable_rounds:
+            end_stable_rounds = (
+                6
+                if self.platform == "Facebook"
+                else self.X_IDLE_STABLE_ROUNDS
+                if self.platform == "X"
+                else self.END_STABLE_ROUNDS
+            )
+            reached_stable_end = bool(
+                state.get("reachedEnd") and stable_rounds >= end_stable_rounds
+            )
+            idle_limit = self.X_IDLE_STABLE_ROUNDS if self.platform == "X" else self.IDLE_STABLE_ROUNDS
+
+            # X's Relevant and Recent views are different, partially
+            # overlapping reply sets. Exhaust Relevant first, then navigate
+            # to Recent while keeping the same ``thread_rows`` accumulator so
+            # the exported result is their de-duplicated union. Previously we
+            # opened Recent before collection, which merely replaced one
+            # partial result with another.
+            if (
+                self.platform == "X"
+                and (reached_stable_end or idle_rounds >= idle_limit)
+                and report_progress() < collection_target
+                and not x_filter_retry_done
+            ):
+                x_filter_retry_done = True
+                try:
+                    driver.execute_script("window.scrollTo(0, 0);")
+                    time.sleep(0.6)
+                    self._prepare_x_comments()
+                    time.sleep(1.0)
+                except WebDriverException:
+                    pass
+                stable_rounds = 0
+                idle_rounds = 0
+                previous_scroll = None
+                previous_height = None
+                continue
+
+            if reached_stable_end:
                 break
             if self.platform == "Facebook" and stable_rounds >= 12 and not clicked:
                 break
             if self.platform == "Threads" and stable_rounds >= 12 and not clicked:
                 break
-            idle_limit = self.X_IDLE_STABLE_ROUNDS if self.platform == "X" else self.IDLE_STABLE_ROUNDS
             if idle_rounds >= idle_limit:
                 break
         if self.platform == "X":
@@ -1261,20 +1409,63 @@ class CommentBrowserCollector:
             """
         )
 
+    @staticmethod
+    def _x_sorted_replies_url(url: str, order: str | None) -> str:
+        """Return an X permalink for one deterministic reply ordering."""
+        parsed = urlparse(str(url or ""))
+        if not re.search(r"/status/\d+", parsed.path, re.I):
+            return str(url or "")
+        query = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key.casefold() != "sort_replies"
+        ]
+        if order:
+            query.append(("sort_replies", order))
+        return parsed._replace(query=urlencode(query), fragment="").geturl()
+
+    @classmethod
+    def _x_recent_replies_url(cls, url: str) -> str:
+        """Return X's stable URL for the chronological reply timeline."""
+        return cls._x_sorted_replies_url(url, "recency")
+
+    @classmethod
+    def _x_liked_replies_url(cls, url: str) -> str:
+        """Return X's stable URL for replies ordered by likes."""
+        return cls._x_sorted_replies_url(url, "likes")
+
     def _prepare_x_comments(self) -> None:
         """Switch an X conversation from Relevant to the latest reply view."""
         driver = self.start()
+        current_url = str(getattr(driver, "current_url", "") or "")
+        recent_url = self._x_recent_replies_url(current_url)
+        if recent_url and recent_url != current_url:
+            try:
+                # Direct navigation is deterministic across X UI variants and
+                # exposes the full cursor-paginated Recent timeline. The menu
+                # click below remains as a fallback for layouts that reject it.
+                driver.get(recent_url)
+                self._wait_for_page()
+                loaded_url = str(getattr(driver, "current_url", "") or "")
+                if dict(parse_qsl(urlparse(loaded_url).query)).get("sort_replies") == "recency":
+                    return
+            except WebDriverException:
+                pass
+        elif recent_url and dict(parse_qsl(urlparse(current_url).query)).get("sort_replies") == "recency":
+            return
         try:
             opened = driver.execute_script(
                 r"""
-                const controls = Array.from(document.querySelectorAll('button, [role="button"]'));
+                const controls = Array.from(document.querySelectorAll(
+                  'button, [role="button"], [aria-haspopup="menu"]'
+                ));
                 const sorter = controls.find(node => {
                   const values = [node.innerText || '', node.getAttribute('aria-label') || '']
                     .map(value => value.replace(/\s+/g, ' ').trim().toLowerCase())
                     .filter(Boolean);
                   const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
                   return visible && values.some(value =>
-                    /^(?:relevant|relevan|top)(?:\s+(?:replies|balasan))?$/.test(value) ||
+                    /^(?:relevant|relevan|top)(?:\s+(?:replies|balasan))?\b/.test(value) ||
                     /(?:timeline|urutan).*\b(?:relevant|relevan)\b/.test(value)
                   );
                 });
@@ -1297,7 +1488,7 @@ class CommentBrowserCollector:
                     .filter(Boolean);
                   const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
                   return visible && values.some(value =>
-                    /^(?:latest|recent|newest|most recent|terbaru|paling baru)(?:\s+(?:replies|balasan))?$/.test(value)
+                    /^(?:latest|recent|newest|most recent|terbaru|paling baru)(?:\s+(?:replies|balasan))?\b/.test(value)
                   );
                 });
                 if (!latest) return false;
@@ -1309,6 +1500,105 @@ class CommentBrowserCollector:
                 time.sleep(1.2)
         except WebDriverException:
             return
+
+    def _prepare_threads_comments(self, order: str) -> bool:
+        """Select one Threads reply ordering without leaving the target post."""
+        wanted = str(order or "").strip().casefold()
+        if wanted not in {"top", "recent"}:
+            return False
+        driver = self.start()
+        try:
+            state = driver.execute_script(
+                r"""
+                const wanted = String(arguments[0] || '').toLowerCase();
+                const normalize = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                const controls = Array.from(document.querySelectorAll(
+                  'button, [role="button"], [aria-haspopup="menu"]'
+                ));
+                const sorter = controls.find(node => {
+                  const text = normalize(`${node.innerText || ''} ${node.getAttribute('aria-label') || ''}`);
+                  const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
+                  return visible && /(?:sort|urut|top|recent|terbaru)/i.test(text) &&
+                    (node.getAttribute('aria-haspopup') === 'menu' || /\b(?:top|recent|terbaru)\b/i.test(text));
+                });
+                if (!sorter) return {selected: false, opened: false};
+                const current = normalize(sorter.innerText || sorter.getAttribute('aria-label') || '');
+                if ((wanted === 'recent' && /\b(?:recent|latest|newest|terbaru)\b/i.test(current)) ||
+                    (wanted === 'top' && /\b(?:top|relevant|relevan|teratas)\b/i.test(current))) {
+                  return {selected: true, opened: false};
+                }
+                sorter.click();
+                return {selected: false, opened: true};
+                """,
+                wanted,
+            )
+            if isinstance(state, dict) and state.get("selected"):
+                return True
+            if not isinstance(state, dict) or not state.get("opened"):
+                return False
+            time.sleep(0.5)
+            selected = driver.execute_script(
+                r"""
+                const wanted = String(arguments[0] || '').toLowerCase();
+                const pattern = wanted === 'recent'
+                  ? /^(?:recent|latest|newest|terbaru|paling baru)$/i
+                  : /^(?:top|relevant|relevan|teratas)$/i;
+                const choices = Array.from(document.querySelectorAll(
+                  '[role="menuitem"], [role="menuitemradio"], [role="option"], [role="radio"], button'
+                ));
+                const choice = choices.find(node => {
+                  const text = String(node.innerText || node.getAttribute('aria-label') || '')
+                    .replace(/\s+/g, ' ').trim();
+                  const visible = Boolean(node.offsetWidth || node.offsetHeight || node.getClientRects().length);
+                  return visible && pattern.test(text);
+                });
+                if (!choice) return false;
+                choice.click();
+                return true;
+                """,
+                wanted,
+            )
+            if selected:
+                time.sleep(1.2)
+            return bool(selected)
+        except WebDriverException:
+            return False
+
+    def _threads_visible_reply_count(self, target_code: str) -> int | None:
+        """Read the target post's reply counter from the signed-in Threads UI."""
+        if not target_code:
+            return None
+        try:
+            value = self.start().execute_script(
+                r"""
+                const targetCode = String(arguments[0] || '').toLowerCase();
+                const targetAnchor = Array.from(document.querySelectorAll('a[href*="/post/"]')).find(anchor => {
+                  const match = String(anchor.href || '').match(/\/post\/([^/?#]+)/i);
+                  return match && match[1].toLowerCase() === targetCode;
+                });
+                if (!targetAnchor) return '';
+                const box = targetAnchor.closest('[data-pressable-container="true"]') ||
+                  targetAnchor.parentElement?.parentElement || targetAnchor.parentElement;
+                if (!box) return '';
+                const controls = Array.from(box.querySelectorAll('button, [role="button"]'));
+                const reply = controls.find(node => {
+                  const text = `${node.getAttribute('aria-label') || ''} ${node.textContent || ''}`
+                    .replace(/\s+/g, ' ').trim();
+                  return /\b(?:reply|replies|comment|comments|balasan|komentar)\b/i.test(text) &&
+                    /\d/.test(text);
+                });
+                return reply
+                  ? `${reply.getAttribute('aria-label') || ''} ${reply.textContent || ''}`.trim()
+                  : '';
+                """,
+                target_code,
+            )
+        except WebDriverException:
+            return None
+        if not isinstance(value, (str, int, float)):
+            return None
+        count = self._count(value)
+        return count if count > 0 else None
 
     def _threads_dom_rows(self, target_code: str) -> list[dict]:
         return self.start().execute_script(
@@ -1650,9 +1940,12 @@ class CommentBrowserCollector:
                 context = str(row.get("context") or "")
                 is_parent = not target_author or f"@{target_author}".casefold() in context.casefold()
                 comment_type = row.get("comment_type")
+                clean_comment = self._clean_x_reply_text(row["comment"])
+                if not clean_comment:
+                    continue
                 comments.append(PublicComment(
                     author=(row.get("author") or "").lstrip("@") or None,
-                    comment=self._clean_comment_text(row["comment"]),
+                    comment=clean_comment,
                     commented_at=row.get("date") or None,
                     likes=self._count(row.get("likes")),
                     reply_count=self._count(row.get("replies")),
@@ -1833,8 +2126,6 @@ class CommentBrowserCollector:
             current_url = self._resolve_threads_permalink(driver, url)
         if self.platform == "Facebook":
             self._prepare_facebook_comments()
-        if self.platform == "X":
-            self._prepare_x_comments()
         if self.platform == "Threads":
             target_match = re.search(r"/post/([^/?#]+)", current_url, re.I)
         elif self.platform == "X":
@@ -1859,6 +2150,9 @@ class CommentBrowserCollector:
                     reason="Chrome Threads tidak berada di posting target, sehingga pengambilan dihentikan.",
                 )
             current_url = active_permalink
+            visible_reply_count = self._threads_visible_reply_count(target_code)
+            if visible_reply_count:
+                expected_comments = max(int(expected_comments or 0), visible_reply_count)
         thread_rows = (
             self._load_conversation(
                 target_code,
@@ -1867,16 +2161,24 @@ class CommentBrowserCollector:
                 progress_callback=progress_callback,
             )
             if self.platform == "Facebook"
-            else self._load_conversation(
+            else self._collect_x_conversation_views(
                 target_code,
                 max_comments=max_comments,
                 expected_comments=expected_comments,
                 progress_callback=progress_callback,
             )
             if self.platform == "X"
+            else self._collect_threads_conversation_views(
+                target_code,
+                max_comments=max_comments,
+                expected_comments=expected_comments,
+                progress_callback=progress_callback,
+            )
+            if self.platform == "Threads"
             else self._load_conversation(
                 target_code,
                 max_comments=max_comments,
+                expected_comments=expected_comments,
                 progress_callback=progress_callback,
             )
         )
@@ -1895,6 +2197,10 @@ class CommentBrowserCollector:
             if target_rows_present
             else []
         )
+        if self.platform == "X":
+            for comment in structured_comments:
+                comment.comment = self._clean_x_reply_text(comment.comment)
+            structured_comments = [comment for comment in structured_comments if comment.comment]
         if self.platform in {"Facebook", "Threads", "X"}:
             dom_comments = self._dom_comments(current_url, thread_rows)
             comments = self._merge_comments(structured_comments, dom_comments)
@@ -1922,6 +2228,167 @@ class CommentBrowserCollector:
                 f"X menampilkan {len(comments):,} dari sekitar {expected_comments:,} balasan. "
                 "Sebagian balasan mungkin disembunyikan, dihapus, berasal dari akun privat, atau belum diberikan X ke sesi ini."
                 if self.platform == "X" and expected_comments and len(comments) < expected_comments
+                else f"Threads menampilkan {len(comments):,} dari sekitar {expected_comments:,} komentar. "
+                "MIDETA sudah menggabungkan urutan Top dan Recent; sisanya mungkin disembunyikan, dihapus, "
+                "berasal dari akun privat, atau tidak diberikan Threads ke sesi ini."
+                if self.platform == "Threads" and expected_comments and len(comments) < expected_comments
                 else None
             ),
         )
+
+    def _collect_threads_conversation_views(
+        self,
+        target_code: str,
+        *,
+        max_comments: int,
+        expected_comments: int | None,
+        progress_callback: Callable[[int, int], None] | None,
+    ) -> list[dict]:
+        """Collect the de-duplicated union of Threads Top and Recent replies."""
+        self._prepare_threads_comments("top")
+        combined_rows = self._load_conversation(
+            target_code,
+            max_comments=max_comments,
+            expected_comments=expected_comments,
+            progress_callback=progress_callback,
+        )
+        collection_target = min(max_comments, expected_comments) if expected_comments else max_comments
+        visible_count = sum(
+            bool(row.get("comment"))
+            and not row.get("is_target")
+            and row.get("code") != target_code
+            for row in combined_rows
+        )
+        if visible_count >= collection_target or not self._prepare_threads_comments("recent"):
+            return combined_rows
+        return self._load_conversation(
+            target_code,
+            max_comments=max_comments,
+            expected_comments=expected_comments,
+            progress_callback=progress_callback,
+            initial_rows=combined_rows,
+        )
+
+    def _collect_x_conversation_views(
+        self,
+        target_code: str,
+        *,
+        max_comments: int,
+        expected_comments: int | None,
+        progress_callback: Callable[[int, int], None] | None,
+    ) -> list[dict]:
+        """Collect and unite X's Relevant and chronological reply views."""
+        driver = self.start()
+        active_url = str(getattr(driver, "current_url", "") or "")
+        relevant_url = self._x_sorted_replies_url(active_url, None)
+        if relevant_url and relevant_url != active_url:
+            driver.get(relevant_url)
+            self._wait_for_page()
+
+        combined_rows = self._load_conversation(
+            target_code,
+            max_comments=max_comments,
+            expected_comments=expected_comments,
+            progress_callback=progress_callback,
+            try_x_recent=False,
+        )
+        collection_target = min(max_comments, expected_comments) if expected_comments else max_comments
+        for sorted_url in (
+            self._x_recent_replies_url(relevant_url),
+            self._x_liked_replies_url(relevant_url),
+        ):
+            visible_count = sum(
+                bool(row.get("comment"))
+                and not row.get("is_target")
+                and row.get("code") != target_code
+                for row in combined_rows
+            )
+            if visible_count >= collection_target:
+                break
+            driver.get(sorted_url)
+            self._wait_for_page()
+            # Seed every pass with the rows from preceding orderings. This
+            # survives X's full-page reload, removes duplicate status IDs,
+            # and keeps the progress count monotonic across all three modes.
+            combined_rows = self._load_conversation(
+                target_code,
+                max_comments=max_comments,
+                expected_comments=expected_comments,
+                progress_callback=progress_callback,
+                initial_rows=combined_rows,
+                try_x_recent=False,
+            )
+        combined_rows = self._collect_x_nested_replies(
+            target_code,
+            relevant_url,
+            combined_rows,
+            max_comments=max_comments,
+            expected_comments=expected_comments,
+            progress_callback=progress_callback,
+        )
+        return combined_rows
+
+    def _collect_x_nested_replies(
+        self,
+        target_code: str,
+        root_url: str,
+        rows: list[dict],
+        *,
+        max_comments: int,
+        expected_comments: int | None,
+        progress_callback: Callable[[int, int], None] | None,
+    ) -> list[dict]:
+        """Open reply permalinks so X exposes nested branches omitted by root views."""
+        collection_target = min(max_comments, expected_comments) if expected_comments else max_comments
+
+        def visible_count(values: list[dict]) -> int:
+            return sum(
+                bool(row.get("comment"))
+                and not row.get("is_target")
+                and row.get("code") != target_code
+                for row in values
+            )
+
+        if visible_count(rows) >= collection_target:
+            return rows
+        candidates: list[tuple[int, str, str]] = []
+        seen_codes: set[str] = set()
+        for row in rows:
+            href = str(row.get("href") or "")
+            match = re.search(r"/status/(\d+)", href)
+            code = match.group(1) if match else str(row.get("code") or "")
+            reply_count = self._count(row.get("replies"))
+            if not code or code == target_code or code in seen_codes or reply_count <= 0 or not href:
+                continue
+            seen_codes.add(code)
+            candidates.append((reply_count, code, href))
+        candidates.sort(reverse=True)
+
+        combined_rows = list(rows)
+        driver = self.start()
+        for reply_count, code, href in candidates[: self.X_NESTED_MAX_PARENTS]:
+            if visible_count(combined_rows) >= collection_target:
+                break
+            try:
+                driver.get(self._x_sorted_replies_url(href, None))
+                self._wait_for_page()
+                branch_rows = self._load_conversation(
+                    code,
+                    max_comments=min(max_comments, max(reply_count, 1) + 1),
+                    expected_comments=reply_count,
+                    progress_callback=None,
+                )
+                stored = {str(row.get("code") or ""): dict(row) for row in combined_rows if row.get("code")}
+                self._merge_thread_rows(stored, branch_rows)
+                combined_rows = list(stored.values())
+                if progress_callback is not None:
+                    progress_callback(min(visible_count(combined_rows), max_comments), max_comments)
+            except WebDriverException:
+                continue
+        if root_url:
+            try:
+                driver.get(root_url)
+                self._wait_for_page()
+            except WebDriverException:
+                pass
+        return combined_rows

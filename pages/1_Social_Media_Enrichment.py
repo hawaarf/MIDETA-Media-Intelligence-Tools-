@@ -28,6 +28,7 @@ from src.tiktok_browser import build_tiktok_browser_result
 import src.connectors.tiktok as tiktok_connector_module
 import src.tiktok_free as tiktok_free_module
 from src.ui import apply_theme, page_intro, render_footer, render_github_profile, render_platform_guide, status_label
+from src.youtube_api import YouTubeDataAPIClient, YouTubeDataAPIError
 
 
 # Streamlit dapat mempertahankan modul lama saat hanya file parser yang berubah.
@@ -44,8 +45,9 @@ TikTokFreeError = tiktok_free_module.TikTokFreeError
 # yang sudah memiliki pembaca enrichment, lalu gunakan nama cache baru agar
 # instance lama tidak diambil kembali.
 if (
-    getattr(comment_browser_module.CommentBrowserCollector, "RUNTIME_VERSION", 0) < 24
+    getattr(comment_browser_module.CommentBrowserCollector, "RUNTIME_VERSION", 0) < 25
     or not hasattr(comment_browser_module.CommentBrowserCollector, "collect_facebook_enrichment")
+    or not hasattr(comment_browser_module.CommentBrowserCollector, "collect_facebook_fast_enrichment")
 ):
     comment_browser_module = importlib.reload(comment_browser_module)
 
@@ -99,12 +101,17 @@ def tiktok_free_collector() -> TikTokFreeCollector:
 
 
 @st.cache_resource(show_spinner=False)
+def youtube_api_client_v1() -> YouTubeDataAPIClient:
+    return YouTubeDataAPIClient()
+
+
+@st.cache_resource(show_spinner=False)
 def threads_metadata_browser_v6() -> CommentBrowserCollector:
     return CommentBrowserCollector("Threads")
 
 
 @st.cache_resource(show_spinner=False)
-def facebook_enrichment_browser_v6() -> CommentBrowserCollector:
+def facebook_enrichment_browser_v7() -> CommentBrowserCollector:
     return CommentBrowserCollector("Facebook")
 
 
@@ -228,28 +235,92 @@ def render_tiktok_controls(slot: str) -> str:
     return "free"
 
 
+def render_youtube_controls(slot: str) -> str:
+    client = youtube_api_client_v1()
+    source = client.key_source()
+    st.caption(
+        "Fast API mengambil metadata video dan channel dalam batch JSON kecil. Jika API belum dikonfigurasi "
+        "atau sedang gagal, MIDETA tetap memakai pembaca halaman publik sebagai fallback."
+    )
+    if source == "environment":
+        st.success("YouTube Data API aktif dari environment komputer ini.")
+    elif source == "local":
+        st.success("YouTube Data API aktif dan key tersimpan lokal di folder privat MIDETA.")
+    else:
+        st.info("Tambahkan YouTube API key agar enrichment YouTube memakai jalur Fast API.")
+    key_value = st.text_input(
+        "YouTube Data API key",
+        type="password",
+        placeholder="Tempel API key baru lalu simpan",
+        help="Key disimpan lokal dengan izin file privat dan tidak dimasukkan ke Git maupun hasil ekspor.",
+        key=f"youtube_api_key_{slot}",
+    )
+    save_col, delete_col, console_col = st.columns(3)
+    if save_col.button(
+        "Simpan API key",
+        key=f"save_youtube_api_{slot}",
+        width="stretch",
+        disabled=not key_value.strip(),
+    ):
+        try:
+            client.save_key(key_value)
+        except YouTubeDataAPIError as exc:
+            st.error(str(exc))
+        else:
+            st.success("YouTube Data API aktif. Enrichment berikutnya akan memakai jalur cepat.")
+            st.rerun()
+    if delete_col.button(
+        "Hapus API key",
+        key=f"delete_youtube_api_{slot}",
+        width="stretch",
+        disabled=source != "local",
+    ):
+        try:
+            client.delete_key()
+        except YouTubeDataAPIError as exc:
+            st.error(str(exc))
+        else:
+            st.info("YouTube API key lokal sudah dihapus.")
+            st.rerun()
+    console_col.link_button(
+        "Google Cloud Console",
+        "https://console.cloud.google.com/apis/credentials",
+        width="stretch",
+    )
+    st.caption(
+        "Gunakan key baru yang dibatasi hanya untuk YouTube Data API v3. Key dari notebook yang pernah dibagikan sebaiknya dirotasi."
+    )
+    return "api" if client.has_key() else "standard"
+
+
 def render_facebook_controls(slot: str) -> str:
     mode_label = st.segmented_control(
         "Mode enrichment Facebook",
         ("Fast enrichment", "Advanced enrichment"),
         default="Fast enrichment",
-        help="Advanced memakai hasil Fast untuk metadata post, lalu sesi login hanya untuk mencari Views Reel target.",
+        help=(
+            "Fast hanya memakai sesi login ketika halaman publik kosong. Advanced juga membuka profil author "
+            "untuk mencari Views Reel target."
+        ),
         key=f"facebook_enrichment_mode_{slot}",
         width="stretch",
     )
     enrichment_mode = "advanced" if mode_label == "Advanced enrichment" else "fast"
     if enrichment_mode == "fast":
         st.caption(
-            "Fast: membaca metadata publik dari URL post, video, atau Reel tanpa membuka profil. "
-            "Gunakan Advanced bila Views tidak muncul di hasil Fast."
+            "Fast: mencoba metadata publik lebih dulu. Jika Facebook mengirim halaman kosong, MIDETA otomatis "
+            "membaca satu halaman post/Reel dari Chrome tanpa membuka profil atau daftar Reels."
         )
-        return enrichment_mode
-
-    st.caption(
-        "Advanced: memakai logic Fast untuk tanggal, author, caption, followers, likes, comments, shares, dan data lain. "
-        "Akun Facebook yang login hanya dipakai untuk mencari Views Reel dengan ID yang sama "
-        f"({ENRICHMENT_BROWSER_CHUNK_SIZE} URL per tahap)."
-    )
+        st.caption(
+            "Untuk URL yang dibatasi Facebook, login satu kali di Chrome Facebook. Followers dan Views yang tidak "
+            "ditampilkan pada halaman target tetap ditulis Cek."
+        )
+    else:
+        st.caption(
+            "Advanced: memakai logic Fast untuk tanggal, author, caption, followers, likes, comments, shares, dan data lain. "
+            "Akun Facebook yang login juga dipakai untuk mencari Views Reel dengan ID yang sama "
+            f"({ENRICHMENT_BROWSER_CHUNK_SIZE} URL per tahap)."
+        )
     st.caption(
         "Password diketik langsung di Facebook dan tidak dibaca MIDETA. Jika Views target tidak ditampilkan Facebook, "
         "kolom akan ditulis Cek dan tidak mengambil angka dari Reel lain."
@@ -257,22 +328,22 @@ def render_facebook_controls(slot: str) -> str:
     open_col, check_col, close_col = st.columns(3)
     if open_col.button("Buka Chrome Facebook", key=f"open_facebook_{slot}", width="stretch"):
         try:
-            if facebook_enrichment_browser_v6().open_login():
-                st.success("Facebook sudah login dan siap digunakan untuk Advanced enrichment.")
+            if facebook_enrichment_browser_v7().open_login():
+                st.success("Facebook sudah login dan siap digunakan untuk enrichment.")
             else:
                 st.info("Selesaikan login di Chrome Facebook, lalu tekan Periksa Login.")
         except CommentBrowserError as exc:
             st.error(str(exc))
     if check_col.button("Periksa Login", key=f"check_facebook_{slot}", width="stretch"):
         try:
-            if facebook_enrichment_browser_v6().is_logged_in():
-                st.success("Facebook sudah login dan siap digunakan untuk Advanced enrichment.")
+            if facebook_enrichment_browser_v7().is_logged_in():
+                st.success("Facebook sudah login dan siap digunakan untuk enrichment.")
             else:
                 st.warning("Login Facebook belum terdeteksi. Selesaikan login di Chrome MIDETA.")
         except CommentBrowserError as exc:
             st.error(str(exc))
     if close_col.button("Tutup Chrome Facebook", key=f"close_facebook_{slot}", width="stretch"):
-        facebook_enrichment_browser_v6().close()
+        facebook_enrichment_browser_v7().close()
         st.info("Chrome Facebook MIDETA sudah ditutup.")
     return enrichment_mode
 
@@ -316,6 +387,8 @@ def render_platform_setup(platform: str, slot: str, compact: bool = False) -> st
             render_platform_guide("enrichment", platform)
     if platform == "Instagram":
         return render_instagram_controls(slot)
+    if platform == "YouTube":
+        return render_youtube_controls(slot)
     if platform == "TikTok":
         return render_tiktok_controls(slot)
     if platform == "Facebook":
@@ -365,7 +438,7 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | No
         for request in requests
     ):
         try:
-            if not facebook_enrichment_browser_v6().is_logged_in():
+            if not facebook_enrichment_browser_v7().is_logged_in():
                 errors.append("Facebook belum login. Buka Chrome Facebook dan selesaikan login sebelum memulai batch.")
         except CommentBrowserError as exc:
             errors.append(str(exc))
@@ -382,8 +455,7 @@ def create_requested_jobs(requests: list[dict[str, Any]]) -> dict[str, int] | No
             SOCIAL_BATCH_VERSION,
             mock_mode=request["mock_mode"],
             browser_mode=(
-                platform in {"Instagram", "Threads"}
-                or (platform == "Facebook" and request["enrichment_mode"] == "advanced")
+                platform in {"Instagram", "Threads", "Facebook"}
             ),
             enrichment_mode=request["enrichment_mode"],
         )
@@ -411,12 +483,16 @@ def load_current_job(platform: str) -> dict[str, Any] | None:
 
 
 def render_job_controls(job: dict[str, Any], slot: str) -> Any:
+    progress_fraction = batch_progress_fraction(job["processed"], job["total"])
     progress = st.progress(
-        batch_progress_fraction(job["processed"], job["total"]),
+        progress_fraction,
         text=(
-            f"{job['processed']:,} dari {job['total']:,} URL selesai"
+            f"{job['processed']:,} dari {job['total']:,} URL selesai · {round(progress_fraction * 100)}%"
             if job["status"] == "completed"
-            else f"{job['processed']:,} dari {job['total']:,} URL sudah disimpan"
+            else (
+                f"{job['processed']:,} dari {job['total']:,} URL sudah disimpan · "
+                f"{round(progress_fraction * 100)}%"
+            )
         ),
     )
     if job["status"] not in {"running", "paused"}:
@@ -725,13 +801,48 @@ def render_all_job_panels(jobs: list[dict[str, Any]]) -> list[tuple[dict[str, An
             if platform in {"Instagram", "TikTok", "Facebook"}:
                 login_text = "tanpa login" if job["enrichment_mode"] == "free" else "dengan login"
                 if platform == "Facebook" and job["enrichment_mode"] == "fast":
-                    login_text = "tanpa login"
+                    login_text = "dengan fallback login bila halaman publik kosong"
                 st.caption(f"Mode {platform}: {job['enrichment_mode'].title()} enrichment {login_text}.")
             progress = render_job_controls(job, f"all_{platform.lower()}")
             activity = st.empty()
             render_job_issues(job)
         panels.append((job, activity, progress))
     return panels
+
+
+def completed_result_outcome(
+    job: dict[str, Any],
+    item: dict[str, Any],
+    result: SocialResult,
+    browser_issue: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Build the durable job outcome shared by API and page-based collectors."""
+    url = item["url"]
+    result.url = url
+    fields = [
+        result.username,
+        result.caption,
+        result.posted_at,
+        result.followers,
+        result.likes,
+        result.comments,
+        result.shares,
+        result.views,
+        result.bookmarks,
+        result.reposts,
+    ]
+    has_data = any(field.status == FieldStatus.AVAILABLE for field in fields)
+    history_status = "mock" if result.is_mock else "completed" if has_data else "failed"
+    return {
+        "kind": "completed",
+        "position": item["position"],
+        "url": url,
+        "result": result.model_dump(mode="json"),
+        "result_url": result.url,
+        "platform": result.platform,
+        "history_status": history_status,
+        "browser_issue": browser_issue,
+    }
 
 
 def collect_one_item(
@@ -784,33 +895,62 @@ def collect_one_item(
                     "url": url,
                     "error": {"URL": url, "Platform": job["platform"], "Alasan": str(exc)},
                 }
-        elif active_browser is not None and not job["mock_mode"] and job["platform"] == "Facebook":
+        elif not job["mock_mode"] and job["platform"] == "Facebook":
             # Jalankan parser Fast terhadap permalink target yang sudah
             # diresolusi agar short/share URL tidak menyumbangkan preview post
             # sebelumnya atau rekomendasi lain dari halaman Facebook.
             fast_result = connector.enrich(processing_url)
-            try:
-                browser_result = active_browser.collect_facebook_enrichment(processing_url)
-                result = merge_facebook_advanced_result(fast_result, browser_result)
-                if result.views.value is None:
+            result = fast_result
+            public_has_post_metadata = any(
+                getattr(fast_result, name).value not in (None, "")
+                for name in ("username", "caption", "posted_at")
+            )
+            should_use_browser = (
+                job["enrichment_mode"] == "advanced"
+                or not public_has_post_metadata
+            )
+            if should_use_browser and active_browser is not None:
+                try:
+                    if job["enrichment_mode"] == "advanced":
+                        browser_result = active_browser.collect_facebook_enrichment(processing_url)
+                    else:
+                        browser_result = active_browser.collect_facebook_fast_enrichment(processing_url)
+                    result = merge_facebook_advanced_result(fast_result, browser_result)
+                    if job["enrichment_mode"] == "advanced" and result.views.value is None:
+                        browser_issue = {
+                            "URL": url,
+                            "Platform": "Facebook",
+                            "Alasan": (
+                                "Views Reel target belum ditampilkan Facebook pada halaman post maupun halaman Reels profil. "
+                                "Nilai ditulis Cek agar tidak tertukar dengan Reel lain."
+                            ),
+                        }
+                except CommentBrowserLoginRequired as exc:
+                    return {"kind": "login_required", "reason": str(exc), "position": position, "url": url}
+                except CommentBrowserError as exc:
+                    result = fast_result
+                    if job["enrichment_mode"] == "advanced":
+                        reason = (
+                            "Metadata Fast berhasil disimpan, tetapi Views belum dapat dibaca dari sesi Facebook: "
+                            f"{exc}"
+                        )
+                    else:
+                        reason = (
+                            "Halaman publik Facebook kosong dan fallback Fast belum dapat membaca halaman target: "
+                            f"{exc}"
+                        )
                     browser_issue = {
                         "URL": url,
                         "Platform": "Facebook",
-                        "Alasan": (
-                            "Views Reel target belum ditampilkan Facebook pada halaman post maupun halaman Reels profil. "
-                            "Nilai ditulis Cek agar tidak tertukar dengan Reel lain."
-                        ),
+                        "Alasan": reason,
                     }
-            except CommentBrowserLoginRequired as exc:
-                return {"kind": "login_required", "reason": str(exc), "position": position, "url": url}
-            except CommentBrowserError as exc:
-                result = fast_result
+            elif should_use_browser:
                 browser_issue = {
                     "URL": url,
                     "Platform": "Facebook",
                     "Alasan": (
-                        "Metadata Fast berhasil disimpan, tetapi Views belum dapat dibaca dari sesi Facebook: "
-                        f"{exc}"
+                        "Halaman publik Facebook kosong, tetapi sesi fallback Fast belum tersedia. "
+                        "Buka Chrome Facebook, login, lalu lanjutkan proses."
                     ),
                 }
             canonical_target = str(result.url or processing_url).split("?", 1)[0].rstrip("/")
@@ -872,32 +1012,7 @@ def collect_one_item(
         # Keep the pasted URL in the exported row even when a short/share link
         # was resolved internally. This preserves the user's original order and
         # makes failed/retried rows easy to match to the source spreadsheet.
-        result.url = url
-
-        fields = [
-            result.username,
-            result.caption,
-            result.posted_at,
-            result.followers,
-            result.likes,
-            result.comments,
-            result.shares,
-            result.views,
-            result.bookmarks,
-            result.reposts,
-        ]
-        has_data = any(field.status == FieldStatus.AVAILABLE for field in fields)
-        history_status = "mock" if result.is_mock else "completed" if has_data else "failed"
-        return {
-            "kind": "completed",
-            "position": position,
-            "url": url,
-            "result": result.model_dump(mode="json"),
-            "result_url": result.url,
-            "platform": result.platform,
-            "history_status": history_status,
-            "browser_issue": browser_issue,
-        }
+        return completed_result_outcome(job, item, result, browser_issue)
     except Exception as exc:
         reason = str(exc)
         if "permintaan dibatasi" in reason.casefold() or "http 429" in reason.casefold():
@@ -913,6 +1028,7 @@ def collect_one_item(
 def collect_job_chunk(task: dict[str, Any], output: Queue) -> None:
     job = task["job"]
     facebook_targets = facebook_targets_from_job(job) if job["platform"] == "Facebook" else None
+    youtube_api = task.get("youtube_api")
 
     def collect(item: dict[str, Any]) -> dict[str, Any]:
         return collect_one_item(
@@ -923,6 +1039,44 @@ def collect_job_chunk(task: dict[str, Any], output: Queue) -> None:
         )
 
     try:
+        if (
+            job["platform"] == "YouTube"
+            and not job["mock_mode"]
+            and youtube_api is not None
+            and youtube_api.has_key()
+        ):
+            try:
+                api_results = youtube_api.collect_many(
+                    [str(item["url"]) for item in task["chunk"]]
+                )
+            except YouTubeDataAPIError as exc:
+                # A disabled API, exhausted project quota, or temporary API
+                # outage must not lose rows. Fall back to the public watch-page
+                # parser and expose one concise diagnostic per affected URL.
+                for item in task["chunk"]:
+                    outcome = collect(item)
+                    if outcome.get("kind") == "completed":
+                        outcome["browser_issue"] = {
+                            "URL": str(item["url"]),
+                            "Platform": "YouTube",
+                            "Alasan": f"Fast API tidak tersedia; fallback halaman publik dipakai: {exc}",
+                        }
+                    output.put((job["id"], outcome))
+                return
+            for item in task["chunk"]:
+                url = str(item["url"])
+                result = api_results.get(url)
+                if result is None:
+                    output.put((job["id"], collect(item)))
+                else:
+                    output.put(
+                        (
+                            job["id"],
+                            completed_result_outcome(job, item, result),
+                        )
+                    )
+            return
+
         # Satu driver Chrome tidak aman dipakai beberapa thread sekaligus.
         # URL publik tidak memiliki batasan tersebut, jadi biarkan hasil masuk
         # sesuai waktu selesai; posisi aslinya tetap disimpan di database dan
@@ -997,18 +1151,21 @@ def run_active_jobs(
         seen_jobs.add(job["id"])
         active_browser = None
         needs_browser = (
-            job["platform"] in {"Instagram", "Threads"}
-            or (job["platform"] == "Facebook" and job["enrichment_mode"] == "advanced")
+            job["platform"] in {"Instagram", "Threads", "Facebook"}
         )
         if needs_browser and not job["mock_mode"]:
             try:
                 if job["platform"] == "Instagram":
                     active_browser = instagram_browser()
                 elif job["platform"] == "Facebook":
-                    active_browser = facebook_enrichment_browser_v6()
+                    active_browser = facebook_enrichment_browser_v7()
                 else:
                     active_browser = threads_metadata_browser_v6()
-                if job["platform"] in {"Instagram", "Facebook"} and not active_browser.is_logged_in():
+                must_be_logged_in = (
+                    job["platform"] == "Instagram"
+                    or (job["platform"] == "Facebook" and job["enrichment_mode"] == "advanced")
+                )
+                if must_be_logged_in and not active_browser.is_logged_in():
                     set_social_job_status(job["id"], "paused")
                     activity.error(f"Sesi {job['platform']} berakhir. Login kembali, lalu lanjutkan proses.")
                     state_changed = True
@@ -1034,8 +1191,13 @@ def run_active_jobs(
                 "activity": activity,
                 "progress": progress,
                 "active_browser": active_browser,
+                "youtube_api": youtube_api_client_v1() if job["platform"] == "YouTube" else None,
                 "chunk": chunk,
-                "parallel_urls": process_all_pending,
+                # YouTube watch responses are large and the server sometimes
+                # stalls concurrent requests from one local session. Keep
+                # YouTube rows sequential while other platforms still run in
+                # parallel during Enrichment All.
+                "parallel_urls": process_all_pending and job["platform"] != "YouTube",
             }
         )
 
@@ -1054,9 +1216,15 @@ def run_active_jobs(
     for task in tasks:
         job = task["job"]
         if task["progress"] is not None:
+            fraction = batch_progress_fraction(
+                job["processed"], job["total"], active_fractions[job["id"]]
+            )
             task["progress"].progress(
-                batch_progress_fraction(job["processed"], job["total"], active_fractions[job["id"]]),
-                text=f"{job['platform']}: memproses URL {job['processed'] + 1:,} dari {job['total']:,}…",
+                fraction,
+                text=(
+                    f"{job['platform']}: memproses URL {job['processed'] + 1:,} dari "
+                    f"{job['total']:,} · {round(fraction * 100)}%"
+                ),
             )
     with ThreadPoolExecutor(
         # Enrichment All boleh memulai seluruh platform sekaligus. Split dan
@@ -1078,15 +1246,17 @@ def run_active_jobs(
                     heartbeat = min(0.9, 0.04 + (elapsed / (elapsed + 10.0)) * 0.86)
                     active_fractions[active_job_id] = max(active_fractions[active_job_id], heartbeat)
                     job = task["job"]
+                    fraction = batch_progress_fraction(
+                        processed_counts[active_job_id],
+                        job["total"],
+                        active_fractions[active_job_id],
+                    )
                     task["progress"].progress(
-                        batch_progress_fraction(
-                            processed_counts[active_job_id],
-                            job["total"],
-                            active_fractions[active_job_id],
-                        ),
+                        fraction,
                         text=(
                             f"{job['platform']}: memproses URL {processed_counts[active_job_id] + 1:,} "
-                            f"dari {job['total']:,}…"
+                            f"dari {job['total']:,} · {round(fraction * 100)}% · "
+                            f"menunggu {int(elapsed):,} dtk"
                         ),
                     )
                 continue
@@ -1101,20 +1271,29 @@ def run_active_jobs(
                 active_fractions[job_id] = 0.04
                 heartbeat_started[job_id] = time.monotonic()
                 if task["progress"] is not None:
+                    fraction = batch_progress_fraction(
+                        processed_counts[job_id], task["job"]["total"]
+                    )
                     task["progress"].progress(
-                        batch_progress_fraction(processed_counts[job_id], task["job"]["total"]),
+                        fraction,
                         text=(
                             f"{task['job']['platform']}: {processed_counts[job_id]:,} dari "
-                            f"{task['job']['total']:,} URL selesai"
+                            f"{task['job']['total']:,} URL selesai · {round(fraction * 100)}%"
                         ),
                     )
                 task["activity"].info(
                     f"{task['job']['platform']}: {processed_counts[job_id]:,} dari {task['job']['total']:,} URL sudah disimpan."
                 )
             elif task["progress"] is not None:
+                fraction = batch_progress_fraction(
+                    processed_counts[job_id], task["job"]["total"]
+                )
                 task["progress"].progress(
-                    batch_progress_fraction(processed_counts[job_id], task["job"]["total"]),
-                    text=f"{task['job']['platform']}: proses dijeda pada URL berikutnya",
+                    fraction,
+                    text=(
+                        f"{task['job']['platform']}: proses dijeda pada URL berikutnya · "
+                        f"{round(fraction * 100)}%"
+                    ),
                 )
     time.sleep(0.3)
     st.rerun()
@@ -1138,6 +1317,8 @@ if layout_mode == "Enrichment All":
         f"Maksimal {MAX_ENRICHMENT_URLS:,} URL. Hasil CSV/XLSX tetap disusun sesuai urutan link yang ditempel; "
         "URL berulang, gagal, atau tidak dikenali tetap mendapat satu baris."
     )
+    with st.expander("Pengaturan YouTube Fast API"):
+        youtube_mode = render_youtube_controls("all")
     with st.expander("Pengaturan Instagram jika daftar berisi URL Instagram"):
         instagram_mode = render_instagram_controls("all")
     with st.expander("Pengaturan TikTok jika daftar berisi URL TikTok"):
@@ -1180,7 +1361,9 @@ if layout_mode == "Enrichment All":
                         "url_text": "\n".join(grouped_urls[platform]),
                         "mock_mode": all_mock_mode,
                         "enrichment_mode": (
-                            instagram_mode
+                            youtube_mode
+                            if platform == "YouTube"
+                            else instagram_mode
                             if platform == "Instagram"
                             else tiktok_mode
                             if platform == "TikTok"

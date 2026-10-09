@@ -12,8 +12,8 @@ from src.dates import parse_social_datetime
 from src.models import DataField, FieldStatus, SocialResult
 from src.sentiment import classify_comment_tone
 
-SOCIAL_BATCH_VERSION = 55
-COMMENT_BATCH_VERSION = 16
+SOCIAL_BATCH_VERSION = 59
+COMMENT_BATCH_VERSION = 22
 
 MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 FAILED_URL_MESSAGE = "URL tidak dapat diproses"

@@ -132,6 +132,7 @@ class CommentBrowserTests(unittest.TestCase):
         loader.assert_called_once_with(
             "Target123",
             max_comments=10_000,
+            expected_comments=None,
             progress_callback=None,
         )
         dom_comments.assert_called_once_with(permalink, [{"code": "Target123"}])
@@ -313,6 +314,41 @@ class CommentBrowserTests(unittest.TestCase):
         self.assertEqual(result.likes.value, 38)
         self.assertEqual(result.comments.value, 12)
         self.assertIn(f"{profile_url}/reels/", [call.args[0] for call in driver.get.call_args_list])
+
+    def test_facebook_fast_fallback_reads_only_target_page(self):
+        collector = CommentBrowserCollector("Facebook")
+        expected = MagicMock()
+        url = "https://www.facebook.com/reel/28404338242540935"
+
+        with (
+            patch.object(collector, "is_logged_in", return_value=True),
+            patch.object(
+                collector,
+                "_collect_facebook_enrichment_once",
+                return_value=expected,
+            ) as collect,
+        ):
+            result = collector.collect_facebook_fast_enrichment(url)
+
+        self.assertIs(result, expected)
+        collect.assert_called_once_with(url, include_profile=False)
+
+    def test_facebook_fast_prepares_original_and_expanded_caption(self):
+        driver = MagicMock()
+        driver.execute_script.side_effect = [
+            {"found": True, "translationClicked": True},
+            True,
+        ]
+
+        with patch("src.comment_browser.time.sleep") as sleep:
+            CommentBrowserCollector._prepare_facebook_reel(driver, "28404338242540935")
+
+        self.assertEqual(driver.execute_script.call_count, 2)
+        self.assertEqual(driver.execute_script.call_args_list[0].args[-1], "28404338242540935")
+        self.assertEqual(driver.execute_script.call_args_list[1].args[-1], "28404338242540935")
+        self.assertIn("hide translation", driver.execute_script.call_args_list[0].args[0].casefold())
+        self.assertIn("see more", driver.execute_script.call_args_list[1].args[0].casefold())
+        self.assertEqual(sleep.call_count, 2)
 
     def test_facebook_share_waits_for_resolved_post_permalink(self):
         short_url = "https://www.facebook.com/share/p/Example/"
@@ -643,6 +679,61 @@ class CommentBrowserTests(unittest.TestCase):
         # rounds confirm that the visible conversation is exhausted.
         self.assertEqual(driver.execute_script.call_count, 13)
 
+    def test_threads_collection_unites_top_and_recent_until_expected_total(self):
+        collector = CommentBrowserCollector("Threads")
+        top = [
+            {"code": "Target123", "is_target": True},
+            {"code": "Top1", "comment": "Komentar top"},
+        ]
+        combined = top + [{"code": "Recent2", "comment": "Komentar recent"}]
+
+        with (
+            patch.object(collector, "_load_conversation", side_effect=[top, combined]) as loader,
+            patch.object(collector, "_prepare_threads_comments", return_value=True) as prepare,
+        ):
+            rows = collector._collect_threads_conversation_views(
+                "Target123",
+                max_comments=10_000,
+                expected_comments=1_900,
+                progress_callback=None,
+            )
+
+        self.assertEqual(
+            [call.args[0] for call in prepare.call_args_list],
+            ["top", "recent"],
+        )
+        self.assertEqual(loader.call_count, 2)
+        self.assertEqual(loader.call_args_list[0].kwargs["expected_comments"], 1_900)
+        self.assertEqual(loader.call_args_list[1].kwargs["initial_rows"], top)
+        self.assertEqual({row["code"] for row in rows}, {"Target123", "Top1", "Recent2"})
+
+    def test_threads_recent_sort_uses_visible_sort_menu(self):
+        collector = CommentBrowserCollector("Threads")
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.execute_script.side_effect = [
+            {"selected": False, "opened": True},
+            True,
+        ]
+        collector.driver = driver
+
+        with patch("src.comment_browser.time.sleep"):
+            self.assertTrue(collector._prepare_threads_comments("recent"))
+
+        self.assertEqual(driver.execute_script.call_count, 2)
+        self.assertEqual(driver.execute_script.call_args_list[0].args[1], "recent")
+        self.assertIn("menuitem", driver.execute_script.call_args_list[1].args[0])
+
+    def test_threads_visible_reply_count_reads_compact_metric(self):
+        collector = CommentBrowserCollector("Threads")
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.execute_script.return_value = "Reply 1.9K 1.9K"
+        collector.driver = driver
+
+        self.assertEqual(collector._threads_visible_reply_count("Target123"), 1_900)
+        self.assertEqual(driver.execute_script.call_args.args[1], "Target123")
+
     def test_browser_collection_stops_at_ten_thousand_comments_and_reports_progress(self):
         collector = CommentBrowserCollector("Threads")
         driver = MagicMock()
@@ -673,7 +764,7 @@ class CommentBrowserTests(unittest.TestCase):
             {
                 "href": "https://x.com/ayu/status/101",
                 "author": "ayu",
-                "comment": "Komentar langsung",
+                "comment": "@pemilik Komentar langsung",
                 "date": "2026-09-03T03:00:00.000Z",
                 "likes": "15 Likes",
                 "replies": "1 Reply",
@@ -682,7 +773,7 @@ class CommentBrowserTests(unittest.TestCase):
             {
                 "href": "https://x.com/bima/status/102",
                 "author": "bima",
-                "comment": "Balasan komentar",
+                "comment": "@ayu @pemilik Balasan komentar",
                 "likes": "4 Likes",
                 "replies": "",
                 "context": "Replying to @ayu",
@@ -692,6 +783,10 @@ class CommentBrowserTests(unittest.TestCase):
             comments = collector._dom_comments("https://x.com/pemilik/status/100")
 
         self.assertEqual([comment.author for comment in comments], ["ayu", "bima"])
+        self.assertEqual(
+            [comment.comment for comment in comments],
+            ["Komentar langsung", "Balasan komentar"],
+        )
         self.assertEqual([comment.comment_type for comment in comments], ["parent", "reply"])
         self.assertEqual(comments[0].likes, 15)
         self.assertEqual(comments[0].reply_count, 1)
@@ -711,6 +806,113 @@ class CommentBrowserTests(unittest.TestCase):
         self.assertIn("relevant", driver.execute_script.call_args_list[0].args[0])
         self.assertIn("latest", driver.execute_script.call_args_list[1].args[0])
         self.assertIn("terbaru", driver.execute_script.call_args_list[1].args[0])
+        self.assertIn('aria-haspopup="menu"', driver.execute_script.call_args_list[0].args[0])
+
+    def test_x_opens_recent_replies_url_directly(self):
+        collector = CommentBrowserCollector("X")
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.current_url = "https://x.com/pemilik/status/100?ref_src=twsrc%5Etfw#replies"
+        collector.driver = driver
+
+        def navigate(url):
+            driver.current_url = url
+
+        driver.get.side_effect = navigate
+        with patch.object(collector, "_wait_for_page"):
+            collector._prepare_x_comments()
+
+        self.assertEqual(
+            driver.get.call_args.args[0],
+            "https://x.com/pemilik/status/100?ref_src=twsrc%5Etfw&sort_replies=recency",
+        )
+        driver.execute_script.assert_not_called()
+
+    def test_x_builds_likes_reply_url_directly(self):
+        self.assertEqual(
+            CommentBrowserCollector._x_liked_replies_url(
+                "https://x.com/pemilik/status/100?sort_replies=recency&ref=feed#replies"
+            ),
+            "https://x.com/pemilik/status/100?ref=feed&sort_replies=likes",
+        )
+
+    def test_x_comment_cleanup_only_removes_leading_usernames(self):
+        cleaner = CommentBrowserCollector._clean_x_reply_text
+        self.assertEqual(
+            cleaner("@helokev @__rimuru00  buset wkwkw"),
+            "buset wkwkw",
+        )
+        self.assertEqual(
+            cleaner("halo @helokev jangan dihapus"),
+            "halo @helokev jangan dihapus",
+        )
+
+    def test_x_loader_retries_recent_filter_once_when_reply_total_is_unmet(self):
+        collector = CommentBrowserCollector("X")
+        collector.X_MAX_SCROLL_ROUNDS = 4
+        collector.X_IDLE_STABLE_ROUNDS = 1
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.current_url = "https://x.com/pemilik/status/100"
+        driver.execute_script.return_value = {
+            "reachedEnd": False,
+            "clicked": 0,
+            "scrollY": 100,
+            "height": 1_000,
+            "targetLocked": True,
+        }
+        collector.driver = driver
+
+        with (
+            patch.object(collector, "_x_dom_rows", return_value=[]),
+            patch.object(collector, "_prepare_x_comments") as prepare,
+            patch("src.comment_browser.time.sleep"),
+        ):
+            collector._load_conversation("100", expected_comments=98)
+
+        prepare.assert_called_once_with()
+
+    def test_x_loader_merges_relevant_and_recent_reply_views(self):
+        collector = CommentBrowserCollector("X")
+        collector.X_MAX_SCROLL_ROUNDS = 8
+        collector.X_IDLE_STABLE_ROUNDS = 1
+        collector.END_STABLE_ROUNDS = 1
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_window_handle = "window"
+        driver.current_url = "https://x.com/pemilik/status/100"
+        driver.execute_script.return_value = {
+            "reachedEnd": True,
+            "clicked": 0,
+            "scrollY": 100,
+            "height": 1_000,
+            "targetLocked": True,
+        }
+        collector.driver = driver
+
+        def visible_rows():
+            if "sort_replies=recency" in driver.current_url:
+                return [{"code": "102", "comment": "Balasan recent"}]
+            return [{"code": "101", "comment": "Balasan relevant"}]
+
+        def open_recent():
+            driver.current_url = "https://x.com/pemilik/status/100?sort_replies=recency"
+
+        with (
+            patch.object(collector, "_x_network_rows", return_value=[]),
+            patch.object(collector, "_x_dom_rows", side_effect=visible_rows),
+            patch.object(collector, "_prepare_x_comments", side_effect=open_recent) as prepare,
+            patch("src.comment_browser.time.sleep"),
+        ):
+            rows = collector._load_conversation("100", expected_comments=98)
+
+        prepare.assert_called_once_with()
+        self.assertEqual(
+            {row["code"] for row in rows if row.get("comment")},
+            {"101", "102"},
+        )
 
     def test_x_loader_waits_for_delayed_replies_when_total_is_known(self):
         collector = CommentBrowserCollector("X")
@@ -747,6 +949,44 @@ class CommentBrowserTests(unittest.TestCase):
 
         self.assertEqual([row["comment"] for row in rows], ["Balasan terlambat"])
         self.assertEqual(driver.execute_script.call_count, 8)
+
+    def test_x_nested_reply_collection_opens_parent_branches(self):
+        collector = CommentBrowserCollector("X")
+        root_url = "https://x.com/pemilik/status/100"
+        driver = MagicMock()
+        driver.window_handles = ["window"]
+        driver.current_url = root_url
+        collector.driver = driver
+        initial = [
+            {"code": "101", "href": "https://x.com/ayu/status/101", "comment": "Induk", "replies": 2},
+        ]
+        branch = [
+            {"code": "101", "href": "https://x.com/ayu/status/101", "comment": "Induk"},
+            {"code": "102", "href": "https://x.com/bima/status/102", "comment": "Balasan"},
+        ]
+
+        with (
+            patch.object(collector, "_wait_for_page"),
+            patch.object(collector, "_load_conversation", return_value=branch) as loader,
+        ):
+            rows = collector._collect_x_nested_replies(
+                "100",
+                root_url,
+                initial,
+                max_comments=10_000,
+                expected_comments=3,
+                progress_callback=None,
+            )
+
+        self.assertEqual(driver.get.call_args_list[0].args[0], "https://x.com/ayu/status/101")
+        self.assertEqual(driver.get.call_args_list[-1].args[0], root_url)
+        loader.assert_called_once_with(
+            "101",
+            max_comments=3,
+            expected_comments=2,
+            progress_callback=None,
+        )
+        self.assertEqual({row["code"] for row in rows}, {"101", "102"})
 
     def test_x_dom_reader_scopes_end_markers_to_primary_column(self):
         collector = CommentBrowserCollector("X")
@@ -915,13 +1155,14 @@ class CommentBrowserTests(unittest.TestCase):
         ):
             result = collector.collect(url, expected_comments=46)
 
-        prepare.assert_called_once_with()
-        loader.assert_called_once_with(
-            "2100857368166711315",
-            max_comments=10_000,
-            expected_comments=46,
-            progress_callback=None,
-        )
+        prepare.assert_not_called()
+        self.assertEqual(loader.call_count, 3)
+        self.assertEqual(loader.call_args_list[0].args, ("2100857368166711315",))
+        self.assertFalse(loader.call_args_list[0].kwargs["try_x_recent"])
+        self.assertEqual(loader.call_args_list[1].kwargs["initial_rows"], [{"code": "101"}])
+        self.assertFalse(loader.call_args_list[1].kwargs["try_x_recent"])
+        self.assertEqual(loader.call_args_list[2].kwargs["initial_rows"], [{"code": "101"}])
+        self.assertFalse(loader.call_args_list[2].kwargs["try_x_recent"])
         self.assertEqual(len(result.comments), 1)
         self.assertIn("1 dari sekitar 46 balasan", result.reason)
 
@@ -1052,6 +1293,7 @@ class CommentBrowserTests(unittest.TestCase):
         loader.assert_called_once_with(
             "Target123",
             max_comments=10_000,
+            expected_comments=None,
             progress_callback=None,
         )
         dom_comments.assert_called_once_with(driver.current_url, collected_rows)

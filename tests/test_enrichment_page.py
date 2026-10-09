@@ -96,6 +96,22 @@ class EnrichmentPageTests(unittest.TestCase):
         self.assertNotIn("Periksa Login", button_labels)
         self.assertNotIn("Tutup Chrome TikTok", button_labels)
 
+    def test_youtube_offers_local_fast_api_configuration(self):
+        with (
+            patch("src.database.get_social_job", return_value=None),
+            patch("src.database.get_latest_social_job", return_value=None),
+        ):
+            app = self._app()
+
+        self.assertFalse(app.exception)
+        self.assertIn("YouTube Data API key", [widget.label for widget in app.text_input])
+        button_labels = [widget.label for widget in app.button]
+        self.assertIn("Simpan API key", button_labels)
+        self.assertIn("Hapus API key", button_labels)
+        self.assertTrue(
+            any("Fast API" in caption.value for caption in app.caption)
+        )
+
     def test_facebook_offers_advanced_enrichment_with_login_controls(self):
         with (
             patch("src.database.get_social_job", return_value=None),
@@ -111,6 +127,27 @@ class EnrichmentPageTests(unittest.TestCase):
         self.assertIn("Periksa Login", button_labels)
         self.assertIn("Tutup Chrome Facebook", button_labels)
         self.assertIn("Mulai Advanced Enrichment", button_labels)
+
+    def test_facebook_fast_mode_offers_one_page_fallback_login_controls(self):
+        with (
+            patch("src.database.get_social_job", return_value=None),
+            patch("src.database.get_latest_social_job", return_value=None),
+        ):
+            app = self._app()
+            app.get("button_group")[1].set_value("Facebook").run(timeout=10)
+
+        self.assertFalse(app.exception)
+        button_labels = [widget.label for widget in app.button]
+        self.assertIn("Buka Chrome Facebook", button_labels)
+        self.assertIn("Periksa Login", button_labels)
+        self.assertIn("Tutup Chrome Facebook", button_labels)
+        self.assertIn("Mulai Fast Enrichment", button_labels)
+        self.assertTrue(
+            any(
+                "satu halaman post/Reel" in caption.value
+                for caption in app.caption
+            )
+        )
 
     def test_completed_enrichment_shows_bilingual_reporting_format(self):
         url = "https://www.youtube.com/watch?v=report"

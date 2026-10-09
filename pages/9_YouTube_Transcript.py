@@ -14,6 +14,8 @@ from src.ui import apply_theme, page_intro, render_footer, render_github_profile
 from src.youtube_transcript import (
     YouTubeTranscriptCollector,
     YouTubeTranscriptError,
+    format_transcript,
+    format_transcript_metadata,
     format_transcript_report,
 )
 
@@ -72,14 +74,24 @@ with st.form("youtube_transcript_form"):
 
 if submitted:
     st.session_state.pop("youtube_transcript_result", None)
+    progress = st.progress(0.01, text="YouTube Transcript · Menyiapkan proses · 1%")
+
+    def update_progress(fraction: float, detail: str) -> None:
+        safe_fraction = min(max(float(fraction), 0.0), 1.0)
+        progress.progress(
+            safe_fraction,
+            text=f"YouTube Transcript · {detail} · {round(safe_fraction * 100)}%",
+        )
+
     try:
-        with st.spinner("Membaca metadata dan subtitle YouTube…"):
-            result = YouTubeTranscriptCollector().collect(
-                url_value,
-                language=LANGUAGE_OPTIONS[language_label],
-            )
+        result = YouTubeTranscriptCollector().collect(
+            url_value,
+            language=LANGUAGE_OPTIONS[language_label],
+            progress_callback=update_progress,
+        )
     except YouTubeTranscriptError as exc:
-        st.error(str(exc))
+        progress.progress(1.0, text="YouTube Transcript · Proses berhenti · 100%")
+        st.error(f"Transcript gagal diproses: {exc}")
     else:
         st.session_state["youtube_transcript_result"] = result
         st.success(f"Transcript selesai diproses · {len(result.segments):,} baris.")
@@ -133,9 +145,17 @@ if result is not None:
                 key=f"youtube_speaker_{identity}_{index}",
             ).strip() or speaker
 
+    metadata = format_transcript_metadata(result, speaker_names)
+    transcript = format_transcript(result, speaker_names)
     report = format_transcript_report(result, speaker_names)
     st.markdown('<div class="section-label">LANGKAH 3 · COPY ATAU UNDUH</div>', unsafe_allow_html=True)
-    st.code(report, language=None, wrap_lines=True)
+    metadata_column, transcript_column = st.columns([0.36, 0.64], gap="large")
+    with metadata_column:
+        st.markdown("#### Informasi Video")
+        st.code(metadata, language=None, wrap_lines=True)
+    with transcript_column:
+        st.markdown("#### Transcript")
+        st.code(transcript, language=None, wrap_lines=True)
     st.download_button(
         "Unduh Transcript TXT",
         data=report.encode("utf-8-sig"),

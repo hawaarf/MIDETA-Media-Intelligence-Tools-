@@ -6,6 +6,7 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 from src.connectors import detect_platform, get_connector, get_platform_connector
 from src.connectors.base import BaseConnector
+from src.http_client import CollectionError
 from src.models import FieldStatus
 
 SOCIAL_HTML = """<html><head><meta name="author" content="@akun"><meta property="og:description" content="Caption publik"><script type="application/ld+json">{"@type":"SocialMediaPosting","datePublished":"2026-08-30","interactionStatistic":{"interactionType":"LikeAction","userInteractionCount":42}}</script><script>{"viewCount":"1200","repostCount":"8"}</script></head></html>"""
@@ -58,6 +59,7 @@ content="508 Followers • 33 Threads • Ojol Solo–Karanganyar"></head></html
 X_REPLIES_HTML = """<html><script type="application/json">{"tweets":[{"rest_id":"100","legacy":{"full_text":"Posting utama","conversation_id_str":"100","favorite_count":9,"reply_count":2},"core":{"user_results":{"result":{"legacy":{"screen_name":"pemilik"}}}}},{"rest_id":"101","legacy":{"full_text":"Komentar langsung","conversation_id_str":"100","in_reply_to_status_id_str":"100","favorite_count":15,"reply_count":1,"created_at":"Thu Sep 03 03:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"ayu"}}}}},{"rest_id":"102","legacy":{"full_text":"Balasan komentar","conversation_id_str":"100","in_reply_to_status_id_str":"101","favorite_count":4,"reply_count":0,"created_at":"Thu Sep 03 04:00:00 +0000 2026"},"core":{"user_results":{"result":{"legacy":{"screen_name":"bima"}}}}},{"rest_id":"999","legacy":{"full_text":"Tweet rekomendasi","conversation_id_str":"999","in_reply_to_status_id_str":"998","favorite_count":999},"core":{"user_results":{"result":{"legacy":{"screen_name":"lain"}}}}}]}</script></html>"""
 X_FLIGHT_HTML = """<html><head><meta property="article:author" content="https://x.com/jurnal_ekuitas"><meta property="og:description" content="Caption X"><meta property="article:published_time" content="2026-08-13T03:07:48.000Z"></head><script>rest_id:"999",counts:{__typename:"ApiCounts",bookmark_count:91,favorite_count:999,reply_count:88,retweet_count:77},views:{__typename:"ViewCountInfo",count:"9999"};rest_id:"2087737859063394648",core:{__typename:"UserCore",screen_name:"jurnal_ekuitas",name:"Stock Journal"},relationship_counts:{__typename:"UserRelationshipCounts",followers:2224,following:106},counts:{__typename:"ApiCounts",bookmark_count:64,favorite_count:629,reply_count:53,retweet_count:64,quote_count:15},views:{__typename:"ViewCountInfo",count:"142215"}</script></html>"""
 X_TARGET_STRUCTURED_HTML = """<html><head><meta property="og:description" content="Caption rekomendasi"><meta property="article:published_time" content="2026-01-01T00:00:00Z"></head><script type="application/json">{"tweets":[{"rest_id":"777","legacy":{"full_text":"Posting target lengkap","created_at":"Thu Sep 03 03:00:00 +0000 2026","favorite_count":21,"reply_count":4,"bookmark_count":2,"retweet_count":5,"quote_count":3},"views":{"count":"800"},"core":{"user_results":{"result":{"legacy":{"screen_name":"target_author","name":"Target Author","followers_count":1234}}}}},{"rest_id":"999","legacy":{"full_text":"Posting rekomendasi","favorite_count":999,"reply_count":999},"views":{"count":"99999"},"core":{"user_results":{"result":{"legacy":{"screen_name":"wrong_author","followers_count":99999}}}}}]}</script></html>"""
+X_SEROVAL_REPLY_HTML = """<html><head><meta property="article:author" content="https://x.com/xdroverse"><meta property="og:description" content="@eth_GTS @orpheuskaze Yg penting ga nyangkut di goto pa 🗿"><meta property="article:published_time" content="2026-10-04T15:22:00.000Z"></head><script>rest_id:"999",counts:$R[1]={bookmark_count:99,favorite_count:999,quote_count:99,reply_count:999,retweet_count:99},views:$R[2]={count:"9999"};rest_id:"2106766795931828347",result:$R[22]={__typename:"Tweet",core:$R[24]={user_results:$R[25]={result:$R[26]={__typename:"User",core:$R[28]={name:"xdro",screen_name:"xdroverse"},relationship_counts:$R[33]={followers:2662,following:2124}}}},counts:$R[36]={bookmark_count:0,favorite_count:1,quote_count:0,reply_count:2,retweet_count:0},details:$R[37]={created_at_ms:1791127320000,display_text_range:$R[39]=[22,57],full_text:"@eth_GTS @orpheuskaze Yg penting ga nyangkut di goto pa 🗿"},rest_id:"2106766795931828347",views:$R[58]={count:"41"}}</script></html>"""
 YOUTUBE_WATCH_HTML = """<html><head><link rel="canonical" href="https://www.youtube.com/watch?v=Y8yF1AIqqn0"></head><body>
 <script>var ytInitialPlayerResponse = {"videoDetails":{"videoId":"Y8yF1AIqqn0","author":"Tribun Singkawang","shortDescription":"Ratusan pengemudi ojek online menggelar unjuk rasa.","viewCount":"483"},"microformat":{"playerMicroformatRenderer":{"ownerChannelName":"Tribun Singkawang","publishDate":"2026-10-01","uploadDate":"2026-10-01"}}};</script>
 <script>var ytInitialData = {"contents":{"videoPrimaryInfoRenderer":{"videoActions":{"accessibilityData":{"label":"0 likes"}}},"videoSecondaryInfoRenderer":{"owner":{"videoOwnerRenderer":{"subscriberCountText":{"simpleText":"3,67 jt subscriber"}}}},"commentsHeaderRenderer":{"countText":{"simpleText":"0 Komentar"}}},"recommendation":{"videoId":"WrongVideo","author":"Author rekomendasi","commentCount":"999"}};</script>
@@ -85,6 +87,14 @@ FACEBOOK_REEL_BOOKMARK_HTML = """<html><head><link rel="canonical" href="https:/
 FACEBOOK_CANONICAL_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/akuratco/posts/judul/789"><meta property="og:description" content="Caption"></head><script>{"id":"789","feedback":{"reaction_count":{"count":5},"share_count":{"count":1},"comment_rendering_instance":{"comments":{"total_count":0}}}}</script></html>"""
 FACEBOOK_FULL_CAPTION_HTML = """<html><head><meta property="og:description" content="Paragraf pertama yang lengkap..."></head><body><div data-ad-rendering-role="story_message"><div dir="auto">Paragraf pertama yang lengkap.</div><div dir="auto">Paragraf kedua juga harus masuk.</div></div></body></html>"""
 FACEBOOK_GROUP_HTML = """<html><head><meta property="og:title" content="LIOC ( LIKA LIKU OJOL &amp; CUSTOMER ) | Caption grup | Facebook"><meta property="og:description" content="Caption grup..."><meta property="og:url" content="https://www.facebook.com/groups/1657323981260301/posts/4699586193700716/"></head><body><script>{"join_action":{"group":{"id":"1657323981260301","name":"LIOC ( LIKA LIKU OJOL & CUSTOMER )"}},"node_v2":{"actors":[{"name":"Gondrong Saja","id":"100012853172729","url":null}],"message":{"text":"Caption grup lengkap. Paragraf kedua juga masuk."},"post_id":"4699586193700716"}}</script></body></html>"""
+FACEBOOK_SLUG_GROUP_HTML = """<html><head><meta property="og:description" content="Yang lagi rame pagi ini di Blok M"></head><body>
+<main><div role="article"><header>
+<a href="https://www.facebook.com/groups/helios1688/">VIDEO VIRAL KOCAK DAN LUCU X HELIOS168</a>
+<a href="https://www.facebook.com/lucubikinngakak">Lucu Bikin Ngakak</a>
+<div role="button" aria-label="Tindakan untuk postingan oleh Lucu Bikin Ngakak ini"></div>
+</header></div></main>
+<script>{"node_v2":{"actors":[{"name":"Lucu Bikin Ngakak","id":"100012853172700","url":null}],"message":{"text":"Yang lagi rame pagi ini di Blok M"},"post_id":"2965563127112018"}}</script>
+</body></html>"""
 FACEBOOK_PROFILE_POST_HTML = """<html><head><link rel="canonical" href="https://www.facebook.com/profilcontoh/posts/123"><meta property="og:title" content="Profil Contoh"><meta property="og:description" content="Caption Facebook"></head></html>"""
 FACEBOOK_AUTHENTICATED_POST_HTML = """<html><head>
 <title>(5) Maskur Cokern - Caption target | Facebook</title>
@@ -516,6 +526,22 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.bookmarks.value, 2)
         self.assertEqual(result.reposts.value, 8)
 
+    @patch("src.connectors.base.fetch_public_html", return_value=(X_SEROVAL_REPLY_HTML, "https://x.com/xdroverse/status/2106766795931828347"))
+    @patch("src.connectors.base.validate_public_url", return_value="https://x.com/xdroverse/status/2106766795931828347")
+    def test_x_reads_seroval_reply_and_removes_hidden_mentions(self, _validate, _fetch):
+        url = "https://x.com/xdroverse/status/2106766795931828347"
+        result = get_connector(url).enrich(url)
+
+        self.assertEqual(result.username.value, "xdroverse")
+        self.assertEqual(result.caption.value, "Yg penting ga nyangkut di goto pa 🗿")
+        self.assertEqual(result.posted_at.value, "2026-10-04T15:22:00.000Z")
+        self.assertEqual(result.followers.value, 2662)
+        self.assertEqual(result.likes.value, 1)
+        self.assertEqual(result.comments.value, 2)
+        self.assertEqual(result.bookmarks.value, 0)
+        self.assertEqual(result.reposts.value, 0)
+        self.assertEqual(result.views.value, 41)
+
     @patch("src.connectors.base.fetch_public_html", return_value=(YOUTUBE_WATCH_HTML, "https://www.youtube.com/watch?v=Y8yF1AIqqn0"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.youtube.com/watch?v=Y8yF1AIqqn0")
     def test_youtube_reads_target_author_and_explicit_zero_comments(self, _validate, _fetch):
@@ -546,6 +572,26 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.likes.value, 6)
         self.assertEqual(result.comments.value, 0)
         self.assertEqual(result.comments.status, FieldStatus.AVAILABLE)
+
+    @patch("src.connectors.youtube.time.sleep")
+    @patch(
+        "src.connectors.base.fetch_public_html",
+        side_effect=[
+            CollectionError("Halaman tidak dapat dihubungi: Read timed out."),
+            CollectionError("Halaman tidak dapat dihubungi: SSL connection closed."),
+            (YOUTUBE_WATCH_HTML, "https://www.youtube.com/watch?v=Y8yF1AIqqn0"),
+        ],
+    )
+    @patch("src.connectors.base.validate_public_url", return_value="https://www.youtube.com/watch?v=Y8yF1AIqqn0")
+    def test_youtube_retries_transient_watch_failures(self, _validate, fetch, sleep):
+        url = "https://www.youtube.com/watch?v=Y8yF1AIqqn0"
+
+        result = get_connector(url).enrich(url)
+
+        self.assertEqual(result.username.value, "Tribun Singkawang")
+        self.assertEqual(result.views.value, 483)
+        self.assertEqual(fetch.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.4, 1.0])
 
     @patch("src.connectors.base.fetch_public_html", return_value=(COMMENT_HTML, "https://example.com/post"))
     @patch("src.connectors.base.validate_public_url", return_value="https://example.com/post")
@@ -842,6 +888,63 @@ class ConnectorTests(unittest.TestCase):
             "https://www.facebook.com/profile.php?id=100063560258062",
         )
 
+    def test_facebook_fast_reel_reads_expanded_caption_and_blank_zero_controls(self):
+        url = "https://www.facebook.com/reel/28404338242540935"
+        connector = get_connector(url)
+        first_paragraph = (
+            "Pemerintah Provinsi Sulawesi Selatan bersama Kementerian Kesehatan dan Gojek "
+            "menggelar program Cek Kesehatan Gratis (CKG) bagi mitra pengemudi ojek online "
+            "se-Sulawesi Selatan di Mal Nipah Makassar, pada 1–2 Oktober 2026."
+        )
+        second_paragraph = (
+            "Para mitra pengemudi menyambut antusias program ini karena dapat memeriksakan "
+            "kesehatan secara gratis di tengah kesibukan bekerja."
+        )
+        html = f"""
+        <main>
+          <section class="target-viewer">
+            <div data-video-id="28404338242540935">
+              <div aria-label="Video player"></div>
+              <a aria-label="See owner profile" href="/profile.php?id=100064472000542">Sulselprov</a>
+              <div class="video-overlay"><div>lagi ada di tempat yang tidak seperti biasanya karena sedang meliput kegiatan</div></div>
+              <div class="caption-block">
+                <div>{first_paragraph}</div>
+                <div>{second_paragraph}</div>
+                <a href="/reel/hashtag/?q=humassulsel">#humassulsel</a>
+                <a href="/reel/hashtag/?q=sulselprov">#sulselprov</a>
+              </div>
+            </div>
+            <aside>
+              <div role="button" aria-label="Like">7</div>
+              <div role="button" aria-label="Comment"></div>
+              <div role="button" aria-label="Share"></div>
+              <div role="button" aria-label="Save"></div>
+            </aside>
+          </section>
+          <section data-video-id="999">
+            <div aria-label="Video player"></div>
+            <a aria-label="See owner profile" href="/wrong">Wrong Account</a>
+            <div role="button" aria-label="Like">999</div>
+            <div role="button" aria-label="Comment">999</div>
+            <div role="button" aria-label="Share">999</div>
+          </section>
+        </main>
+        <script type="application/json">{{"video_id":"28404338242540935", "publish_time":1791019756}}</script>
+        """
+
+        result = connector.enrich_loaded_html(html, url)
+
+        self.assertEqual(result.username.value, "Sulselprov")
+        self.assertEqual(
+            result.caption.value,
+            f"{first_paragraph}\n\n{second_paragraph}\n\n#humassulsel #sulselprov",
+        )
+        self.assertEqual(result.posted_at.value, "2026-10-03")
+        self.assertEqual(result.likes.value, 7)
+        self.assertEqual(result.comments.value, 0)
+        self.assertEqual(result.shares.value, 0)
+        self.assertEqual(result.bookmarks.value, 0)
+
     def test_facebook_authenticated_dom_ignores_logged_in_account(self):
         connector = get_connector("https://www.facebook.com/maskurcokern7/posts/pfbidTarget")
 
@@ -883,6 +986,22 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(result.username.value, "Gondrong Saja - LIOC ( LIKA LIKU OJOL & CUSTOMER )")
         self.assertEqual(result.caption.value, "Caption grup lengkap. Paragraf kedua juga masuk.")
         self.assertEqual(result.followers.value, 2200)
+
+    @patch("src.connectors.base.fetch_public_html", return_value=(
+        FACEBOOK_SLUG_GROUP_HTML,
+        "https://www.facebook.com/groups/helios1688/permalink/2965563127112018/",
+    ))
+    @patch(
+        "src.connectors.base.validate_public_url",
+        return_value="https://www.facebook.com/groups/helios1688/permalink/2965563127112018/",
+    )
+    def test_facebook_slug_group_combines_post_author_and_visible_group_name(self, _validate, _fetch):
+        url = "https://www.facebook.com/groups/helios1688/permalink/2965563127112018/"
+        result = get_connector(url).enrich(url, include_platform_profile=False)
+        self.assertEqual(
+            result.username.value,
+            "Lucu Bikin Ngakak - VIDEO VIRAL KOCAK DAN LUCU X HELIOS168",
+        )
 
     @patch("src.connectors.base.fetch_public_html", return_value=(FACEBOOK_CANONICAL_HTML, "https://www.facebook.com/akuratco/posts/pfbidABC"))
     @patch("src.connectors.base.validate_public_url", return_value="https://www.facebook.com/akuratco/posts/pfbidABC")

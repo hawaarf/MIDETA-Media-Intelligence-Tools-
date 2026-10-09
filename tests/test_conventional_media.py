@@ -3,6 +3,7 @@
 
 import json
 import unittest
+from unittest.mock import patch
 
 from src.conventional_media import (
     ARTICLE_COLUMNS,
@@ -13,6 +14,7 @@ from src.conventional_media import (
     _failed_result,
     classify_tone,
     enrich_article_html,
+    enrich_public_article,
     media_identity,
     quote_mentions,
     type_mentions,
@@ -491,6 +493,205 @@ class ConventionalMediaTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertIn("Isi berita terstruktur", result.content)
         self.assertNotIn("Daftar berita lain", result.content)
+
+    def test_known_public_article_wrappers_are_extracted(self):
+        paragraph = " ".join(
+            [
+                "Dunia usaha meminta aturan ketenagakerjaan disusun secara komprehensif "
+                "agar investasi, produktivitas, dan perlindungan pekerja tetap terjaga."
+            ]
+            * 8
+        )
+        cases = (
+            (
+                "https://bcasekuritas.co.id/en/latest-news/news/apindo-minta-ruu-ketenagakerjaan",
+                '<div class="prose mb-6 max-w-full text-gray"><p>{}</p></div>',
+            ),
+            (
+                "https://kaltimkita.com/detailpost/dunia-usaha-khawatir-ruu-ketenagakerjaan",
+                '<div class="post_content"><p>{}</p></div>',
+            ),
+            (
+                "https://nttzoom.com/news_read/apindo-khawatir-ruu-ketenagakerjaan-2918",
+                '<div class="content_read"><p>{}</p></div>',
+            ),
+            (
+                "https://banuaterkini.com/ekonomi/apindo-kalsel-soroti-ruu-ketenagakerjaan/",
+                '<div id="velocity-post-content"><p>{}</p></div>',
+            ),
+        )
+
+        for url, wrapper in cases:
+            with self.subTest(url=url):
+                title = "Apindo Soroti RUU Ketenagakerjaan"
+                html = f"<html><head><title>{title}</title></head><body>{wrapper.format(paragraph)}</body></html>"
+                result = enrich_article_html(url, html)
+                self.assertEqual(result.status, "completed")
+                self.assertEqual(result.title, title)
+                self.assertGreaterEqual(len(result.content.split()), 80)
+
+    def test_rmol_article_body_wins_over_timestamp_listing(self):
+        expected = (
+            "Aksi unjuk rasa aliansi buruh terkait Rancangan Undang-Undang (RUU) "
+            "Pelindungan Ketenagakerjaan, direspons santai Wakil Ketua DPR RI Sufmi Dasco Ahmad. "
+            "Dasco mengatakan bahwa DPR menargetkan penyelesaian RUU tersebut pada Oktober 2026. "
+            '"InsyaAllah Oktober rampung," kata Dasco kepada wartawan di Komplek Parlemen, '
+            "Senayan, Jakarta, Kamis, 24 September 2026. Ketua Harian DPP Partai Gerindra itu "
+            "menjelaskan bahwa pembahasan masih menghadapi perbedaan pandangan antara buruh dan "
+            "pengusaha. DPR akan memediasi pertemuan para pihak dan berkoordinasi dengan pemerintah."
+        )
+        html = f"""
+        <html><head><title>Respons Demo Buruh, Dasco: RUU Pelindungan Ketenagakerjaan Rampung Oktober 2026</title></head>
+        <body>
+          <div id="fontResizableText">
+            <div class="news_part_1">{expected}</div>
+            <div class="comment_list news-related-inside">BERITA TERKAIT: Artikel lain</div>
+          </div>
+          <div class="content">
+            <p>Jumat, 02 Oktober 2026 | 12:23</p>
+            <p>Jumat, 02 Oktober 2026 | 12:16</p>
+            <p>Jumat, 02 Oktober 2026 | 11:55</p>
+            <p>Jumat, 02 Oktober 2026 | 11:30</p>
+          </div>
+        </body></html>
+        """
+
+        result = enrich_article_html(
+            "https://rmol.id/politik/read/2026/09/24/722799/"
+            "respons-demo-buruh-dasco-ruu-pelindungan-ketenagakerjaan-rampung-oktober-2026",
+            html,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertIn("Aksi unjuk rasa aliansi buruh", result.content)
+        self.assertIn("InsyaAllah Oktober rampung", result.content)
+        self.assertNotIn("Jumat, 02 Oktober 2026", result.content)
+        self.assertEqual(result.date_publish, "Sep 24, 2026")
+
+    def test_public_article_follows_next_page_and_removes_navigation_labels(self):
+        first_body = " ".join(
+            ["Bagian pertama program pekerja menjelaskan latar belakang kebijakan secara lengkap."] * 7
+        )
+        second_body = " ".join(
+            ["Bagian kedua program pekerja menjelaskan tanggapan narasumber dan kesimpulannya."] * 7
+        )
+        first_url = "https://contohmedia.com/program-pekerja-lengkap"
+        second_url = f"{first_url}/2"
+        first_html = f"""
+        <html><head><title>Program Pekerja Lengkap</title></head><body>
+          <article><p>{first_body}</p>
+            <span class="link_nex_prev"><a href="{second_url}">Selanjutnya</a></span>
+          </article>
+        </body></html>
+        """
+        second_html = f"""
+        <html><head><title>Program Pekerja Lengkap - Hal.2</title></head><body>
+          <article>
+            <span class="link_nex_prev"><a href="{first_url}">Sebelumnya</a></span>
+            <p>{second_body}</p>
+          </article>
+        </body></html>
+        """
+
+        with (
+            patch("src.conventional_media.validate_public_url", side_effect=lambda value: value),
+            patch(
+                "src.conventional_media.fetch_public_html",
+                side_effect=[(first_html, first_url), (second_html, second_url)],
+            ) as fetch,
+        ):
+            result = enrich_public_article(first_url)
+
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(result.status, "completed")
+        self.assertIn("Bagian pertama program pekerja", result.content)
+        self.assertIn("Bagian kedua program pekerja", result.content)
+        self.assertNotIn("Selanjutnya", result.content)
+        self.assertNotIn("Sebelumnya", result.content)
+
+    def test_public_article_prefers_show_all_over_next_page(self):
+        teaser = " ".join(["Ringkasan program pekerja tersedia pada halaman awal."] * 7)
+        complete = " ".join(
+            ["Isi lengkap program pekerja memuat seluruh penjelasan dan tanggapan narasumber."] * 10
+        )
+        url = "https://contohmedia.com/program-pekerja"
+        show_all_url = f"{url}?view=all"
+        initial_html = f"""
+        <html><head><title>Program Pekerja</title></head><body><article>
+          <p>{teaser}</p>
+          <div class="pagination"><a href="{url}/2">Selanjutnya</a></div>
+          <a class="show-all" href="{show_all_url}">Show All</a>
+        </article></body></html>
+        """
+        complete_html = f"""
+        <html><head><title>Program Pekerja</title></head><body>
+          <article><p>{complete}</p></article>
+        </body></html>
+        """
+
+        with (
+            patch("src.conventional_media.validate_public_url", side_effect=lambda value: value),
+            patch(
+                "src.conventional_media.fetch_public_html",
+                side_effect=[(initial_html, url), (complete_html, show_all_url)],
+            ) as fetch,
+        ):
+            result = enrich_public_article(url)
+
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(result.status, "completed")
+        self.assertIn("Isi lengkap program pekerja", result.content)
+        self.assertNotIn("Ringkasan program pekerja", result.content)
+        self.assertNotIn("Show All", result.content)
+
+    def test_publisher_only_metadata_yields_to_visible_article_heading(self):
+        paragraph = " ".join(
+            ["APINDO membahas regulasi, investasi, produktivitas, dan perlindungan pekerja."] * 12
+        )
+        html = f"""
+        <html><head>
+          <meta property="og:title" content="BCA Sekuritas | BCA Sekuritas">
+          <meta name="article:published_time" content="2026-10-01T19:28:23Z">
+          <title>BCA Sekuritas | BCA Sekuritas</title>
+        </head><body>
+          <h1>APINDO Minta RUU Ketenagakerjaan Berorientasi Ciptakan Lapangan Kerja</h1>
+          <div class="prose mb-6 max-w-full"><p>{paragraph}</p></div>
+        </body></html>
+        """
+
+        result = enrich_article_html(
+            "https://bcasekuritas.co.id/en/latest-news/news/apindo-minta-ruu-ketenagakerjaan",
+            html,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(
+            result.title,
+            "APINDO Minta RUU Ketenagakerjaan Berorientasi Ciptakan Lapangan Kerja",
+        )
+        self.assertEqual(result.date_publish, "Oct 2, 2026")
+
+    def test_unix_timestamp_json_ld_date_is_supported(self):
+        paragraph = " ".join(
+            ["Dunia usaha membahas perubahan aturan ketenagakerjaan secara menyeluruh."] * 12
+        )
+        html = f"""
+        <html><head><title>Apindo Khawatir RUU Pelindungan Ketenagakerjaan</title>
+          <script type="application/ld+json">{{
+            "@context": "https://schema.org", "@type": "NewsArticle",
+            "headline": "Apindo Khawatir RUU Pelindungan Ketenagakerjaan",
+            "datePublished": "1790840130"
+          }}</script>
+        </head><body><div class="content_read"><p>{paragraph}</p></div></body></html>
+        """
+
+        result = enrich_article_html(
+            "https://nttzoom.com/news_read/apindo-khawatir-ruu-pelindungan-ketenagakerjaan-2918",
+            html,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.date_publish, "Oct 1, 2026")
 
     def test_tone_uses_full_article_text(self):
         self.assertEqual(

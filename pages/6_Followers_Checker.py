@@ -4,12 +4,14 @@
 """MIDETA multi-platform profile follower checker."""
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import importlib
+import time
 
 import pandas as pd
 import streamlit as st
 
-from src.batch import parse_url_list
+from src.batch import batch_progress_fraction, parse_url_list
 from src.config import MAX_ENRICHMENT_URLS, MIDETA_LOGO_PATH
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 import src.follower_browser as follower_browser_module
@@ -91,65 +93,89 @@ def initial_result_rows(urls: list[str]) -> list[dict[str, object]]:
 def process_followers(urls: list[str]) -> list[dict[str, object]]:
     rows = initial_result_rows(urls)
     account_count = sum(row["URL"] != RESULT_SPACE for row in rows)
-    progress = st.progress(0.0, text=f"Menyiapkan {account_count:,} akun…")
+    progress = st.progress(0.0, text=f"Followers Checker · Menyiapkan {account_count:,} akun · 0%")
+    activity = st.empty()
     completed = 0
 
-    def update_progress() -> None:
+    def update_progress(active_fraction: float = 0.0, detail: str = "") -> None:
+        fraction = batch_progress_fraction(completed, account_count, active_fraction)
         progress.progress(
-            completed / max(account_count, 1),
-            text=f"{completed:,} dari {account_count:,} akun selesai",
+            fraction,
+            text=(
+                f"Followers Checker · {completed:,}/{account_count:,} akun selesai · "
+                f"{round(fraction * 100)}%"
+                + (f" · {detail}" if detail else "")
+            ),
         )
 
-    for platform in FOLLOWER_PLATFORMS:
-        platform_indexes = [
-            index for index, row in enumerate(rows) if row["Platform"] == platform
-        ]
-        if not platform_indexes:
-            continue
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="mideta-followers") as executor:
+        for platform in FOLLOWER_PLATFORMS:
+            platform_indexes = [
+                index for index, row in enumerate(rows) if row["Platform"] == platform
+            ]
+            if not platform_indexes:
+                continue
 
-        valid_indexes: list[int] = []
-        for row_index in platform_indexes:
-            url = str(rows[row_index]["URL"])
-            if ProfileFollowersCollector.is_profile_url(platform, url):
-                valid_indexes.append(row_index)
-            else:
-                rows[row_index]["Followers"] = RESULT_INVALID_URL
-                completed += 1
-                update_progress()
+            valid_indexes: list[int] = []
+            for row_index in platform_indexes:
+                url = str(rows[row_index]["URL"])
+                if ProfileFollowersCollector.is_profile_url(platform, url):
+                    valid_indexes.append(row_index)
+                else:
+                    rows[row_index]["Followers"] = RESULT_INVALID_URL
+                    completed += 1
+                    update_progress()
 
-        if not valid_indexes:
-            continue
-        browser = follower_browser_v3(platform)
-        try:
-            logged_in = browser.is_logged_in()
-        except FollowerBrowserError:
-            logged_in = False
-        if not logged_in:
-            for row_index in valid_indexes:
-                rows[row_index]["Followers"] = RESULT_LOGIN_REQUIRED
-                completed += 1
-                update_progress()
-            continue
-
-        for row_index in valid_indexes:
+            if not valid_indexes:
+                continue
+            browser = follower_browser_v3(platform)
             try:
-                followers = browser.collect_profile_followers(str(rows[row_index]["URL"]))
-                rows[row_index]["Followers"] = (
-                    followers if followers is not None else RESULT_NOT_AVAILABLE
-                )
-            except FollowerLoginRequired:
-                rows[row_index]["Followers"] = RESULT_LOGIN_REQUIRED
-            except (FollowerProfileUnavailable, FollowerBrowserError):
-                rows[row_index]["Followers"] = RESULT_FAILED
-            completed += 1
-            update_progress()
+                logged_in = browser.is_logged_in()
+            except FollowerBrowserError:
+                logged_in = False
+            if not logged_in:
+                for row_index in valid_indexes:
+                    rows[row_index]["Followers"] = RESULT_LOGIN_REQUIRED
+                    completed += 1
+                    update_progress(detail=f"{platform}: login diperlukan")
+                continue
+
+            for row_index in valid_indexes:
+                url = str(rows[row_index]["URL"])
+                future = executor.submit(browser.collect_profile_followers, url)
+                started = time.monotonic()
+                while True:
+                    done, _ = wait({future}, timeout=0.4, return_when=FIRST_COMPLETED)
+                    elapsed = max(time.monotonic() - started, 0.0)
+                    heartbeat = min(0.9, 0.04 + (elapsed / (elapsed + 10.0)) * 0.86)
+                    update_progress(
+                        heartbeat,
+                        detail=f"{platform}: membuka {rows[row_index]['Account Name']} · {int(elapsed):,} dtk",
+                    )
+                    activity.info(f"Sedang membaca profil: {url}")
+                    if done:
+                        break
+                try:
+                    followers = future.result()
+                    rows[row_index]["Followers"] = (
+                        followers if followers is not None else RESULT_NOT_AVAILABLE
+                    )
+                except FollowerLoginRequired:
+                    rows[row_index]["Followers"] = RESULT_LOGIN_REQUIRED
+                except (FollowerProfileUnavailable, FollowerBrowserError):
+                    rows[row_index]["Followers"] = RESULT_FAILED
+                except Exception:
+                    rows[row_index]["Followers"] = RESULT_FAILED
+                completed += 1
+                update_progress(detail=f"{platform}: profil selesai")
 
     for row in rows:
         if row["Platform"] == "Tidak dikenali":
             row["Followers"] = RESULT_UNKNOWN
             completed += 1
             update_progress()
-    progress.progress(1.0, text=f"Selesai: {account_count:,} akun sudah diperiksa")
+    progress.progress(1.0, text=f"Followers Checker selesai · {account_count:,}/{account_count:,} · 100%")
+    activity.empty()
     return rows
 
 

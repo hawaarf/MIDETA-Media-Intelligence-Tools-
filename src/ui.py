@@ -34,19 +34,19 @@ ENRICHMENT_GUIDES = {
         "note": "Tanpa token, proses tetap berjalan dengan metadata publik yang tersedia. Posting privat, terhapus, atau dibatasi wilayah dapat menghasilkan data tidak lengkap.",
     },
     "Facebook": {
-        "summary": "Pilih Fast untuk metadata publik atau Advanced untuk mencari Views Reel lewat sesi Facebook yang sudah login.",
+        "summary": "Pilih Fast untuk membaca halaman target saja atau Advanced untuk mencari Views Reel lewat profil Facebook.",
         "modes": [
-            ("Fast enrichment · tanpa login", "Membaca metadata publik dari post, video, Reel, share link, atau permalink grup tanpa membuka profil."),
+            ("Fast enrichment · login bila diperlukan", "Mencoba metadata publik dahulu, lalu memakai sesi Facebook hanya bila halaman publik kosong. Tidak membuka profil atau daftar Reels."),
             ("Advanced enrichment · login", "Membuka post target, profil author, dan halaman Reels untuk mencocokkan ID Reel sebelum mengambil Views dan followers/friends."),
         ],
         "steps": [
             ("Tentukan kebutuhan", "Gunakan Fast untuk proses cepat atau Advanced bila Views perlu dicari dari halaman Reels profil."),
-            ("Siapkan sesi", "Untuk Advanced, buka Chrome Facebook dari MIDETA, login, lalu tekan Periksa Login."),
+            ("Siapkan sesi", "Login Facebook diperlukan untuk Advanced dan sebagai fallback Fast ketika Facebook menyembunyikan halaman publik."),
             ("Tempel tautan", "Masukkan URL Facebook satu per baris; share link akan diikuti ke tujuan akhirnya."),
             ("Ambil metadata", "MIDETA mencocokkan ID post/Reel agar data rekomendasi atau Reel lain tidak tercampur."),
             ("Periksa hasil", "Review author, followers/friends, caption, views, dan engagement lalu ekspor."),
         ],
-        "note": "Advanced hanya mengisi Views bila Facebook menampilkan angka untuk ID Reel yang sama. Jika tidak dapat dibaca, hasil ditulis Cek. Password diketik langsung di Facebook dan tidak dibaca MIDETA.",
+        "note": "Fast hanya membuka URL target dan otomatis membuka caption lengkap. Advanced hanya mengisi Views bila Facebook menampilkan angka untuk ID Reel yang sama. Password diketik langsung di Facebook dan tidak dibaca MIDETA.",
     },
     "Instagram": {
         "summary": "Pilih Fast untuk engagement atau Advanced untuk metadata lengkap. Keduanya memakai sesi Instagram yang sudah login.",

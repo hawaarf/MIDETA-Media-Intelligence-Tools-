@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from functools import lru_cache
 from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
@@ -185,12 +186,40 @@ class YouTubeConnector(BaseConnector):
         return None
 
     def enrich(self, url: str, *, include_platform_profile: bool = True):
-        """Read Shorts through the equivalent watch route, preserving input URL."""
+        """Read the watch payload, retrying transient YouTube transport errors.
+
+        Enrichment All can run several platforms at once. YouTube occasionally
+        closes or stalls one of those public watch requests even though the
+        same video is available immediately afterwards. Retry only transport
+        failures; unavailable/private videos still return without delay.
+        """
         processing_url = canonical_social_url(url, "YouTube") or url
-        result = super().enrich(
-            processing_url,
-            include_platform_profile=include_platform_profile,
-        )
+        result = None
+        retry_delays = (0.4, 1.0)
+        for attempt in range(len(retry_delays) + 1):
+            result = super().enrich(
+                processing_url,
+                include_platform_profile=include_platform_profile,
+            )
+            note = str(result.note or "").casefold()
+            transient_failure = all(
+                getattr(result, name).value in (None, "")
+                for name in ("username", "caption", "posted_at", "views")
+            ) and any(
+                marker in note
+                for marker in (
+                    "halaman tidak dapat dihubungi",
+                    "read timed out",
+                    "ssl",
+                    "connection",
+                    "remote end closed",
+                    "domain tidak dapat ditemukan",
+                )
+            )
+            if not transient_failure or attempt >= len(retry_delays):
+                break
+            time.sleep(retry_delays[attempt])
+        assert result is not None
         result.url = url
         return result
 

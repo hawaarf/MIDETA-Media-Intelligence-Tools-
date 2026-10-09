@@ -4,12 +4,14 @@
 """Standalone MIDETA social-link cleaner and share-link resolver."""
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+import time
+from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
 
-from src.batch import parse_url_list
+from src.batch import batch_progress_fraction, parse_url_list
 from src.config import MAX_ENRICHMENT_URLS, MAX_PARALLEL_PUBLIC_URLS, MIDETA_LOGO_PATH
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.social_urls import (
@@ -79,7 +81,8 @@ def modify_one_link(position: int, url: str) -> dict[str, str | int]:
 def process_links(urls: list[str]) -> list[dict[str, str | int]]:
     """Process links in parallel and return rows in their pasted order."""
     rows: list[dict[str, str | int] | None] = [None] * len(urls)
-    progress = st.progress(0.0, text=f"Menyiapkan {len(urls):,} link…")
+    progress = st.progress(0.0, text=f"Modified Link · Menyiapkan {len(urls):,} link · 0%")
+    activity = st.empty()
     workers = min(MAX_PARALLEL_PUBLIC_URLS, max(1, len(urls)))
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mideta-modified-link") as executor:
         futures = {
@@ -87,14 +90,54 @@ def process_links(urls: list[str]) -> list[dict[str, str | int]]:
             for position, url in enumerate(urls, 1)
         }
         completed = 0
-        for future in as_completed(futures):
-            rows[futures[future]] = future.result()
-            completed += 1
-            progress.progress(
-                completed / len(urls),
-                text=f"{completed:,} dari {len(urls):,} link selesai",
-            )
-    progress.progress(1.0, text=f"Selesai: {len(urls):,} link sudah diperiksa")
+        pending = set(futures)
+        heartbeat_started = time.monotonic()
+        while pending:
+            done, pending = wait(pending, timeout=0.4, return_when=FIRST_COMPLETED)
+            if not done:
+                elapsed = max(time.monotonic() - heartbeat_started, 0.0)
+                heartbeat = min(0.9, 0.04 + (elapsed / (elapsed + 10.0)) * 0.86)
+                fraction = batch_progress_fraction(completed, len(urls), heartbeat)
+                progress.progress(
+                    fraction,
+                    text=(
+                        f"Modified Link · {completed:,}/{len(urls):,} selesai · "
+                        f"{round(fraction * 100)}% · menunggu {int(elapsed):,} dtk"
+                    ),
+                )
+                domains = sorted(
+                    {
+                        (urlparse(urls[futures[item]]).hostname or "URL").removeprefix("www.")
+                        for item in pending
+                    }
+                )
+                activity.info(f"Menyelesaikan redirect dari: {', '.join(domains[:4])}")
+                continue
+            heartbeat_started = time.monotonic()
+            for future in done:
+                index = futures[future]
+                try:
+                    rows[index] = future.result()
+                except Exception as exc:
+                    rows[index] = {
+                        "No": index + 1,
+                        "Platform": platform_from_url(urls[index]) or "Tidak dikenali",
+                        "Original Link": urls[index],
+                        "Modified Link": FAILED_MODIFICATION,
+                        "Status": "Error",
+                        "Catatan": f"Proses link berhenti: {exc}",
+                    }
+                completed += 1
+                fraction = batch_progress_fraction(completed, len(urls))
+                progress.progress(
+                    fraction,
+                    text=(
+                        f"Modified Link · {completed:,}/{len(urls):,} selesai · "
+                        f"{round(fraction * 100)}%"
+                    ),
+                )
+    progress.progress(1.0, text=f"Modified Link selesai · {len(urls):,}/{len(urls):,} · 100%")
+    activity.empty()
     return [row for row in rows if row is not None]
 
 

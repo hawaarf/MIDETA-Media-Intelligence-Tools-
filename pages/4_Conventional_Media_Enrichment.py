@@ -4,12 +4,15 @@
 """MIDETA Conventional Media Enrichment page."""
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from collections import deque
+import time
+from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
 
-from src.batch import parse_url_list
+from src.batch import batch_progress_fraction, parse_url_list
 from src.config import MAX_ENRICHMENT_URLS, MAX_PARALLEL_ARTICLES, MIDETA_LOGO_PATH
 from src.conventional_media import (
     CHECK_FAILED_TO_PROCESS,
@@ -47,47 +50,165 @@ def article_browser() -> ConventionalMediaBrowser:
     return ConventionalMediaBrowser()
 
 
+def fair_article_indices(urls: list[str]) -> list[int]:
+    """Interleave publishers so one repeated domain cannot occupy every worker."""
+    by_host: dict[str, deque[int]] = {}
+    for index, url in enumerate(urls):
+        host = (urlparse(url).hostname or url).casefold().removeprefix("www.")
+        by_host.setdefault(host, deque()).append(index)
+    ordered: list[int] = []
+    while by_host:
+        for host in list(by_host):
+            ordered.append(by_host[host].popleft())
+            if not by_host[host]:
+                del by_host[host]
+    return ordered
+
+
 def process_articles(urls: list[str]) -> list[ArticleResult]:
-    """Process public pages concurrently, then retry blocked pages in Chrome."""
+    """Process public pages concurrently, then retry blocked pages in Chrome.
+
+    The main thread polls workers instead of blocking in ``as_completed`` so
+    Streamlit can keep showing a heartbeat while a publisher is slow, retrying,
+    or waiting for its per-domain request slot.
+    """
     results: list[ArticleResult | None] = [None] * len(urls)
     retry_in_browser: list[int] = []
-    completed = 0
-    progress = st.progress(0.0, text=f"Menyiapkan {len(urls):,} artikel…")
+    final_completed = 0
+    public_completed = 0
+    succeeded = 0
+    failed = 0
+    total = len(urls)
+    progress = st.progress(0.0, text=f"Fase 1/2 · Menyiapkan {total:,} artikel · 0%")
     activity = st.empty()
     browser_ready = article_browser().is_running()
+
+    def hostname(index: int) -> str:
+        return (urlparse(urls[index]).hostname or urls[index]).removeprefix("www.")
+
+    def result_from_exception(index: int, exc: BaseException) -> ArticleResult:
+        return ArticleResult(
+            source_url=urls[index],
+            title=CHECK_FAILED_TO_PROCESS,
+            content=CHECK_FAILED_TO_PROCESS,
+            status="failed",
+            reason=f"Worker artikel berhenti: {exc}",
+        )
+
+    def public_progress(active_fraction: float, *, waiting_seconds: int = 0) -> None:
+        # Reserve the last 15% for an optional Chrome fallback. If it is not
+        # needed the bar advances directly from 85% to completion.
+        phase_fraction = batch_progress_fraction(public_completed, total, active_fraction)
+        overall_fraction = phase_fraction * 0.85
+        percent = round(overall_fraction * 100)
+        pending_count = max(total - public_completed, 0)
+        wait_detail = f" · menunggu {waiting_seconds:,} dtk" if waiting_seconds else ""
+        progress.progress(
+            overall_fraction,
+            text=(
+                f"Fase 1/2 · Web publik {public_completed:,}/{total:,} diperiksa · "
+                f"{pending_count:,} tersisa · {percent}%{wait_detail}"
+            ),
+        )
 
     workers = min(MAX_PARALLEL_ARTICLES, max(1, len(urls)))
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mideta-article") as executor:
         futures = {
-            executor.submit(enrich_public_article, url): index
-            for index, url in enumerate(urls)
+            executor.submit(enrich_public_article, urls[index]): index
+            for index in fair_article_indices(urls)
         }
-        for future in as_completed(futures):
-            index = futures[future]
-            result = future.result()
-            if result.status == "failed" and browser_ready:
-                retry_in_browser.append(index)
-                activity.info(
-                    f"Artikel publik terhalang. Menyiapkan percobaan lewat sesi Chrome: {urls[index]}"
+        pending = set(futures)
+        heartbeat_started = time.monotonic()
+        while pending:
+            done, pending = wait(pending, timeout=0.4, return_when=FIRST_COMPLETED)
+            if not done:
+                elapsed = max(time.monotonic() - heartbeat_started, 0.0)
+                heartbeat = min(0.9, 0.04 + (elapsed / (elapsed + 10.0)) * 0.86)
+                public_progress(heartbeat, waiting_seconds=int(elapsed))
+                queued_domains = sorted({hostname(futures[item]) for item in pending})
+                sample = ", ".join(queued_domains[:3])
+                if len(queued_domains) > 3:
+                    sample += f", +{len(queued_domains) - 3} domain"
+                message = (
+                    f"Sedang menunggu respons media: {sample}. "
+                    f"{len(pending):,} artikel masih aktif atau mengantre."
                 )
+                if elapsed >= 20:
+                    message += " MIDETA tetap berjalan; situs yang lambat akan berhenti sesuai batas waktunya."
+                activity.info(message)
                 continue
-            results[index] = result
-            completed += 1
-            progress.progress(
-                completed / len(urls),
-                text=f"{completed:,} dari {len(urls):,} artikel selesai",
-            )
 
-    for index in retry_in_browser:
-        activity.info(f"Membaca artikel melalui sesi login: {urls[index]}")
-        results[index] = article_browser().collect(urls[index])
-        completed += 1
-        progress.progress(
-            completed / len(urls),
-            text=f"{completed:,} dari {len(urls):,} artikel selesai",
-        )
+            heartbeat_started = time.monotonic()
+            for future in done:
+                index = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:  # One changed publisher must not abort the batch.
+                    result = result_from_exception(index, exc)
+                public_completed += 1
+                if result.status == "failed" and browser_ready:
+                    retry_in_browser.append(index)
+                else:
+                    results[index] = result
+                    final_completed += 1
+                    if result.status == "completed":
+                        succeeded += 1
+                    else:
+                        failed += 1
+                public_progress(0.0)
+                activity.info(
+                    f"Terakhir diperiksa: {hostname(index)} · "
+                    f"{succeeded:,} berhasil · {failed:,} perlu diperiksa · "
+                    f"{len(retry_in_browser):,} menunggu Chrome"
+                )
 
-    progress.progress(1.0, text=f"Selesai: {len(urls):,} artikel sudah disimpan")
+    if retry_in_browser:
+        browser = article_browser()
+        browser_total = len(retry_in_browser)
+        # Keep Selenium work serial, but run it away from the UI thread so the
+        # progress heartbeat remains visible during navigation and page waits.
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="mideta-article-browser") as executor:
+            for position, index in enumerate(retry_in_browser):
+                future = executor.submit(browser.collect, urls[index])
+                heartbeat_started = time.monotonic()
+                while True:
+                    done, _ = wait({future}, timeout=0.4, return_when=FIRST_COMPLETED)
+                    elapsed = max(time.monotonic() - heartbeat_started, 0.0)
+                    heartbeat = min(0.9, 0.04 + (elapsed / (elapsed + 10.0)) * 0.86)
+                    phase_fraction = batch_progress_fraction(position, browser_total, heartbeat)
+                    overall_fraction = 0.85 + (phase_fraction * 0.15)
+                    percent = round(overall_fraction * 100)
+                    progress.progress(
+                        overall_fraction,
+                        text=(
+                            f"Fase 2/2 · Chrome {position + 1:,}/{browser_total:,} · "
+                            f"{hostname(index)} · {percent}% · menunggu {int(elapsed):,} dtk"
+                        ),
+                    )
+                    activity.info(
+                        f"Membuka artikel lewat sesi login: {urls[index]} · "
+                        f"{final_completed:,}/{total:,} hasil final sudah siap"
+                    )
+                    if done:
+                        break
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = result_from_exception(index, exc)
+                results[index] = result
+                final_completed += 1
+                if result.status == "completed":
+                    succeeded += 1
+                else:
+                    failed += 1
+
+    progress.progress(
+        1.0,
+        text=(
+            f"Selesai · {total:,}/{total:,} artikel · 100% · "
+            f"{succeeded:,} berhasil · {failed:,} perlu diperiksa"
+        ),
+    )
     activity.empty()
     return [
         result

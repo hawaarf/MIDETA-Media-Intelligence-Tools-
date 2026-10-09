@@ -100,13 +100,15 @@ if submitted:
             st.error(str(exc))
         else:
             st.session_state.pop("profile_scraping_result", None)
-            progress = st.progress(0.01, text="Menyiapkan penelusuran profil publik…")
+            progress = st.progress(0.01, text="Profile Scraping · Menyiapkan penelusuran publik · 1%")
 
             def update_progress(state: dict) -> None:
                 oldest = state.get("oldest_date")
+                fraction = date_progress(start_date, end_date, oldest)
                 progress.progress(
-                    date_progress(start_date, end_date, oldest),
+                    fraction,
                     text=(
+                        f"Profile Scraping · {round(fraction * 100)}% · "
                         f"{state['posts_scanned']:,} posting diperiksa · "
                         f"{state['matched']:,} URL dalam rentang · "
                         f"{state['pages_scanned']:,} halaman"
@@ -126,7 +128,7 @@ if submitted:
             else:
                 progress.progress(
                     1.0,
-                    text=f"Selesai: {len(result.rows):,} URL posting ditemukan",
+                    text=f"Profile Scraping selesai · 100% · {len(result.rows):,} URL posting ditemukan",
                 )
                 st.session_state["profile_scraping_result"] = result
                 st.session_state["profile_scraping_range"] = (start_date, end_date)
