@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from src.batch import batch_progress_fraction, parse_url_list
-from src.config import MAX_ENRICHMENT_URLS, MAX_PARALLEL_PUBLIC_URLS, MIDETA_LOGO_PATH
+from src.config import MAX_PARALLEL_PUBLIC_URLS, MIDETA_LOGO_PATH
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 from src.social_urls import (
     SocialURLResolutionError,
@@ -169,7 +169,7 @@ raw_urls = st.text_area(
         "https://www.instagram.com/share/reel/CONTOH/"
     ),
     help=(
-        f"Satu URL per baris, maksimal {MAX_ENRICHMENT_URLS:,} URL. URL berulang tetap dipertahankan "
+        "Satu URL per baris. Jumlah URL tidak dibatasi oleh MIDETA. URL berulang tetap dipertahankan "
         "sebagai baris terpisah."
     ),
 )
@@ -183,11 +183,6 @@ if st.button(
     urls = parse_url_list(raw_urls, preserve_repeated_rows=True)
     if not urls:
         st.error("Masukkan minimal satu URL lengkap yang diawali http:// atau https://.")
-    elif len(urls) > MAX_ENRICHMENT_URLS:
-        st.error(
-            f"Maksimal {MAX_ENRICHMENT_URLS:,} URL per proses. Kurangi "
-            f"{len(urls) - MAX_ENRICHMENT_URLS:,} URL lalu coba lagi."
-        )
     else:
         st.session_state["modified_link_results"] = process_links(urls)
 

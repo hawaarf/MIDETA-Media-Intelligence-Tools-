@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from collections import deque
+import re
 import time
 from urllib.parse import urlparse
 
@@ -13,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from src.batch import batch_progress_fraction, parse_url_list
-from src.config import MAX_ENRICHMENT_URLS, MAX_PARALLEL_ARTICLES, MIDETA_LOGO_PATH
+from src.config import MAX_PARALLEL_ARTICLES, MIDETA_LOGO_PATH
 from src.conventional_media import (
     CHECK_FAILED_TO_PROCESS,
     ArticleResult,
@@ -63,6 +64,22 @@ def fair_article_indices(urls: list[str]) -> list[int]:
             if not by_host[host]:
                 del by_host[host]
     return ordered
+
+
+AUTOMATIC_BROWSER_RETRY_RE = re.compile(
+    r"(?:akses ditolak|http\s+403\b|cloudflare|security check|"
+    r"request is being verified|enable javascript|javascript diperlukan)",
+    re.I,
+)
+
+
+def browser_retry_needed(result: ArticleResult, *, browser_ready: bool) -> bool:
+    """Retry public browser challenges automatically; reuse an open session for other failures."""
+    if result.status != "failed":
+        return False
+    if browser_ready:
+        return True
+    return bool(AUTOMATIC_BROWSER_RETRY_RE.search(result.reason or ""))
 
 
 def process_articles(urls: list[str]) -> list[ArticleResult]:
@@ -146,7 +163,7 @@ def process_articles(urls: list[str]) -> list[ArticleResult]:
                 except Exception as exc:  # One changed publisher must not abort the batch.
                     result = result_from_exception(index, exc)
                 public_completed += 1
-                if result.status == "failed" and browser_ready:
+                if browser_retry_needed(result, browser_ready=browser_ready):
                     retry_in_browser.append(index)
                 else:
                     results[index] = result
@@ -186,7 +203,7 @@ def process_articles(urls: list[str]) -> list[ArticleResult]:
                         ),
                     )
                     activity.info(
-                        f"Membuka artikel lewat sesi login: {urls[index]} · "
+                        f"Membuka artikel lewat Chrome fallback: {urls[index]} · "
                         f"{final_completed:,}/{total:,} hasil final sudah siap"
                     )
                     if done:
@@ -228,7 +245,8 @@ st.markdown('<div class="section-label">LANGKAH 1 · SESI LOGIN</div>', unsafe_a
 st.subheader("Artikel ber-login atau berlangganan?")
 st.caption(
     "Buka sesi Chrome terlebih dahulu dan login langsung di situs medianya. Sesi disimpan lokal di komputer ini; "
-    "password tidak dibaca MIDETA. Jika semua artikel publik, bagian ini boleh dilewati."
+    "password tidak dibaca MIDETA. Jika semua artikel publik, bagian ini boleh dilewati; halaman publik yang "
+    "menolak request biasa akan dicoba otomatis lewat Chrome fallback."
 )
 login_url = st.text_input(
     "Halaman login media (opsional)",
@@ -257,7 +275,7 @@ raw_urls = st.text_area(
     "Daftar link artikel",
     height=230,
     placeholder="https://media-a.com/judul-artikel\nhttps://media-b.com/berita/lainnya",
-    help=f"Satu link per baris. Maksimal {MAX_ENRICHMENT_URLS:,} link; link berulang tetap dipertahankan sebagai baris terpisah.",
+    help="Satu link per baris. Jumlah link tidak dibatasi oleh MIDETA; link berulang tetap dipertahankan sebagai baris terpisah.",
 )
 st.caption(
     "MIDETA membersihkan iklan, menu, rekomendasi, dan elemen halaman lain dari isi artikel. "
@@ -274,10 +292,6 @@ if st.button(
     urls = parse_url_list(raw_urls, preserve_repeated_rows=True)
     if not urls:
         st.error("Masukkan minimal satu link artikel lengkap yang diawali http:// atau https://.")
-    elif len(urls) > MAX_ENRICHMENT_URLS:
-        st.error(
-            f"Maksimal {MAX_ENRICHMENT_URLS:,} link per proses. Kurangi {len(urls) - MAX_ENRICHMENT_URLS:,} link lalu coba lagi."
-        )
     else:
         results = process_articles(urls)
         st.session_state["conventional_media_results"] = [result.__dict__ for result in results]

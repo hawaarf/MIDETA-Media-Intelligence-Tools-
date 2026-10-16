@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from src.batch import batch_progress_fraction, parse_url_list
-from src.config import MAX_ENRICHMENT_URLS, MIDETA_LOGO_PATH
+from src.config import MIDETA_LOGO_PATH
 from src.exporters import to_csv_bytes, to_xlsx_bytes
 import src.follower_browser as follower_browser_module
 from src.ui import apply_theme, page_intro, render_footer, render_github_profile
@@ -242,7 +242,7 @@ raw_urls = st.text_area(
         "https://www.linkedin.com/company/cnbc-indonesia/"
     ),
     help=(
-        f"Satu URL profil per baris, maksimal {MAX_ENRICHMENT_URLS:,} URL. Gunakan URL akun/channel, bukan URL posting. "
+        "Satu URL profil per baris. Jumlah URL tidak dibatasi oleh MIDETA. Gunakan URL akun/channel, bukan URL posting. "
         "URL berulang tetap menghasilkan baris terpisah; baris kosong di tengah daftar dipertahankan sebagai space."
     ),
 )
@@ -257,11 +257,6 @@ if st.button(
     account_count = sum(url != RESULT_SPACE for url in urls)
     if not account_count:
         st.error("Masukkan minimal satu URL profil lengkap yang diawali http:// atau https://.")
-    elif account_count > MAX_ENRICHMENT_URLS:
-        st.error(
-            f"Maksimal {MAX_ENRICHMENT_URLS:,} URL per proses. Kurangi "
-            f"{account_count - MAX_ENRICHMENT_URLS:,} URL lalu coba lagi."
-        )
     else:
         st.session_state["followers_checker_url_results"] = process_followers(urls)
 

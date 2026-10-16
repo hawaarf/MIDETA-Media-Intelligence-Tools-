@@ -19,17 +19,19 @@ MIDETA punya delapan bagian utama:
 - **Conventional Media Enrichment** untuk membersihkan artikel berita serta melengkapi tanggal, media, scope, tier, journalist, tone, quote mention, dan jenis penyebutan direct/indirect.
 - **Modified Link** untuk mengubah short/share link menjadi permalink posting yang bersih tanpa menjalankan enrichment.
 - **Followers Checker** untuk memperbarui jumlah followers banyak akun dalam satu tabel mapping dan menyimpan URL profil setiap platform.
-- **Profile Scraping** untuk mengambil URL posting publik dari satu profil TikTok pada rentang tanggal khusus tanpa login atau Apify.
+- **Profile Scraping** untuk mengambil posting publik dari banyak profil TikTok berdasarkan preset/custom timeline, dengan opsi langsung enrichment.
 - **Keyword Search** untuk menemukan sampel posting publik TikTok dan Threads berdasarkan keyword, Boolean, dan rentang tanggal.
 - **Riwayat Analisis** untuk membuka kembali hasil yang pernah diproses.
 
 Platform media sosial yang didukung: YouTube, TikTok, Facebook, Instagram, Threads, dan X. Conventional Media Enrichment dapat menerima URL artikel dari berbagai situs berita publik.
 
+Saat tombol fitur lain di sidebar atau header ditekan, MIDETA membukanya di tab baru. Biarkan tab proses lama tetap terbuka agar enrichment, scraping, atau ekspor yang sedang berjalan tidak terputus. Menutup atau memuat ulang tab proses tetap akan menghentikan eksekusi pada tab tersebut.
+
 ### Social Media Enrichment
 
-Untuk satu platform, tempel satu URL per baris lalu mulai proses. Satu antrean dapat berisi sampai 1.000 URL.
+Untuk satu platform, tempel satu URL per baris lalu mulai proses. Jumlah URL dalam satu antrean tidak dibatasi oleh MIDETA; URL tetap diproses bertahap agar aplikasi stabil.
 
-Kalau URL-nya berasal dari beberapa platform, pilih **Enrichment All**. Tempel semua URL dalam satu kotak tanpa memilah Facebook, Instagram, YouTube, TikTok, Threads, atau X. MIDETA mengenali platform secara otomatis dan memproses platform serta URL publik secara paralel. Hasil gabungan tetap disusun sesuai urutan input. URL yang gagal atau bukan tautan media sosial tetap mendapat satu baris dengan keterangan error. Satu proses Enrichment All dapat berisi sampai 1.000 URL total.
+Kalau URL-nya berasal dari beberapa platform, pilih **Enrichment All**. Tempel semua URL dalam satu kotak tanpa memilah Facebook, Instagram, YouTube, TikTok, Threads, atau X. MIDETA mengenali platform secara otomatis dan memproses platform serta URL publik secara paralel. Hasil gabungan tetap disusun sesuai urutan input. URL yang gagal atau bukan tautan media sosial tetap mendapat satu baris dengan keterangan error. Jumlah URL total tidak dibatasi oleh MIDETA.
 
 MIDETA juga bisa membaca URL yang tercampur dengan tanggal atau teks hasil salin dari spreadsheet. Contohnya:
 
@@ -116,11 +118,11 @@ Tempel satu URL profil per baris seperti pada Social Media Enrichment. MIDETA me
 
 ### Profile Scraping
 
-Profile Scraping menerima satu URL profil TikTok, `@username`, atau username biasa. Pilih tanggal awal dan tanggal akhir secara inklusif, lalu MIDETA menelusuri timeline publik dari posting terbaru menuju posting lama. Proses berhenti setelah melewati tanggal awal atau mencapai batas aman 10.000 posting.
+Profile Scraping menerima banyak akun sekaligus, satu per baris. Setiap input boleh berupa URL profil TikTok, `@username`, atau username biasa. Pilih **Seminggu terakhir** (7 hari), **Sebulan terakhir** (30 hari), **Setahun terakhir** (365 hari), atau **Custom timeline**; semua rentang bersifat inklusif. MIDETA menelusuri setiap timeline publik dari posting terbaru menuju posting lama dan berhenti setelah melewati tanggal awal atau mencapai batas aman 10.000 posting per akun.
 
-Fitur ini berjalan melalui extractor open-source lokal dan request publik yang browser-compatible. Tidak ada Chrome yang dibuka, tidak ada login/cookie akun yang dipakai, dan tidak membutuhkan Apify. Postingan privat, terhapus, dibatasi wilayah, atau tidak ditampilkan TikTok tetap tidak dapat diambil. Bila sumber publik terputus sebelum seluruh rentang terlewati, hasil yang sudah ditemukan tetap bisa diunduh tetapi diberi status parsial.
+Fitur ini berjalan melalui extractor open-source lokal dan request publik yang browser-compatible. Tidak ada Chrome yang dibuka dan tidak ada login/cookie akun yang dipakai. Apify bersifat opsional untuk mode enrichment. Postingan privat, terhapus, dibatasi wilayah, atau tidak ditampilkan TikTok tetap tidak dapat diambil. Bila satu akun gagal atau sumber publiknya terputus, akun lain tetap dilanjutkan dan hasil yang sudah ditemukan tetap bisa diunduh dengan status yang jelas.
 
-Output CSV/XLSX berisi `No`, `Date Publish`, `Author`, `Post Type`, `Caption`, dan `URL`. URL juga tersedia sebagai daftar satu baris per posting untuk langsung disalin. Hasil diurutkan dari tanggal terbaru ke terlama dan post ID yang berulang—misalnya pinned post yang muncul kembali—hanya disimpan sekali.
+Tanpa enrichment, output CSV/XLSX berisi `No`, `Date Publish`, `Author`, `Post Type`, `Caption`, dan `URL`. Jika opsi **Langsung enrichment** diaktifkan, hasil memakai format TikTok Enrichment: `Platform`, `URL`, `Tanggal posting`, `Author`, `Caption`, `Followers`, `Views`, `Likes`, `Comments`, `Save atau bookmark`, `Shares`, `Reposts`, waktu pengambilan, dan status data yang perlu dicek. Setiap akun tampil pada panel/kolom dan memiliki unduhan CSV/XLSX sendiri. Hasil diurutkan dari tanggal terbaru ke terlama dan post ID berulang hanya disimpan sekali.
 
 ### Keyword Search
 
@@ -156,7 +158,7 @@ Comment Scrapper juga mendukung Split Screen dan Triple Screen, dengan hasil ter
 
 ### Conventional Media Enrichment
 
-Tempel maksimal 1.000 link artikel, satu link per baris. MIDETA memproses hingga 5 halaman publik secara paralel. Hasil CSV/XLSX tetap mengikuti urutan input, link berulang tetap dipertahankan, dan link yang gagal tidak akan menggeser baris lain.
+Tempel link artikel satu per baris tanpa batas jumlah buatan MIDETA. MIDETA memproses hingga 5 halaman publik secara paralel. Hasil CSV/XLSX tetap mengikuti urutan input, link berulang tetap dipertahankan, dan link yang gagal tidak akan menggeser baris lain.
 
 Alur penggunaan:
 
@@ -166,6 +168,8 @@ Alur penggunaan:
 4. Klik **Mulai Enrichment**, periksa status setiap baris, lalu unduh CSV atau XLSX.
 
 MIDETA mencoba halaman publik terlebih dahulu. Artikel yang terhalang login, paywall, atau proteksi situs akan dicoba kembali melalui sesi Chrome secara berurutan agar satu sesi tidak dipakai bersamaan. Password hanya diketik pada situs media dan tidak dibaca MIDETA. Fitur ini tidak membutuhkan token Diffbot dan tidak menyimpan kredensial situs di source code.
+
+Jika sebuah halaman hanya menjadi pengantar dan secara eksplisit menautkan “artikel asli” atau “baca selengkapnya” di media lain, MIDETA dapat mengambil isi dari tautan tersebut tanpa menebak sumber. URL, judul, tanggal, dan identitas media pada hasil tetap berasal dari halaman yang dimasukkan. SWA secara eksplisit melarang crawling otomatis pada halaman artikelnya, sehingga MIDETA hanya dapat memakai metadata yang tersedia, tautan sumber asli yang memang dicantumkan halaman, atau akses resmi/berlisensi dari penerbit; MIDETA tidak melewati larangan tersebut.
 
 Kolom hasil:
 
@@ -298,17 +302,19 @@ MIDETA has eight main sections:
 - **Conventional Media Enrichment** cleans news articles and adds publication, media, journalist, tone, quoted-person, and direct/indirect mention fields.
 - **Modified Link** converts short/share URLs into clean post permalinks without running enrichment.
 - **Followers Checker** refreshes follower totals for multiple accounts while retaining each platform profile URL.
-- **Profile Scraping** collects public post URLs from one TikTok profile within a custom date range without login or Apify.
+- **Profile Scraping** collects public posts from multiple TikTok profiles using preset/custom timelines, with optional immediate enrichment.
 - **Keyword Search** discovers a bounded sample of public TikTok and Threads posts by keyword, Boolean query, and date range.
 - **Analysis History** keeps earlier results available for review.
 
 Supported social platforms: YouTube, TikTok, Facebook, Instagram, Threads, and X. Conventional Media Enrichment accepts article URLs from a broad range of public news websites.
 
+Clicking another feature in the sidebar or header opens it in a new tab. Keep the original processing tab open so an active enrichment, scraping, or export run is not interrupted. Closing or reloading that processing tab will still stop its execution.
+
 ### Social Media Enrichment
 
-For a single platform, paste one URL per line and start the run. A queue can contain up to 1,000 URLs.
+For a single platform, paste one URL per line and start the run. MIDETA does not impose an artificial URL limit; URLs are still processed in controlled batches to keep the app stable.
 
-For a mixed list, choose **Enrichment All**. Paste Facebook, Instagram, YouTube, TikTok, Threads, and X URLs into the same box. MIDETA detects each platform and processes platforms and public URLs concurrently. The combined export is restored to the original input order. Failed or unsupported URLs keep their own rows with an error message. One Enrichment All run can contain up to 1,000 URLs in total.
+For a mixed list, choose **Enrichment All**. Paste Facebook, Instagram, YouTube, TikTok, Threads, and X URLs into the same box. MIDETA detects each platform and processes platforms and public URLs concurrently. The combined export is restored to the original input order. Failed or unsupported URLs keep their own rows with an error message. MIDETA does not impose an artificial limit on the combined queue.
 
 URLs copied together with spreadsheet text also work. For example:
 
@@ -388,11 +394,11 @@ Paste one profile URL per line, just like Social Media Enrichment. MIDETA detect
 
 ### Profile Scraping
 
-Profile Scraping accepts one TikTok profile URL, `@username`, or plain username. Choose an inclusive start and end date, and MIDETA walks the public timeline from newest to oldest. It stops after passing the start date or reaching the 10,000-post safety limit.
+Profile Scraping accepts multiple accounts, one per line. Each input can be a TikTok profile URL, `@username`, or plain username. Choose **Last week** (7 days), **Last month** (30 days), **Last year** (365 days), or a **Custom timeline**; all ranges are inclusive. MIDETA walks each public timeline from newest to oldest and stops after passing the start date or reaching the 10,000-post safety limit per account.
 
-The feature uses a local open-source extractor and browser-compatible public requests. It does not launch Chrome, use login cookies, or require Apify. Private, deleted, region-restricted, or otherwise unavailable posts cannot be collected. If the public source stops before the entire interval is covered, the collected URLs remain downloadable but the run is marked partial.
+The feature uses a local open-source extractor and browser-compatible public requests. It does not launch Chrome or use login cookies. Apify is optional for enrichment. Private, deleted, region-restricted, or otherwise unavailable posts cannot be collected. If one account fails or a public source stops early, other accounts continue and collected data remains downloadable with a clear status.
 
-CSV/XLSX output contains `No`, `Date Publish`, `Author`, `Post Type`, `Caption`, and `URL`. A one-URL-per-line copy box is also provided. Results are sorted newest-first, and repeated post IDs—such as a pinned post returned again during pagination—are kept only once.
+Without enrichment, CSV/XLSX output contains `No`, `Date Publish`, `Author`, `Post Type`, `Caption`, and `URL`. With **Immediate enrichment** enabled, the output matches TikTok Enrichment: `Platform`, `URL`, posting date, author, caption, followers, views, likes, comments, bookmarks, shares, reposts, collection time, and missing-data status. Each account appears in a separate panel/column with its own CSV/XLSX downloads. Results are sorted newest-first, and repeated post IDs are kept only once.
 
 ### Keyword Search
 
@@ -426,7 +432,7 @@ Comment Scrapper also supports Split Screen and Triple Screen, with separate res
 
 ### Conventional Media Enrichment
 
-Paste up to 1,000 article URLs, one per line. MIDETA processes up to 5 public pages concurrently. CSV/XLSX output keeps the original input order, preserves duplicate links, and retains failed URLs so later rows never shift.
+Paste article URLs one per line without an artificial MIDETA limit. MIDETA processes up to 5 public pages concurrently. CSV/XLSX output keeps the original input order, preserves duplicate links, and retains failed URLs so later rows never shift.
 
 Workflow:
 
@@ -436,6 +442,8 @@ Workflow:
 4. Click **Mulai Enrichment**, review each row's status, then download CSV or XLSX.
 
 MIDETA tries the public page first. Articles blocked by authentication, a paywall, or site protection are retried sequentially through the active Chrome session so the same session is not used concurrently. Passwords are entered only on the publisher website and are not read by MIDETA. This feature does not require a Diffbot token and does not store website credentials in source code.
+
+If a page is only a wrapper and explicitly links to an “original article” or “read more” page on another publisher, MIDETA may read that linked source without guessing it. The exported URL, title, date, and media identity remain those of the submitted wrapper page. SWA explicitly prohibits automated crawling on its article pages, so MIDETA can only use available metadata, an original-source link explicitly supplied by the page, or publisher-authorized/licensed access; it does not bypass that restriction.
 
 Output columns:
 

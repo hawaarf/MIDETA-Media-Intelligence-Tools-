@@ -162,7 +162,7 @@ MIDETA memiliki tujuh bagian utama:
 6. Followers Checker
 7. Profile Scraping
 
-Halaman utama menyediakan tombol langsung ke setiap fitur. Navigasi terjadi dalam aplikasi yang sama, bukan membuka tab browser baru.
+Halaman utama menyediakan tombol langsung ke setiap fitur. Tautan fitur dibuka pada tab browser baru agar proses yang sedang berjalan di tab asal tidak terputus.
 
 ## 6. Social Media Enrichment
 
@@ -397,7 +397,7 @@ Fungsi utamanya:
 - mempertahankan URL asli;
 - mempertahankan duplicate dan urutan input.
 
-Maksimal 1.000 URL dapat diproses dengan hingga lima worker publik. Kolom output:
+Jumlah URL tidak dibatasi oleh MIDETA dan diproses dengan hingga lima worker publik. Kolom output:
 
 - `No`
 - `Platform`
@@ -446,21 +446,21 @@ Fitur ini hanya menerima URL akun/channel, bukan URL posting.
 
 ### 11.1 Fungsi
 
-Profile Scraping mengambil daftar posting publik dari satu profil TikTok dalam rentang tanggal khusus. Input dapat berupa:
+Profile Scraping mengambil posting publik dari banyak profil TikTok sekaligus. Satu akun ditulis per baris dan input dapat berupa:
 
 - URL profil TikTok;
 - `@username`; atau
 - username biasa.
 
-Tanggal awal dan tanggal akhir bersifat inklusif.
+Timeline dapat dipilih sebagai seminggu terakhir (7 hari), sebulan terakhir (30 hari), setahun terakhir (365 hari), atau custom. Tanggal awal dan tanggal akhir bersifat inklusif.
 
 ### 11.2 Metode
 
-Fitur ini tidak memakai login, tidak membuka Chrome, dan tidak memakai Apify. Pengambilan dilakukan melalui extractor open-source lokal dan request publik yang dibuat menyerupai browser. Collector menelusuri timeline dari posting terbaru menuju lama, berhenti setelah melewati tanggal awal atau mencapai batas 10.000 posting.
+Fitur ini tidak memakai login dan tidak membuka Chrome. Pengambilan timeline dilakukan melalui extractor open-source lokal dan request publik yang dibuat menyerupai browser. Collector menelusuri timeline dari posting terbaru menuju lama, berhenti setelah melewati tanggal awal atau mencapai batas 10.000 posting per akun. Apify bersifat opsional dan hanya dipakai ketika pengguna mengaktifkan enrichment posting.
 
 Jika profil utama sulit dibaca, MIDETA memiliki fallback untuk memperoleh identitas publik profil dan melanjutkan pagination. Post ID dideduplikasi agar pinned post yang muncul kembali tidak dibuat dua kali.
 
-### 11.3 Output
+### 11.3 Output tanpa enrichment
 
 - `No`
 - `Date Publish`
@@ -471,11 +471,32 @@ Jika profil utama sulit dibaca, MIDETA memiliki fallback untuk memperoleh identi
 
 Caption berasal dari deskripsi publik TikTok dan whitespace dinormalisasi. Hasil diurutkan dari posting terbaru ke terlama. Selain CSV/XLSX, URL tersedia dalam kotak satu URL per baris agar mudah disalin.
 
-### 11.4 Cakupan dan hasil parsial
+### 11.4 Output dengan enrichment
+
+Opsi **Langsung enrichment semua posting yang ditemukan** menjalankan collector TikTok Enrichment terhadap setiap URL hasil scraping. Formatnya sama dengan fitur TikTok Enrichment:
+
+- `Platform`
+- `URL`
+- `Tanggal posting`
+- `Author`
+- `Caption`
+- `Followers`
+- `Views`
+- `Likes`
+- `Comments`
+- `Save atau bookmark`
+- `Shares`
+- `Reposts`
+- `Waktu pengambilan`
+- `Data yang tidak tersedia`
+
+Setiap akun ditampilkan pada panel/kolom terpisah, maksimal tiga panel per baris, dan memiliki file CSV/XLSX sendiri. Jika enrichment satu posting gagal, metadata tanggal, author, caption, dan URL yang sudah ditemukan tetap dipertahankan; counter yang gagal dibaca ditandai `Cek`.
+
+### 11.5 Cakupan dan hasil parsial
 
 Profile Scraping hanya dapat mengambil posting yang dikirim oleh timeline publik TikTok. Profil privat, posting terhapus, pembatasan wilayah, rate limit, atau posting yang tidak disajikan oleh sumber publik tidak dapat dipaksa untuk muncul.
 
-Jika timeline publik meloncat dari satu tanggal ke tanggal lama, MIDETA menampilkan informasi cakupan. Jika proses berhenti sebelum dapat membuktikan bahwa seluruh rentang sudah dilewati, hasil ditandai parsial tetapi URL yang ditemukan tetap dapat diunduh.
+Jika timeline publik meloncat dari satu tanggal ke tanggal lama, MIDETA menampilkan informasi cakupan. Jika proses berhenti sebelum dapat membuktikan bahwa seluruh rentang sudah dilewati, hasil ditandai parsial tetapi URL yang ditemukan tetap dapat diunduh. Kegagalan satu akun tidak menghentikan akun berikutnya.
 
 ## 12. Riwayat Analisis
 

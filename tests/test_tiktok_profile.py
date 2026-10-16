@@ -13,6 +13,8 @@ from src.tiktok_profile import (
     TikTokProfileScrapeError,
     _sec_uid_from_html,
     parse_tiktok_profile,
+    parse_tiktok_profile_inputs,
+    profile_timeline_range,
 )
 
 
@@ -29,6 +31,41 @@ class TikTokProfileTests(unittest.TestCase):
     def test_profile_parser_rejects_a_post_url(self):
         with self.assertRaises(TikTokProfileScrapeError):
             parse_tiktok_profile("https://www.tiktok.com/@media.id/video/123")
+
+    def test_many_profile_inputs_accept_usernames_links_and_report_invalid_rows(self):
+        usernames, errors = parse_tiktok_profile_inputs(
+            "@pertama\nhttps://www.tiktok.com/@kedua/\npertama\nhttps://example.com/akun"
+        )
+
+        self.assertEqual(usernames, ["pertama", "kedua"])
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]["Input"], "https://example.com/akun")
+
+    def test_timeline_presets_are_inclusive_rolling_ranges(self):
+        today = date(2026, 10, 16)
+
+        self.assertEqual(
+            profile_timeline_range("Seminggu terakhir", today=today),
+            (date(2026, 10, 10), today),
+        )
+        self.assertEqual(
+            profile_timeline_range("Sebulan terakhir", today=today),
+            (date(2026, 9, 17), today),
+        )
+        self.assertEqual(
+            profile_timeline_range("Setahun terakhir", today=today),
+            (date(2025, 10, 17), today),
+        )
+
+    def test_custom_timeline_uses_selected_dates(self):
+        self.assertEqual(
+            profile_timeline_range(
+                "Custom timeline",
+                custom_start=date(2026, 8, 1),
+                custom_end=date(2026, 8, 31),
+            ),
+            (date(2026, 8, 1), date(2026, 8, 31)),
+        )
 
     def test_public_profile_id_is_read_from_hydration_html(self):
         source = '<script>{"user":{"secUid":"MS4wLjABAAAA_public-id_123"}}</script>'

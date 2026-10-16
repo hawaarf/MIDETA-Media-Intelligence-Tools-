@@ -703,6 +703,44 @@ ARTICLE_PAGINATION_MARKER_RE = re.compile(
     re.I,
 )
 ARTICLE_PAGE_QUERY_KEYS = {"page", "p", "pg", "halaman", "show", "view"}
+ORIGINAL_ARTICLE_POINTER_RE = re.compile(
+    r"\b(?:artikel\s+(?:asli|lengkap)|baca\s+(?:artikel\s+)?(?:asli|selengkapnya|versi\s+lengkap)|"
+    r"selengkapnya\s+(?:di|pada)|sumber\s+artikel|read\s+(?:the\s+)?(?:full|original)\s+article|"
+    r"full\s+story\s+(?:at|on)|originally\s+published\s+(?:at|on))\b",
+    re.I,
+)
+NON_ARTICLE_SOURCE_HOSTS = {
+    "facebook.com",
+    "instagram.com",
+    "linkedin.com",
+    "tiktok.com",
+    "threads.com",
+    "threads.net",
+    "x.com",
+    "youtube.com",
+    "youtu.be",
+}
+KONTAN_OFFICIAL_CHANNELS = (
+    "investasi",
+    "keuangan",
+    "industri",
+    "nasional",
+    "internasional",
+    "personalfinance",
+    "lifestyle",
+)
+KONTAN_CHANNEL_HINTS = {
+    "investasi": {
+        "saham", "emiten", "ihsg", "goto", "dividen", "investor", "asing", "bursa", "obligasi",
+        "reksadana", "market", "trading", "buyback", "tresuri",
+    },
+    "keuangan": {"bank", "kredit", "pinjaman", "bunga", "deposito", "asuransi", "fintech"},
+    "industri": {"industri", "pabrik", "manufaktur", "ritel", "properti", "otomotif", "energi"},
+    "nasional": {"pemerintah", "nasional", "menteri", "apbn", "pajak", "ekonomi"},
+    "internasional": {"global", "dunia", "amerika", "china", "tiongkok", "eropa", "asia"},
+    "personalfinance": {"keuangan-pribadi", "tabungan", "investasi-pemula", "dana-darurat"},
+    "lifestyle": {"lifestyle", "wisata", "kuliner", "kesehatan", "hiburan"},
+}
 
 
 def _article_control_label(element: Tag) -> str:
@@ -805,6 +843,65 @@ def _article_expansion_control(
         return None
     _, action, target, label = min(matches, key=lambda item: item[0])
     return action, target, label
+
+
+def _is_social_source_host(host: str) -> bool:
+    normalized = host.casefold().removeprefix("www.")
+    return any(normalized == item or normalized.endswith(f".{item}") for item in NON_ARTICLE_SOURCE_HOSTS)
+
+
+def _kontan_official_channel_urls(url: str) -> list[str]:
+    """Map a broken root Kontan ``/news`` URL to bounded official channel URLs."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").casefold().removeprefix("www.")
+    if host != "kontan.co.id" or not parsed.path.startswith("/news/"):
+        return []
+    slug_tokens = set(re.findall(r"[a-z0-9]+", unquote(parsed.path).casefold()))
+    indexed_channels = list(enumerate(KONTAN_OFFICIAL_CHANNELS))
+    ordered_channels = [
+        channel
+        for _, channel in sorted(
+            indexed_channels,
+            key=lambda item: (
+                -len(slug_tokens & KONTAN_CHANNEL_HINTS.get(item[1], set())),
+                item[0],
+            ),
+        )
+    ]
+    return [
+        parsed._replace(netloc=f"{channel}.kontan.co.id", fragment="").geturl()
+        for channel in ordered_channels
+    ]
+
+
+def _original_article_url(soup: BeautifulSoup, current_url: str) -> str:
+    """Return an explicitly labelled external source URL, never a guessed link."""
+    current_host = (urlparse(current_url).hostname or "").casefold().removeprefix("www.")
+    for anchor in soup.select("a[href]"):
+        if not isinstance(anchor, Tag):
+            continue
+        raw_target = html_lib.unescape(str(anchor.get("href") or "")).strip()
+        if not raw_target:
+            continue
+        target = urljoin(current_url, raw_target)
+        parsed = urlparse(target)
+        target_host = (parsed.hostname or "").casefold().removeprefix("www.")
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not target_host
+            or target_host == current_host
+            or _is_social_source_host(target_host)
+            or re.search(r"\.(?:gif|jpe?g|png|svg|webp|mp4|mp3|pdf)(?:$|[?#])", parsed.path, re.I)
+        ):
+            continue
+        anchor_text = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))
+        parent_text = ""
+        if isinstance(anchor.parent, Tag):
+            parent_text = re.sub(r"\s+", " ", anchor.parent.get_text(" ", strip=True))[:500]
+        context = f"{anchor_text} {parent_text}".strip()
+        if ORIGINAL_ARTICLE_POINTER_RE.search(context):
+            return target
+    return ""
 
 
 def _expanded_public_article_html(
@@ -938,6 +1035,7 @@ def _extract_dom_content(soup: BeautifulSoup) -> str:
         ".sub_content",
         ".news-detail-content",
         ".news-detail",
+        ".oduu-content",
         ".berita_panel",
         ".c-detail.read",
         ".bodyArticleWrapper",
@@ -1021,6 +1119,10 @@ def _recover_embedded_article_content(value: str) -> str:
 
 def _clean_content(text: str) -> str:
     text = _recover_embedded_article_content(str(text or ""))
+    # Decode twice because some publishers expose a literal or double-encoded
+    # ``&nbsp;`` before the lead. It should become normal whitespace, not an
+    # exported word.
+    text = html_lib.unescape(html_lib.unescape(str(text or ""))).replace("\xa0", " ")
     if re.search(r"<[^>]+>", str(text or "")):
         text = BeautifulSoup(str(text), "lxml").get_text("\n", strip=True)
     paragraphs: list[str] = []
@@ -1071,7 +1173,8 @@ BLOCKED_MARKERS = (
     "masuk untuk melanjutkan", "please log in", "please sign in", "please wait while your request is being verified",
     "security check", "silakan masuk", "sign in to continue", "subscribe to continue",
     "berlangganan untuk membaca", "register now to unlock premium content",
-    "unlock premium content", "already registered? log in",
+    "unlock premium content", "already registered? log in", "sorry, you have been blocked",
+    "you are unable to access tempo.co", "attention required! | cloudflare",
 )
 NAVIGATION_ONLY_RE = re.compile(
     r"\b(?:related|latest\s+news|berita\s+terkait|artikel\s+terkait|foto\s+lainnya)\b",
@@ -1140,6 +1243,62 @@ def _publisher_only_title(value: str, media_name: str) -> bool:
     if media_parts:
         brand_keys.add("".join(media_parts))
     return bool(title_key and title_key in brand_keys)
+
+
+def _submitted_page_title(html: str, effective_url: str) -> str:
+    """Read only the submitted page's headline for a cross-publisher handoff."""
+    soup = BeautifulSoup(html or "", "lxml")
+    article = _article_node(_json_ld_nodes(soup), effective_url)
+    media_name, _, _ = media_identity(effective_url)
+    title = _plain_text(article.get("headline") or article.get("name")) or _meta(
+        soup,
+        'meta[property="og:title"]',
+        'meta[name="twitter:title"]',
+        "article h1",
+        ".entry-title",
+        ".post-title",
+        "h1",
+    )
+    if not title and soup.title:
+        title = soup.title.get_text(" ", strip=True)
+    return _clean_title(title, media_name)
+
+
+def _should_follow_original_source(result: ArticleResult, original_url: str) -> bool:
+    """Use an explicit source handoff only for a failed or clearly short wrapper."""
+    if not original_url or result.status == "unavailable":
+        return False
+    return result.status == "failed" or len(result.content.split()) < 160
+
+
+def _merge_original_source_result(
+    submitted_url: str,
+    submitted_html: str,
+    submitted_resolved_url: str,
+    submitted_result: ArticleResult,
+    original_url: str,
+    original_result: ArticleResult,
+) -> ArticleResult:
+    """Keep wrapper metadata/title while using verified copy from its linked source."""
+    if original_result.status != "completed":
+        return submitted_result
+    submitted_title = _submitted_page_title(submitted_html, submitted_resolved_url)
+    title = submitted_title or original_result.title
+    return ArticleResult(
+        source_url=submitted_url,
+        date_publish=submitted_result.date_publish or original_result.date_publish,
+        month=submitted_result.month or original_result.month,
+        media_name=submitted_result.media_name,
+        media_scope=submitted_result.media_scope,
+        media_tier=submitted_result.media_tier,
+        title=title,
+        content=original_result.content,
+        journalist=original_result.journalist or submitted_result.journalist,
+        tone=classify_tone(title, original_result.content),
+        quote_mention=original_result.quote_mention,
+        type_mention=original_result.type_mention,
+        reason=f"Isi artikel diambil dari tautan sumber asli yang tercantum: {original_url}",
+    )
 
 
 URL_TITLE_STOPWORDS = {
@@ -1621,6 +1780,15 @@ def enrich_article_html(
                 month=month,
                 identity_url=effective_url,
             )
+        if state == "blocked":
+            return _failed_result(
+                source_url,
+                CHECK_FAILED_TO_PROCESS,
+                "Akses ditolak. Halaman mungkin memerlukan login atau dilindungi situs.",
+                date_publish=date_publish,
+                month=month,
+                identity_url=effective_url,
+            )
         if state != "available":
             return _failed_result(
                 source_url,
@@ -1696,6 +1864,61 @@ def _enrich_public_article_unlocked(url: str) -> ArticleResult:
             time.sleep(0.6)
             html, resolved_url = fetch_public_html(url, user_agent=ARTICLE_USER_AGENT)
         result = _enrich_fetched_article(url, html, resolved_url)
+        original_url = _original_article_url(BeautifulSoup(html or "", "lxml"), resolved_url)
+        if _should_follow_original_source(result, original_url):
+            try:
+                validate_public_url(original_url)
+                original_html, original_resolved_url = fetch_public_html(
+                    original_url,
+                    user_agent=ARTICLE_USER_AGENT,
+                )
+                original_result = _enrich_fetched_article(
+                    original_url,
+                    original_html,
+                    original_resolved_url,
+                )
+                merged = _merge_original_source_result(
+                    url,
+                    html,
+                    resolved_url,
+                    result,
+                    original_url,
+                    original_result,
+                )
+                if merged.status == "completed":
+                    return merged
+            except (CollectionError, URLValidationError):
+                pass
+        if result.status == "failed":
+            # Kontan occasionally receives root-domain /news links even though
+            # the actual public article lives at the same path on one of its
+            # official editorial channel subdomains. Try only those bounded
+            # first-party variants and accept a candidate only when the normal
+            # title/content-to-slug validation succeeds.
+            for channel_url in _kontan_official_channel_urls(resolved_url):
+                try:
+                    channel_html, channel_resolved_url = fetch_public_html(
+                        channel_url,
+                        user_agent=ARTICLE_USER_AGENT,
+                    )
+                    channel_result = _enrich_fetched_article(
+                        url,
+                        channel_html,
+                        channel_resolved_url,
+                    )
+                except (CollectionError, URLValidationError):
+                    continue
+                if channel_result.status == "completed":
+                    (
+                        channel_result.media_name,
+                        channel_result.media_scope,
+                        channel_result.media_tier,
+                    ) = media_identity(resolved_url)
+                    channel_result.reason = (
+                        "Konten ditemukan pada kanal resmi Kontan dengan path artikel yang sama: "
+                        f"{channel_resolved_url}"
+                    )
+                    return channel_result
         if result.status == "failed" and result.reason.startswith("Isi artikel"):
             # Some publishers intermittently return a shell page while their
             # article cache is warming or one backend serves an empty shell.
@@ -1809,6 +2032,32 @@ class ConventionalMediaBrowser:
         except (URLValidationError, WebDriverException) as exc:
             raise ConventionalMediaError("Halaman login tidak dapat dibuka di Chrome artikel MIDETA.") from exc
 
+    def _wait_for_article_render(self, driver, url: str) -> None:
+        """Wait for publisher-specific client-rendered copy before reading page_source."""
+        host = (urlparse(url).hostname or "").casefold().removeprefix("www.")
+        selector = ".oduu-content" if host == "peradaban.id" or host.endswith(".peradaban.id") else ""
+        if not selector:
+            time.sleep(1.0)
+            return
+        try:
+            WebDriverWait(driver, min(self.wait_seconds, 8)).until(
+                lambda active: len(
+                    str(
+                        active.execute_script(
+                            "return document.querySelector(arguments[0])?.innerText || '';",
+                            selector,
+                        )
+                        or ""
+                    ).split()
+                )
+                >= 35
+            )
+        except TimeoutException:
+            # The parser below still classifies the page honestly when the
+            # publisher never renders enough public article copy.
+            pass
+        time.sleep(0.35)
+
     def _expanded_html(self, driver) -> tuple[list[str], str]:
         """Click dynamic expansion controls and retain each forward article page."""
         pages = [str(driver.page_source or "")]
@@ -1876,14 +2125,45 @@ class ConventionalMediaBrowser:
             WebDriverWait(driver, self.wait_seconds).until(
                 lambda active: active.execute_script("return document.readyState") in {"interactive", "complete"}
             )
-            time.sleep(1.0)
+            self._wait_for_article_render(driver, str(driver.current_url or url))
             pages, resolved_url = self._expanded_html(driver)
-            return enrich_article_html(
+            result = enrich_article_html(
                 url,
                 pages[0],
                 resolved_url or url,
                 additional_html=pages[1:],
             )
+            original_url = _original_article_url(
+                BeautifulSoup(pages[0] or "", "lxml"),
+                resolved_url or url,
+            )
+            if not _should_follow_original_source(result, original_url):
+                return result
+            try:
+                validate_public_url(original_url)
+                driver.get(original_url)
+                WebDriverWait(driver, self.wait_seconds).until(
+                    lambda active: active.execute_script("return document.readyState")
+                    in {"interactive", "complete"}
+                )
+                self._wait_for_article_render(driver, str(driver.current_url or original_url))
+                original_pages, original_resolved_url = self._expanded_html(driver)
+                original_result = enrich_article_html(
+                    original_url,
+                    original_pages[0],
+                    original_resolved_url or original_url,
+                    additional_html=original_pages[1:],
+                )
+                return _merge_original_source_result(
+                    url,
+                    pages[0],
+                    resolved_url or url,
+                    result,
+                    original_url,
+                    original_result,
+                )
+            except (URLValidationError, TimeoutException, WebDriverException):
+                return result
         except TimeoutException:
             try:
                 driver.execute_script("window.stop();")

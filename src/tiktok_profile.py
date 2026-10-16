@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import re
 from typing import Any, Callable, Iterable
 from urllib.parse import unquote, urlparse
@@ -19,6 +19,12 @@ JAKARTA_TZ = ZoneInfo("Asia/Jakarta")
 PROFILE_PAGE_SIZE = 35
 OLDER_POST_STOP_COUNT = 20
 SEC_UID_RE = re.compile(r'"secUid"\s*:\s*"([A-Za-z0-9_-]+)"')
+PROFILE_TIMELINE_OPTIONS = (
+    "Seminggu terakhir",
+    "Sebulan terakhir",
+    "Setahun terakhir",
+    "Custom timeline",
+)
 
 
 class TikTokProfileScrapeError(RuntimeError):
@@ -67,6 +73,53 @@ def parse_tiktok_profile(value: str) -> str:
 
 def canonical_profile_url(username: str) -> str:
     return f"https://www.tiktok.com/@{username}"
+
+
+def parse_tiktok_profile_inputs(value: str) -> tuple[list[str], list[dict[str, str]]]:
+    """Parse many profile URLs/usernames while retaining invalid input details."""
+    usernames: list[str] = []
+    errors: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in re.split(r"[\r\n,;]+", str(value or "")):
+        candidate = raw.strip()
+        if not candidate:
+            continue
+        try:
+            username = parse_tiktok_profile(candidate)
+        except TikTokProfileScrapeError as exc:
+            errors.append({"Input": candidate, "Alasan": str(exc)})
+            continue
+        key = username.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        usernames.append(username)
+    return usernames, errors
+
+
+def profile_timeline_range(
+    option: str,
+    *,
+    today: date | None = None,
+    custom_start: date | None = None,
+    custom_end: date | None = None,
+) -> tuple[date, date]:
+    """Resolve rolling TikTok profile presets into inclusive date ranges."""
+    end_date = today or date.today()
+    day_counts = {
+        "Seminggu terakhir": 7,
+        "Sebulan terakhir": 30,
+        "Setahun terakhir": 365,
+    }
+    if option in day_counts:
+        return end_date - timedelta(days=day_counts[option] - 1), end_date
+    if option != "Custom timeline":
+        raise TikTokProfileScrapeError("Pilihan timeline Profile Scraping tidak dikenali.")
+    if custom_start is None or custom_end is None:
+        raise TikTokProfileScrapeError("Pilih tanggal awal dan akhir untuk Custom timeline.")
+    if custom_start > custom_end:
+        raise TikTokProfileScrapeError("Tanggal awal tidak boleh melewati tanggal akhir.")
+    return custom_start, custom_end
 
 
 def _sec_uid_from_html(source: str) -> str:

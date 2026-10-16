@@ -15,7 +15,7 @@ import src.comment_browser as comment_browser_module
 
 from src.batch import COMMENT_BATCH_VERSION, batch_progress_fraction, compact_comment_export_rows, parse_url_list, rank_comment_rows
 from src.comment_browser import CommentBrowserCollector
-from src.config import MAX_COMMENTS_PER_URL, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
+from src.config import MAX_COMMENTS_PER_URL, MAX_PARALLEL_PLATFORMS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, get_platform_connector
 from src.database import add_history
 from src.exporters import to_csv_bytes, to_xlsx_bytes
@@ -128,13 +128,6 @@ def validate_requests(requests: list[dict[str, Any]]) -> bool:
         request["urls"] = urls
         if not urls:
             st.error(f"{request['platform']}: masukkan setidaknya satu URL posting.")
-            valid = False
-        elif len(urls) > MAX_ENRICHMENT_URLS:
-            excess = len(urls) - MAX_ENRICHMENT_URLS
-            st.error(
-                f"{request['platform']}: maksimal {MAX_ENRICHMENT_URLS:,} URL. "
-                f"Kurangi {excess:,} URL lalu coba lagi."
-            )
             valid = False
     return valid
 

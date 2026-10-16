@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 
 from src.batch import SOCIAL_BATCH_VERSION, batch_progress_fraction, collect_threads_enrichment_with_fallback, compact_social_all_export_row, compact_social_export_row, failed_social_result, merge_facebook_advanced_result, order_social_results_by_input, parse_social_input_rows, social_job_results, social_result_row
 import src.comment_browser as comment_browser_module
-from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_ENRICHMENT_URLS, MAX_PARALLEL_PLATFORMS, MAX_PARALLEL_PUBLIC_URLS, MIDETA_LOGO_PATH
+from src.config import ENRICHMENT_BROWSER_CHUNK_SIZE, ENRICHMENT_CHUNK_SIZE, ENRICHMENT_FAST_CHUNK_SIZE, MAX_PARALLEL_PLATFORMS, MAX_PARALLEL_PUBLIC_URLS, MIDETA_LOGO_PATH
 from src.connectors import PLATFORM_OPTIONS, detect_platform, get_platform_connector
 from src.connectors.instagram import InstagramConnector
 from src.database import add_history, create_social_job, get_latest_social_job, get_social_job, next_social_job_items, record_social_job_item, set_social_job_status
@@ -403,9 +403,6 @@ def validate_job_request(request: dict[str, Any]) -> str | None:
     request["urls"] = urls
     if not urls:
         return f"{request['platform']}: masukkan setidaknya satu URL posting."
-    if len(urls) > MAX_ENRICHMENT_URLS:
-        excess = len(urls) - MAX_ENRICHMENT_URLS
-        return f"{request['platform']}: maksimal {MAX_ENRICHMENT_URLS:,} URL. Kurangi {excess:,} URL lalu coba lagi."
     return None
 
 
@@ -1314,7 +1311,7 @@ if layout_mode == "Enrichment All":
     st.caption(
         "Tempel URL YouTube, TikTok, Facebook, Instagram, Threads, dan X dalam satu kotak. "
         "MIDETA memproses platform dan URL publik secara paralel tanpa menunggu urutan input. "
-        f"Maksimal {MAX_ENRICHMENT_URLS:,} URL. Hasil CSV/XLSX tetap disusun sesuai urutan link yang ditempel; "
+        "Jumlah URL tidak dibatasi oleh MIDETA. Hasil CSV/XLSX tetap disusun sesuai urutan link yang ditempel; "
         "URL berulang, gagal, atau tidak dikenali tetap mendapat satu baris."
     )
     with st.expander("Pengaturan YouTube Fast API"):
@@ -1344,9 +1341,6 @@ if layout_mode == "Enrichment All":
         all_urls = parse_social_input_rows(all_url_text, preserve_repeated_rows=True)
         if not all_urls:
             st.error("Masukkan setidaknya satu URL posting.")
-        elif len(all_urls) > MAX_ENRICHMENT_URLS:
-            excess = len(all_urls) - MAX_ENRICHMENT_URLS
-            st.error(f"Enrichment All maksimal {MAX_ENRICHMENT_URLS:,} URL. Kurangi {excess:,} URL lalu coba lagi.")
         else:
             grouped_urls, unsupported_urls = group_detected_urls(all_urls)
             st.session_state["social_all_unsupported"] = unsupported_urls

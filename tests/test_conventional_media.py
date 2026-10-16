@@ -5,6 +5,8 @@ import json
 import unittest
 from unittest.mock import patch
 
+from bs4 import BeautifulSoup
+
 from src.conventional_media import (
     ARTICLE_COLUMNS,
     CHECK_ARTICLE_NOT_AVAILABLE,
@@ -12,6 +14,8 @@ from src.conventional_media import (
     CONVENTIONAL_MEDIA_CATALOG,
     SWA_CRAWLING_NOTICE,
     _failed_result,
+    _kontan_official_channel_urls,
+    _original_article_url,
     classify_tone,
     enrich_article_html,
     enrich_public_article,
@@ -182,6 +186,7 @@ class ConventionalMediaTests(unittest.TestCase):
             "warp-desc-news-detail",
             "berita_content_sub",
             "news-detail-content",
+            "oduu-content",
             "bodyArticleWrapper",
             "c-detail read",
             "article",
@@ -418,6 +423,41 @@ class ConventionalMediaTests(unittest.TestCase):
         self.assertNotIn("Read full article", result.content)
         self.assertNotIn("Another Publisher", result.content)
 
+    def test_double_encoded_nbsp_is_removed_from_article_lead(self):
+        body = " ".join(
+            ["ASPEK.ID, JAKARTA - Pemegang saham menyetujui seluruh agenda RUPSLB GoTo."]
+            * 8
+        )
+        html = f"""
+        <html><head><title>GoTo Gelar RUPSLB dan Batalkan Saham Tresuri</title></head>
+        <body><article><p>&amp;nbsp; {body}</p></article></body></html>
+        """
+
+        result = enrich_article_html(
+            "https://aspek.id/goto-gelar-rupslb-ganti-direksi-pembatalan-saham-tresuri/",
+            html,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.content.startswith("ASPEK.ID, JAKARTA"))
+        self.assertNotIn("nbsp", result.content)
+
+    def test_cloudflare_200_block_page_is_classified_as_access_denial(self):
+        html = """
+        <html><head><title>Attention Required! | Cloudflare</title></head>
+        <body><h1>Sorry, you have been blocked</h1>
+        <p>You are unable to access tempo.co</p></body></html>
+        """
+
+        result = enrich_article_html(
+            "https://en.tempo.co/read/2121657/goto-reshuffles-board-cancels-32-billion-treasury-shares",
+            html,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.title, CHECK_FAILED_TO_PROCESS)
+        self.assertIn("Akses ditolak", result.reason)
+
     def test_related_links_only_page_is_not_treated_as_article(self):
         shell = " ".join(
             [
@@ -643,6 +683,116 @@ class ConventionalMediaTests(unittest.TestCase):
         self.assertIn("Isi lengkap program pekerja", result.content)
         self.assertNotIn("Ringkasan program pekerja", result.content)
         self.assertNotIn("Show All", result.content)
+
+    def test_public_article_uses_explicit_external_original_but_keeps_wrapper_title(self):
+        wrapper_url = "https://wrapper.example/berita/program-pekerja"
+        original_url = "https://publisher.example/full-story"
+        wrapper_html = f"""
+        <html><head>
+          <meta property="og:title" content="Judul dari Media Pengirim">
+          <meta property="article:published_time" content="2026-10-02T08:00:00+07:00">
+        </head><body><article>
+          <p>Artikel ini telah tayang di media mitra.</p>
+          <p>Baca artikel asli di <a href="{original_url}">Publisher Example</a>.</p>
+        </article></body></html>
+        """
+        original_body = " ".join(
+            ["Isi sumber asli menjelaskan program pekerja dan tanggapan para narasumber secara akurat."]
+            * 10
+        )
+        original_html = f"""
+        <html><head><title>Judul di Sumber Asli</title></head><body>
+          <article><p>{original_body}</p></article>
+        </body></html>
+        """
+
+        with (
+            patch("src.conventional_media.validate_public_url", side_effect=lambda value: value),
+            patch(
+                "src.conventional_media.fetch_public_html",
+                side_effect=[
+                    (wrapper_html, wrapper_url),
+                    (original_html, original_url),
+                ],
+            ) as fetch,
+        ):
+            result = enrich_public_article(wrapper_url)
+
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.source_url, wrapper_url)
+        self.assertEqual(result.title, "Judul dari Media Pengirim")
+        self.assertEqual(result.date_publish, "Oct 2, 2026")
+        self.assertIn("Isi sumber asli", result.content)
+        self.assertIn(original_url, result.reason)
+
+    def test_root_kontan_news_url_prefers_matching_official_channel(self):
+        root_url = (
+            "https://kontan.co.id/news/"
+            "goto-gojek-goto-batalkan-penghapusan-32-miliar-saham-tresuri-begini-dampaknya"
+        )
+
+        candidates = _kontan_official_channel_urls(root_url)
+
+        self.assertTrue(candidates)
+        self.assertEqual(
+            candidates[0],
+            root_url.replace("https://kontan.co.id", "https://investasi.kontan.co.id"),
+        )
+        self.assertTrue(all(".kontan.co.id/news/" in item for item in candidates))
+
+    def test_public_article_recovers_root_kontan_url_from_official_channel(self):
+        root_url = "https://kontan.co.id/news/goto-batalkan-saham-tresuri"
+        official_url = "https://investasi.kontan.co.id/news/goto-batalkan-saham-tresuri"
+        shell_html = """
+        <html><head><title>Berita Terkini Investasi dan Ekonomi Indonesia - KONTAN</title></head>
+        <body><main><p>Halaman beranda Kontan tanpa isi artikel.</p></main></body></html>
+        """
+        article_body = " ".join(
+            ["Prospek saham GOTO dan pembatalan saham tresuri dibahas oleh analis pasar."] * 10
+        )
+        article_html = f"""
+        <html><head>
+          <title>GOTO Batalkan Saham Tresuri</title>
+          <meta property="article:published_time" content="2026-10-14T09:00:00+07:00">
+        </head><body><article><p>{article_body}</p></article></body></html>
+        """
+
+        with (
+            patch("src.conventional_media.validate_public_url", side_effect=lambda value: value),
+            patch(
+                "src.conventional_media.fetch_public_html",
+                side_effect=[
+                    (shell_html, root_url),
+                    (article_html, official_url),
+                ],
+            ) as fetch,
+        ):
+            result = enrich_public_article(root_url)
+
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.source_url, root_url)
+        self.assertEqual(result.media_name, "KONTAN.CO.ID")
+        self.assertEqual(result.media_tier, "Tier 1")
+        self.assertEqual(result.title, "GOTO Batalkan Saham Tresuri")
+        self.assertEqual(result.date_publish, "Oct 14, 2026")
+        self.assertIn(official_url, result.reason)
+
+    def test_original_source_detector_does_not_follow_generic_recommendations(self):
+        html = """
+        <html><body><article>
+          <p>Baca juga berita ekonomi pilihan redaksi.</p>
+          <a href="https://publisher.example/berita-lain">Berita terkait</a>
+        </article></body></html>
+        """
+
+        target = _original_article_url(
+            BeautifulSoup(html, "lxml"),
+            "https://wrapper.example/berita/utama",
+        )
+
+        self.assertEqual(target, "")
 
     def test_publisher_only_metadata_yields_to_visible_article_heading(self):
         paragraph = " ".join(

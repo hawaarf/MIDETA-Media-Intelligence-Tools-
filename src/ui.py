@@ -166,6 +166,62 @@ def _logo_data_uri() -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+def _preserve_running_page_on_navigation() -> None:
+    """Open MIDETA feature navigation in a new tab.
+
+    Streamlit stops the current page script when the same browser tab navigates to
+    another page.  Keeping feature navigation in a separate tab lets a long-running
+    enrichment continue in its original tab, including its browser/login session.
+    """
+    st.html(
+        """
+        <script>
+        (() => {
+          try {
+            const hostWindow = window;
+            const hostDocument = document;
+            const selector = [
+              '[data-testid="stSidebarNav"] a[href]',
+              '[data-testid="stSidebarNavItems"] a[href]',
+              '[data-testid="stPageLink"] a[href]',
+              'a[data-testid*="stPageLink"][href]'
+            ].join(',');
+
+            const markFeatureLinks = () => {
+              hostDocument.querySelectorAll(selector).forEach((link) => {
+                let destination;
+                try {
+                  destination = new URL(link.href, hostWindow.location.href);
+                } catch (_) {
+                  return;
+                }
+                if (destination.origin !== hostWindow.location.origin) return;
+
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.title = 'Buka di tab baru agar proses MIDETA yang aktif tetap berjalan';
+                link.dataset.midetaPreserveProcess = 'true';
+              });
+            };
+
+            markFeatureLinks();
+            const observer = new MutationObserver(markFeatureLinks);
+            observer.observe(hostDocument.body, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['href']
+            });
+          } catch (_) {
+            // Navigation remains usable if a browser blocks access to the parent DOM.
+          }
+        })();
+        </script>
+        """,
+        unsafe_allow_javascript=True,
+    )
+
+
 def apply_theme() -> None:
     css = (ASSETS_DIR / "styles.css").read_text(encoding="utf-8")
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
@@ -174,6 +230,7 @@ def apply_theme() -> None:
         size="large",
         icon_image=str(MIDETA_LOGO_PATH),
     )
+    _preserve_running_page_on_navigation()
 
 def render_github_profile() -> None:
     st.markdown(

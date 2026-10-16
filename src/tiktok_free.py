@@ -51,6 +51,7 @@ class TikTokFreeCollector:
         self.token_path = Path(token_path)
         self.request_timeout = request_timeout
         self.actor_timeout = actor_timeout
+        self._profile_followers_cache: dict[str, int | None] = {}
 
     def token(self) -> str | None:
         environment_token = os.getenv("APIFY_API_TOKEN", "").strip()
@@ -465,7 +466,12 @@ class TikTokFreeCollector:
 
         combined = self._merge(provider, public)
         if combined.followers is None:
-            combined.followers = self._public_profile_followers(combined.username)
+            cache_key = (combined.username or "").casefold()
+            if cache_key not in self._profile_followers_cache:
+                self._profile_followers_cache[cache_key] = self._public_profile_followers(
+                    combined.username
+                )
+            combined.followers = self._profile_followers_cache[cache_key]
         combined.source = "free"
         combined.warning = provider.warning
         return combined
